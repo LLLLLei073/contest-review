@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-pages
+data
+test-results
+test-results-pages
+package-lock.json
