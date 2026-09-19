@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { attemptSchema, reviewSchema, type ProblemRow } from '../shared/domain.js';
 import { Store, contestReviewSchema, localDay } from './store.js';
 import { CodeforcesClient, SyncService, type CFClient } from './sync.js';
+import { AnalysisService } from '../shared/analysis-service.js';
 
 export async function buildApp(
   store: Store,
@@ -14,6 +15,7 @@ export async function buildApp(
 ) {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 100 * 1024 * 1024 });
   const sync = new SyncService(store, cf, options.pageSize);
+  const analysis = new AnalysisService(store, cf);
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host || '';
     if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host))
@@ -33,12 +35,10 @@ export async function buildApp(
   });
   app.setErrorHandler((error, req, reply) => {
     if (error instanceof z.ZodError)
-      return reply
-        .code(400)
-        .send({
-          error: '输入格式不正确',
-          details: error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 5),
-        });
+      return reply.code(400).send({
+        error: '输入格式不正确',
+        details: error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 5),
+      });
     const e = error as Error & { statusCode?: number };
     return reply.code(e.statusCode || 400).send({ error: e.message || '操作失败' });
   });
@@ -48,7 +48,7 @@ export async function buildApp(
     return h;
   };
   const idle = () => {
-    if (sync.running) throw new Error('请等待当前同步完成');
+    if (sync.running || analysis.running) throw new Error('请等待当前同步或比赛分析完成');
   };
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/settings', async () => ({ activeHandle: store.active(), handles: store.handles() }));
@@ -76,6 +76,7 @@ export async function buildApp(
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
   app.post('/api/sync', async (req) => {
+    if (analysis.running) throw new Error('请等待比赛分析完成');
     const { mode, resume } = z
       .object({
         mode: z.enum(['full', 'incremental']).default('incremental'),
@@ -175,6 +176,13 @@ export async function buildApp(
     store.attempt(profile(), req.params.key, attemptSchema.parse(req.body)),
   );
   app.get('/api/contests', async () => store.contests(store.active()));
+  app.get<{ Params: { id: string } }>('/api/contests/:id/analysis', async (req) =>
+    analysis.get(profile(), z.coerce.number().int().positive().parse(req.params.id)),
+  );
+  app.post<{ Params: { id: string } }>('/api/contests/:id/analysis/refresh', async (req) => {
+    if (sync.running) throw new Error('请等待当前同步完成');
+    return analysis.start(profile(), z.coerce.number().int().positive().parse(req.params.id));
+  });
   app.put<{ Params: { id: string } }>('/api/contests/:id/review', async (req) => {
     const id = z.coerce.number().int().positive().parse(req.params.id),
       h = profile();
@@ -195,7 +203,9 @@ export async function buildApp(
   });
   app.post('/api/backup/restore', async (req) => {
     idle();
-    return store.restore(req.body);
+    const result = store.restore(req.body);
+    analysis.reset();
+    return result;
   });
   const dist = resolve('dist');
   if (existsSync(dist)) {
@@ -206,5 +216,5 @@ export async function buildApp(
         : reply.sendFile('index.html'),
     );
   }
-  return { app, sync };
+  return { app, sync, analysis };
 }

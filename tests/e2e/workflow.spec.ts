@@ -9,7 +9,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
   await expect(page.getByRole('heading', { name: '把错题，解成自己的。' })).toBeVisible();
-  await page.getByRole('link', { name: '绑定 Codeforces', exact: true }).first().click();
+  await page.locator('.profile-chip').click();
   await page.getByLabel('Codeforces Handle').fill('review_tester');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.getByText('已绑定', { exact: true })).toBeVisible();

@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Flag, ArrowUpRight, Search, Save } from 'lucide-vue-next';
 import type { ContestRow, ContestReview } from '../../shared/domain';
-import { api, notify, job } from '../api';
+import { api, notify, job, settings } from '../api';
+import ContestReport from '../components/ContestReport.vue';
 import { onBeforeRouteLeave } from 'vue-router';
 const rows = ref<ContestRow[]>([]),
   selected = ref<ContestRow | null>(null),
@@ -115,7 +116,9 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
           ><span v-if="!c.types.length">无提交记录</span>
         </div>
         <div class="contest-bottom">
-          <span>{{ c.solvedCount }} / {{ c.problemCount }} 道提交题目已通过</span
+          <span
+            >赛时 AC {{ c.inContestSolved ?? '—' }} · {{ c.analysisStatus
+            }}{{ c.analysisScore === null ? '' : ` ${c.analysisScore}` }}</span
           ><span v-if="c.rating" :class="{ positive: c.rating.newRating >= c.rating.oldRating }"
             >{{ c.rating.newRating - c.rating.oldRating >= 0 ? '+' : ''
             }}{{ c.rating.newRating - c.rating.oldRating }} Rating</span
@@ -148,37 +151,45 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         <RouterLink class="text-link" :to="'/problems?contestId=' + selected.id"
           >查看这场比赛的错题 <ArrowUpRight :size="15"
         /></RouterLink>
-        <form @submit.prevent="save">
-          <label
-            >时间分配<textarea
-              v-model="draft.timeAllocation"
-              rows="5"
-              placeholder="在哪道题停留太久？是否及时切换思路？"
-            ></textarea></label
-          ><label
-            >关键失误<textarea
-              v-model="draft.mistakes"
-              rows="5"
-              placeholder="记录读题、实现、策略或心态上的失误。"
-            ></textarea></label
-          ><label
-            >下一场的改进<textarea
-              v-model="draft.improvements"
-              rows="5"
-              placeholder="把反思变成具体可执行的动作。"
-            ></textarea>
-          </label>
-          <div class="editor-actions">
-            <span class="small subtle">{{ dirty ? '有未保存的修改' : '内容已保存' }}</span
-            ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
-          </div>
-        </form>
+        <ContestReport
+          :key="`${settings.activeHandle}:${selected.id}`"
+          :contest-id="selected.id"
+          @updated="load"
+        />
+        <details class="manual-contest-notes" open>
+          <summary>补充笔记 · 保留我的复盘</summary>
+          <form @submit.prevent="save">
+            <label
+              >时间分配<textarea
+                v-model="draft.timeAllocation"
+                rows="5"
+                placeholder="在哪道题停留太久？是否及时切换思路？"
+              ></textarea></label
+            ><label
+              >关键失误<textarea
+                v-model="draft.mistakes"
+                rows="5"
+                placeholder="记录读题、实现、策略或心态上的失误。"
+              ></textarea></label
+            ><label
+              >下一场的改进<textarea
+                v-model="draft.improvements"
+                rows="5"
+                placeholder="把反思变成具体可执行的动作。"
+              ></textarea>
+            </label>
+            <div class="editor-actions">
+              <span class="small subtle">{{ dirty ? '有未保存的修改' : '内容已保存' }}</span
+              ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
+            </div>
+          </form>
+        </details>
       </div>
     </section>
     <section v-else class="panel contest-placeholder">
       <Flag :size="38" />
       <h2>选一场比赛，慢慢回看。</h2>
-      <p>整理时间分配、关键失误和下一场的改进。</p>
+      <p>自动分析赛时表现、提交节奏和下一场的行动建议。</p>
     </section>
   </div>
 </template>

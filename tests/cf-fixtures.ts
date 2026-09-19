@@ -1,4 +1,5 @@
 import type { CFSubmission } from '../shared/domain';
+import { fixtureInput } from './analysis-fixtures';
 const names = [
   'Two Screens',
   'Turtle and a MEX Problem',
@@ -40,6 +41,15 @@ export const fixtureSubmissions: CFSubmission[] = names
   })
   .sort((a, b) => b.id - a.id);
 export function fixtureResult(method: string, params: Record<string, string | number>) {
+  if (Number(params.contestId) === 9000) {
+    const input = fixtureInput();
+    if (method === 'contest.standings') return input.cache!.standings;
+    if (method === 'contest.ratingChanges') return input.cache!.ratings;
+    if (method === 'contest.status')
+      return input.submissions
+        .filter((s) => s.contestId === 9000)
+        .slice(Number(params.from) - 1, Number(params.from) - 1 + Number(params.count));
+  }
   if (method === 'user.info') return [{ handle: String(params.handles) }];
   if (method === 'user.status')
     return fixtureSubmissions.slice(Number(params.from) - 1, Number(params.from) - 1 + Number(params.count));

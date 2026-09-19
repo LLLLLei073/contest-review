@@ -66,6 +66,8 @@ const submissions: CFSubmission[] = names
   .sort((a, b) => b.id - a.id);
 const cf: CFClient = {
   async call<T>(method: string, params: Record<string, string | number> = {}) {
+    if (Number(params.contestId) === 9000)
+      return (await import('./cf-fixtures')).fixtureResult(method, params) as T;
     await new Promise((r) => setTimeout(r, 100));
     if (method === 'user.info') return [{ handle: String(params.handles) }] as T;
     if (method === 'user.status')

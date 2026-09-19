@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import {
+  analysisCacheSchema,
+  analyzeContest,
+  contestSessions,
+  type AnalysisCache,
+  type AnalysisReport,
+} from './contest-analysis.js';
+import {
   attemptSchema,
   emptyReview,
   failures,
@@ -28,6 +35,7 @@ export const tables = [
   'contest_reviews',
   'attempts',
   'jobs',
+  'analysis_cache',
 ] as const;
 export type Table = (typeof tables)[number];
 export const submissionSchema = z.object({
@@ -45,7 +53,13 @@ export const submissionSchema = z.object({
   }),
   verdict: z.string().optional(),
   programmingLanguage: z.string(),
-  author: z.object({ participantType: z.string(), startTimeSeconds: z.number().optional() }),
+  author: z.object({
+    participantType: z.string(),
+    startTimeSeconds: z.number().optional(),
+    teamId: z.number().optional(),
+    members: z.array(z.object({ handle: z.string() })).optional(),
+    ghost: z.boolean().optional(),
+  }),
 });
 export const contestReviewSchema = z.object({
   timeAllocation: z.string().max(100000),
@@ -58,6 +72,8 @@ const contestSchema = z.object({
   startTimeSeconds: z.number().optional(),
   durationSeconds: z.number().optional(),
   phase: z.string().optional(),
+  type: z.enum(['CF', 'IOI', 'ICPC']).optional(),
+  frozen: z.boolean().optional(),
   rating: z
     .object({
       contestId: z.number().int().positive(),
@@ -65,6 +81,7 @@ const contestSchema = z.object({
       oldRating: z.number(),
       newRating: z.number(),
       rank: z.number(),
+      ratingUpdateTimeSeconds: z.number().optional(),
     })
     .optional(),
 });
@@ -91,6 +108,7 @@ const payloadSchemas: Record<Table, z.ZodType> = {
     createdAt: z.string().datetime(),
   }),
   jobs: jobSchema,
+  analysis_cache: analysisCacheSchema,
 };
 const handleSchema = z
   .string()
@@ -99,7 +117,7 @@ const handleSchema = z
   .regex(/^[a-zA-Z0-9_.-]+$/);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
   profiles: z.array(handleSchema).max(1000),
@@ -140,7 +158,7 @@ export class CoreStore {
     const version = Number(
       (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
     );
-    if (version > 1) throw new Error('数据库来自更新版本，请升级程序');
+    if (version > 2) throw new Error('数据库来自更新版本，请升级程序');
     if (version === 0)
       this.transaction(() => {
         this.db.exec(
@@ -150,7 +168,13 @@ export class CoreStore {
           this.db.exec(
             `CREATE TABLE ${table} (profile TEXT NOT NULL REFERENCES profiles(handle), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(profile,key));`,
           );
-        this.db.exec('PRAGMA user_version=1');
+        this.db.exec('PRAGMA user_version=2');
+      });
+    if (version === 1)
+      this.transaction(() => {
+        this.db.exec(
+          'CREATE TABLE analysis_cache (profile TEXT NOT NULL REFERENCES profiles(handle), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(profile,key)); PRAGMA user_version=2;',
+        );
       });
     for (const h of this.handles())
       for (const job of this.all<SyncJob>('jobs', h))
@@ -362,14 +386,46 @@ export class CoreStore {
       .map((id) => {
         const c = saved.find((c) => c.id === id),
           subs = submissions.filter((s) => s.contestId === id || s.problem.contestId === id);
+        const cached = this.get<AnalysisCache>('analysis_cache', h, String(id));
+        const sessions = contestSessions(
+          { ...c, ...cached?.standings.contest, id, name: c?.name ?? `Codeforces ${id}` },
+          subs,
+        );
+        const primary = sessions.find((s) => s.type === 'CONTESTANT') ?? sessions[0];
+        const reports = cached ? this.analysis(h, id, submissions).sessions : [];
+        const result =
+          reports.find((s) => s.session.type === 'CONTESTANT') ??
+          reports.find((s) => s.session.key === primary?.key) ??
+          reports[0];
         return {
           id,
           name: c?.name || `Codeforces ${id}`,
           startTimeSeconds: c?.startTimeSeconds,
-          types: [...new Set(subs.map((s) => s.author.participantType))],
+          types: [
+            ...new Set([
+              ...subs.map((s) => s.author.participantType),
+              ...(c?.rating || result?.session.type === 'CONTESTANT' ? ['CONTESTANT'] : []),
+            ]),
+          ],
           problemCount: new Set(subs.map(problemKey)).size,
           solvedCount: new Set(subs.filter((s) => s.verdict === 'OK').map(problemKey)).size,
           rating: c?.rating,
+          inContestSolved:
+            result && result.session.start !== null && result.session.duration !== null
+              ? result.solved
+              : primary?.start !== null && primary?.duration != null
+                ? new Set(primary.submissions.filter((s) => s.verdict === 'OK').map(problemKey)).size
+                : null,
+          analysisStatus: result
+            ? result.score === null
+              ? '数据不足'
+              : result.provisional
+                ? '暂估分'
+                : '综合分'
+            : primary || c?.rating
+              ? '待分析'
+              : '仅练习 / 无参赛记录',
+          analysisScore: result?.score ?? null,
           review: this.get<ContestReview>('contest_reviews', h, String(id)) || {
             timeAllocation: '',
             mistakes: '',
@@ -378,6 +434,39 @@ export class CoreStore {
         };
       })
       .sort((a, b) => (b.startTimeSeconds || b.id) - (a.startTimeSeconds || a.id));
+  }
+  analysis(
+    h: string,
+    id: number,
+    submissions = this.all<CFSubmission>('submissions', h),
+  ): Omit<AnalysisReport, 'task'> {
+    const contests = this.all<CFContest & { rating?: CFRating }>('contests', h);
+    const cache = this.get<AnalysisCache>('analysis_cache', h, String(id));
+    const contest = contests.find((c) => c.id === id) ?? { id, name: `Codeforces ${id}` };
+    const problems = this.all<Problem>('problems', h)
+      .filter((p) => p.contestId === id)
+      .map((p) => ({ ...p, contestId: p.contestId ?? undefined, rating: p.rating ?? undefined }));
+    if (!cache && !contests.some((c) => c.id === id) && !problems.length) throw new Error('比赛不存在');
+    const complete = this.all<SyncJob>('jobs', h).some((j) => j.mode === 'full' && j.status === 'completed');
+    return {
+      handle: h,
+      contestId: id,
+      fetchedAt: cache?.fetchedAt ?? null,
+      sessions: analyzeContest({ handle: h, contest, contests, submissions, problems, cache, complete }),
+      practiceCount: submissions.filter(
+        (s) => (s.contestId ?? s.problem.contestId) === id && s.author.participantType === 'PRACTICE',
+      ).length,
+      practiceSubmissions: submissions
+        .filter((s) => (s.contestId ?? s.problem.contestId) === id && s.author.participantType === 'PRACTICE')
+        .sort((a, b) => a.creationTimeSeconds - b.creationTimeSeconds)
+        .map((s) => ({
+          id: s.id,
+          index: s.problem.index,
+          time: s.creationTimeSeconds,
+          verdict: s.verdict ?? 'UNKNOWN',
+        })),
+      warnings: cache?.warnings ?? ['尚未获取完整榜单和题集，联网后可补充分析。'],
+    };
   }
   statistics(h: string, now = new Date()): Statistics {
     const rows = this.problems(h).filter((p) => !p.review.ignored),
@@ -423,7 +512,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: this.handles(),
@@ -442,6 +531,17 @@ export class CoreStore {
     };
   }
   restore(input: unknown) {
+    // Upgrade legacy backups in memory before validation, without mutating the caller's object.
+    if (
+      input &&
+      typeof input === 'object' &&
+      'version' in input &&
+      input.version === 1 &&
+      'tables' in input &&
+      input.tables &&
+      typeof input.tables === 'object'
+    )
+      input = { ...input, tables: { ...input.tables, analysis_cache: [] } };
     const data = backupSchema.parse(input);
     if (
       new Set(data.profiles).size !== data.profiles.length ||
@@ -461,7 +561,8 @@ export class CoreStore {
         const v = row.value as Record<string, unknown>;
         if (
           (t === 'problems' && v.key !== row.key) ||
-          (['submissions', 'contests', 'attempts', 'jobs'].includes(t) && String(v.id) !== row.key) ||
+          (['submissions', 'contests', 'attempts', 'jobs', 'analysis_cache'].includes(t) &&
+            String(v.id) !== row.key) ||
           (t === 'jobs' && v.handle !== row.profile)
         )
           throw new Error('备份记录编号不一致');
@@ -481,6 +582,8 @@ export class CoreStore {
       }
     for (const row of data.tables.contest_reviews)
       if (!known.get('contests')!.has(`${row.profile}\0${row.key}`)) throw new Error('备份缺少关联比赛');
+    for (const row of data.tables.analysis_cache)
+      if (!known.get('contests')!.has(`${row.profile}\0${row.key}`)) throw new Error('备份缺少分析关联比赛');
     const backupPath = this.beforeRestore?.(this.backup()) ?? null;
     this.transaction(() => {
       for (const t of tables) this.db.exec(`DELETE FROM ${t}`);

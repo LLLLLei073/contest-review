@@ -8,6 +8,8 @@ test('legacy backups, IndexedDB persistence, offline reload and tab ownership', 
   original.activate('offline_tester');
   original.ingest('offline_tester', fixtureSubmissions);
   const backup = original.backup();
+  backup.version = 1;
+  delete backup.tables.analysis_cache;
   original.close();
   const backendRequests: string[] = [];
   page.on('request', (r) => {
@@ -15,13 +17,11 @@ test('legacy backups, IndexedDB persistence, offline reload and tab ownership', 
       backendRequests.push(r.url());
   });
   await page.goto('./#/settings');
-  await page
-    .getByLabel('选择备份文件')
-    .setInputFiles({
-      name: 'local-v1.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(backup)),
-    });
+  await page.getByLabel('选择备份文件').setInputFiles({
+    name: 'local-v1.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(backup)),
+  });
   page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
   await expect(page.locator('.profile-chip')).toContainText('offline_tester');

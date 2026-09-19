@@ -5,7 +5,7 @@ import { browserRuntime } from './database';
 
 export async function browserApi<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
   const runtime = await browserRuntime(),
-    { store, sync, cf } = runtime;
+    { store, sync, cf, analysis } = runtime;
   const url = new URL(path, 'https://local.invalid'),
     route = url.pathname;
   const profile = () => {
@@ -14,7 +14,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     return h;
   };
   const idle = () => {
-    if (sync.running) throw new Error('请等待当前同步完成');
+    if (sync.running || analysis.running) throw new Error('请等待当前同步或比赛分析完成');
   };
   const isWrite = !['GET', 'HEAD'].includes(method);
   if (isWrite) runtime.assertWritable();
@@ -46,6 +46,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       navigator.storage?.persist?.().catch(() => {});
     } else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
     else if (route === '/sync' && method === 'POST') {
+      if (analysis.running) throw new Error('请等待比赛分析完成');
       const data = z
         .object({
           mode: z.enum(['full', 'incremental']).default('incremental'),
@@ -147,7 +148,12 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     } else if (/^\/problems\/[^/]+\/attempts$/.test(route) && method === 'POST')
       result = store.attempt(profile(), decodeURIComponent(route.split('/')[2]), attemptSchema.parse(body));
     else if (route === '/contests' && method === 'GET') result = store.contests(store.active());
-    else if (/^\/contests\/\d+\/review$/.test(route) && method === 'PUT') {
+    else if (/^\/contests\/\d+\/analysis$/.test(route) && method === 'GET')
+      result = analysis.get(profile(), z.coerce.number().int().positive().parse(route.split('/')[2]));
+    else if (/^\/contests\/\d+\/analysis\/refresh$/.test(route) && method === 'POST') {
+      if (sync.running) throw new Error('请等待当前同步完成');
+      result = analysis.start(profile(), z.coerce.number().int().positive().parse(route.split('/')[2]));
+    } else if (/^\/contests\/\d+\/review$/.test(route) && method === 'PUT') {
       const id = Number(route.split('/')[2]),
         h = profile(),
         row = store.contests(h).find((c) => c.id === id);
@@ -166,6 +172,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     } else if (route === '/backup/restore' && method === 'POST') {
       idle();
       result = store.restore(body);
+      analysis.reset();
     } else throw new Error('未知操作');
     if (isWrite) await runtime.flush();
     return result as T;

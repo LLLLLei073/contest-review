@@ -64,7 +64,13 @@ export interface CFSubmission {
   };
   verdict?: string;
   programmingLanguage: string;
-  author: { participantType: string; startTimeSeconds?: number };
+  author: {
+    participantType: string;
+    startTimeSeconds?: number;
+    teamId?: number;
+    members?: { handle: string }[];
+    ghost?: boolean;
+  };
 }
 export interface CFContest {
   id: number;
@@ -72,6 +78,8 @@ export interface CFContest {
   startTimeSeconds?: number;
   durationSeconds?: number;
   phase?: string;
+  type?: 'CF' | 'IOI' | 'ICPC';
+  frozen?: boolean;
 }
 export interface CFRating {
   contestId: number;
@@ -79,6 +87,7 @@ export interface CFRating {
   oldRating: number;
   newRating: number;
   rank: number;
+  ratingUpdateTimeSeconds?: number;
 }
 export interface ContestReview {
   timeAllocation: string;
@@ -94,6 +103,9 @@ export interface ContestRow {
   solvedCount: number;
   rating?: CFRating;
   review: ContestReview;
+  inContestSolved: number | null;
+  analysisStatus: string;
+  analysisScore: number | null;
 }
 export interface SyncJob {
   id: string;

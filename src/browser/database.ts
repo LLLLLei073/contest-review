@@ -2,6 +2,7 @@ import initSqlJs, { type Database } from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { CoreStore, type DatabaseLike, type SQLValue } from '../../shared/core-store';
 import { CodeforcesClient, SyncService } from '../../shared/sync';
+import { AnalysisService } from '../../shared/analysis-service';
 
 class BrowserSQLite implements DatabaseLike {
   constructor(public raw: Database) {}
@@ -77,6 +78,7 @@ export class BrowserRuntime {
   readonly store: CoreStore;
   readonly cf = new CodeforcesClient((url, options) => fetch(url, { ...options, credentials: 'omit' }));
   readonly sync: SyncService;
+  readonly analysis: AnalysisService;
   private writes: Promise<void> = Promise.resolve();
   private pendingWrites = 0;
   private previous: unknown;
@@ -90,8 +92,9 @@ export class BrowserRuntime {
       return '当前浏览器，可下载恢复前备份';
     });
     this.sync = new SyncService(this.store, this.cf, 1000, () => this.flush());
+    this.analysis = new AnalysisService(this.store, this.cf, () => this.flush());
     window.addEventListener('beforeunload', (event) => {
-      if (this.pendingWrites || this.sync.running) {
+      if (this.pendingWrites || this.sync.running || this.analysis.running) {
         event.preventDefault();
         event.returnValue = '';
       }
