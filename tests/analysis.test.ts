@@ -15,12 +15,84 @@ test('fixed scoring: rank cohort, difficulty, failures before first AC and histo
   );
   assert.ok(Math.abs(report.parts[3].score! - 78.3333333333) < 1e-6);
   assert.equal(report.score, 62);
+  assert.equal(report.performanceRating.value, 1400);
+  assert.equal(report.performanceRating.method, 'rank');
+  assert.equal(report.performanceRating.seed, 11);
+  assert.equal(report.performanceRating.targetRank, 11);
   assert.equal(report.provisional, false);
   assert.equal(report.solved, 1);
   assert.equal(report.timeline[1].ac, null);
   assert.equal(report.advice.find((a) => a.id === 'repeat-A')?.submissionIds.length, 3);
   assert.ok(report.advice.some((a) => a.id === 'runtime'));
   assert.ok(report.advice.some((a) => a.id === 'upsolve-B'));
+});
+
+test('CF performance uses geometric mean rank, tied rated positions and rating bounds', () => {
+  const data = fixtureInput();
+  data.contest = { ...data.contest, rating: { ...data.contest.rating! } };
+  data.cache!.standings.rows.forEach((r, i) => {
+    if (r.party.members[0].handle !== 'tester') r.rank = i + 2;
+  });
+  data.cache!.standings.rows.find((r) => r.party.members[0].handle === 'tester')!.rank = 1;
+  const stronger = analyzeContest(data)[0].performanceRating;
+  assert.equal(stronger.method, 'rank');
+  assert.ok(stronger.value! > 1400);
+  assert.ok(Math.abs(stronger.targetRank! - Math.sqrt(11)) < 1e-9);
+  data.cache!.standings.rows.forEach((r) => (r.rank = 1));
+  const tied = analyzeContest(data)[0].performanceRating;
+  assert.equal(tied.targetRank, 11);
+  assert.equal(tied.value, 1400);
+  data.cache!.ratings.forEach((r) => (r.oldRating = 4000));
+  data.contest.rating!.oldRating = 4000;
+  data.cache!.standings.rows.find((r) => r.party.members[0].handle === 'tester')!.rank = 1;
+  data.cache!.standings.rows.forEach((r) => {
+    if (r.party.members[0].handle !== 'tester') r.rank = 2;
+  });
+  assert.deepEqual(
+    [analyzeContest(data)[0].performanceRating.value, analyzeContest(data)[0].performanceRating.bound],
+    [4000, 'upper'],
+  );
+  data.cache!.ratings.forEach((r) => (r.oldRating = 1));
+  data.contest.rating!.oldRating = 1;
+  data.cache!.standings.rows.find((r) => r.party.members[0].handle === 'tester')!.rank = 99;
+  data.cache!.standings.rows.forEach((r) => {
+    if (r.party.members[0].handle !== 'tester') r.rank = 1;
+  });
+  assert.deepEqual(
+    [analyzeContest(data)[0].performanceRating.value, analyzeContest(data)[0].performanceRating.bound],
+    [0, 'lower'],
+  );
+});
+
+test('difficulty fallback covers virtual and unrated rounds, but not incomplete or practice results', () => {
+  const data = fixtureInput();
+  data.contest = { ...data.contest, rating: undefined };
+  data.cache!.standings.problems.push({ contestId: 9000, index: 'C', name: 'C', rating: 1600, tags: [] });
+  data.problems.push({ contestId: 9000, index: 'C', name: 'C', rating: 1600, tags: [] });
+  data.cache!.ratings = [];
+  let report = analyzeContest(data)[0];
+  assert.equal(report.performanceRating.method, 'difficulty');
+  assert.equal(report.performanceRating.samples, 3);
+  const oneAC = report.performanceRating.value!;
+  data.submissions = [submission(40, 100, 'WRONG_ANSWER')];
+  report = analyzeContest(data)[0];
+  assert.ok(report.performanceRating.value! < oneAC);
+  data.submissions = ['A', 'B', 'C'].map((index, i) => submission(50 + i, 100 + i, 'OK', index));
+  report = analyzeContest(data)[0];
+  assert.ok(report.performanceRating.value! > oneAC);
+  data.submissions = [submission(60, 100, 'OK', 'A', 'VIRTUAL', 1731000000)];
+  report = analyzeContest(data)[0];
+  assert.equal(report.performanceRating.method, 'difficulty');
+  data.cache!.standings.problems[1].rating = undefined;
+  assert.equal(analyzeContest(data)[0].performanceRating.value, null);
+  data.cache!.standings.problems[1].rating = 1400;
+  data.submissions = [submission(60, 100, 'OK', 'A', 'PRACTICE')];
+  data.cache!.standings.rows = [];
+  assert.equal(analyzeContest(data).length, 0);
+  data.submissions = [submission(60, 4000, 'OK', 'A', 'VIRTUAL', 1731000000)];
+  report = analyzeContest(data)[0];
+  assert.equal(report.solved, 0);
+  assert.ok(report.performanceRating.value! < oneAC);
 });
 test('submission boundary, rejudgement, unknown, after-AC failure and duplicate AC', () => {
   const data = fixtureInput();
@@ -59,6 +131,10 @@ test('practice excluded, repeated virtual sessions separate, missing clock and t
   assert.ok(reports.every((r) => r.solved === 1 && r.official === null && r.parts[0].score === null));
   data.submissions[0].author.teamId = 1;
   assert.equal(analyzeContest(data).find((r) => r.session.start === 1731000000)!.score, null);
+  assert.equal(
+    analyzeContest(data).find((r) => r.session.start === 1731000000)!.performanceRating.value,
+    null,
+  );
   data.cache = undefined;
   data.contest = { id: 9000, name: 'Unknown' };
   data.submissions = [submission(1, 100)];
@@ -97,11 +173,13 @@ test('future ratings and future pace history never change an old report; incompl
   assert.equal(analyzeContest(data)[0].parts[3].score, null);
   data.cache!.submissionsComplete = false;
   assert.ok(analyzeContest(data)[0].parts.every((p) => p.score === null));
+  assert.equal(analyzeContest(data)[0].performanceRating.value, null);
 });
 test('unsettled contest is provisional; advice thresholds and no unsupported negative diagnosis', () => {
   const data = fixtureInput();
   data.cache!.standings.contest = { ...contest, phase: 'SYSTEM_TEST' };
   assert.equal(analyzeContest(data)[0].provisional, true);
+  assert.equal(analyzeContest(data)[0].performanceRating.value, null);
   data.submissions = [submission(1, 100), submission(2, 200, 'OK', 'B')];
   assert.deepEqual(
     analyzeContest(data)[0].advice.map((a) => a.id),

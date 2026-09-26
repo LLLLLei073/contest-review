@@ -69,7 +69,8 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <p class="small subtle">
-      根据最新同步判定分析；无法还原历史评测过程。表现分为本站复盘指标，不等同于 CF Rating。
+      根据最新同步判定分析；无法还原历史评测过程。预估 CF 表现分是本站估算，不代表官方 Rating 变化，也不能与
+      XCPC 来源分直接换算。
     </p>
     <p v-if="report?.fetchedAt" class="small subtle">
       数据更新：{{ new Date(report.fetchedAt).toLocaleString('zh-CN') }} · 算法 v{{
@@ -96,13 +97,31 @@ onBeforeUnmount(() => {
     <template v-if="current">
       <div class="report-score">
         <div>
-          <span class="eyebrow">{{ labels[current.session.type] }} / PERFORMANCE</span>
+          <span class="eyebrow">{{ labels[current.session.type] }} / CF PERFORMANCE</span>
           <div class="score-value">
-            {{ current.score ?? '—' }}<small v-if="current.score !== null"> / 100</small>
+            {{
+              current.performanceRating.bound === 'upper'
+                ? '≥'
+                : current.performanceRating.bound === 'lower'
+                  ? '≤'
+                  : ''
+            }}{{ current.performanceRating.value ?? '—'
+            }}<small v-if="current.performanceRating.value !== null"> CF Rating</small>
           </div>
-          <strong>{{
-            current.score === null ? '数据不足，暂不生成总分' : current.provisional ? '暂估分' : '综合表现分'
-          }}</strong>
+          <strong>本站预估表现分</strong>
+          <p class="performance-method">
+            {{
+              current.performanceRating.method === 'rank'
+                ? '正式赛 · 名次反推'
+                : current.performanceRating.method === 'difficulty'
+                  ? '低置信度 · 难度估算'
+                  : current.performanceRating.reason
+            }}
+          </p>
+          <div class="score-secondary">
+            综合复盘分 <b>{{ current.score === null ? '—' : `${current.score} / 100` }}</b
+            ><span v-if="current.score !== null && current.provisional"> · 暂估</span>
+          </div>
         </div>
         <div class="score-facts">
           <span
@@ -116,6 +135,23 @@ onBeforeUnmount(() => {
           >
         </div>
       </div>
+      <details class="report-context performance-details">
+        <summary>预估表现分的依据 · 算法 v{{ current.performanceRating.version }}</summary>
+        <p>{{ current.performanceRating.reason }}</p>
+        <p v-if="current.performanceRating.method === 'rank'">
+          同场赛前 Rating 算出预期名次 seed；目标名次 = √(seed × 实际名次)，再反求对应 Rating。样本：{{
+            current.performanceRating.samples
+          }}
+          名对照选手。
+        </p>
+        <p v-else-if="current.performanceRating.method === 'difficulty'">
+          按题目难度估计各题 AC 概率，反求与赛时 AC 数匹配的 Rating；全 AC、零 AC 使用平滑目标。样本：{{
+            current.performanceRating.samples
+          }}
+          题。此法与 XCPC 的名次反推不同。
+        </p>
+        <p v-if="current.performanceRating.bound">结果超出 0–4000 的显示范围，仅显示边界。</p>
+      </details>
       <p v-for="warning in current.warnings" :key="warning" class="small subtle">{{ warning }}</p>
       <div class="score-parts">
         <article v-for="part in current.parts" :key="part.id" class="score-part">

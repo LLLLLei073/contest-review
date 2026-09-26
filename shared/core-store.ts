@@ -484,6 +484,8 @@ export class CoreStore {
               ? '待分析'
               : '仅练习 / 无参赛记录',
           analysisScore: result?.score ?? null,
+          performanceRating: result?.performanceRating.value ?? null,
+          performanceBound: result?.performanceRating.bound ?? null,
           review: this.get<ContestReview>('contest_reviews', h, String(id)) || {
             timeAllocation: '',
             mistakes: '',

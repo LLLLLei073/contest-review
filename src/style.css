@@ -2076,6 +2076,23 @@ svg {
   font-size: 18px;
   opacity: 0.7;
 }
+.performance-method {
+  margin: 8px 0 0;
+  color: #d9e8dc;
+  font-size: 13px;
+}
+.score-secondary {
+  margin-top: 18px;
+  font-size: 14px;
+  color: #d9e8dc;
+}
+.score-secondary b {
+  color: white;
+  margin-left: 5px;
+}
+.performance-details {
+  margin: -8px 0 20px;
+}
 .score-facts {
   display: grid;
   gap: 10px;

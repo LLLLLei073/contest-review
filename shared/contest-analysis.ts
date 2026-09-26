@@ -91,11 +91,22 @@ export interface ProblemTimeline {
   failures: number;
   events: { id: number; seconds: number; verdict: string; url: string }[];
 }
+export interface PerformanceRating {
+  version: '1.0';
+  value: number | null;
+  bound: 'lower' | 'upper' | null;
+  method: 'rank' | 'difficulty' | null;
+  samples: number;
+  reason: string;
+  seed: number | null;
+  targetRank: number | null;
+}
 export interface ContestAnalysis {
   contestId: number;
   version: '1.0';
   session: Omit<Session, 'submissions'>;
   score: number | null;
+  performanceRating: PerformanceRating;
   provisional: boolean;
   eligibleWeight: number;
   parts: ScorePart[];
@@ -136,6 +147,103 @@ const median = (values: number[]) => {
   return (a[Math.floor((a.length - 1) / 2)] + a[Math.floor(a.length / 2)]) / 2;
 };
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
+const ratingChance = (candidate: number, opponent: number) => 1 / (1 + 10 ** ((candidate - opponent) / 400));
+function inverseRating(target: number, expected: (rating: number) => number) {
+  if (target >= expected(0)) return { value: 0, bound: 'lower' as const };
+  if (target <= expected(4000)) return { value: 4000, bound: 'upper' as const };
+  let low = 0,
+    high = 4000;
+  for (let i = 0; i < 40; i++) {
+    const mid = (low + high) / 2;
+    if (expected(mid) > target) low = mid;
+    else high = mid;
+  }
+  return { value: Math.round((low + high) / 2), bound: null };
+}
+function estimatePerformance(
+  session: Session,
+  timeline: ProblemTimeline[],
+  ranked: NonNullable<AnalysisCache['standings']>['rows'],
+  ratings: AnalysisCache['ratings'],
+  handle: string,
+  ownRating: number | null,
+  eligible: boolean,
+): PerformanceRating {
+  const base: PerformanceRating = {
+    version: '1.0',
+    value: null,
+    bound: null,
+    method: null,
+    samples: 0,
+    reason: '',
+    seed: null,
+    targetRank: null,
+  };
+  if (!eligible)
+    return {
+      ...base,
+      reason: '需要已结束且未封榜的个人参赛、完整赛时提交及已确定的判定。',
+    };
+  if (session.type === 'CONTESTANT' && ownRating !== null) {
+    const oldRatings = new Map(
+      ratings.filter((r) => r.oldRating > 0).map((r) => [r.handle.toLowerCase(), r.oldRating]),
+    );
+    const own = ranked.find((r) => r.party.members[0].handle.toLowerCase() === handle.toLowerCase());
+    if (own) {
+      const opponents = ranked.flatMap((r) => {
+        const name = r.party.members[0].handle.toLowerCase();
+        const rating = oldRatings.get(name);
+        return name !== handle.toLowerCase() && rating !== undefined ? [{ rank: r.rank, rating }] : [];
+      });
+      if (opponents.length >= 20) {
+        const actualRank =
+          1 +
+          opponents.filter((r) => r.rank < own.rank).length +
+          opponents.filter((r) => r.rank === own.rank).length / 2;
+        const expected = (rating: number) =>
+          1 + opponents.reduce((sum, r) => sum + ratingChance(rating, r.rating), 0);
+        const seed = expected(ownRating);
+        const targetRank = Math.sqrt(seed * actualRank);
+        const inverse = inverseRating(targetRank, expected);
+        return {
+          ...base,
+          ...inverse,
+          method: 'rank',
+          samples: opponents.length,
+          seed,
+          targetRank,
+          reason: `同场 ${opponents.length} 名有赛前 Rating 的个人选手；预期名次 ${seed.toFixed(1)}，实际名次 ${actualRank.toFixed(1)}，几何平均 ${targetRank.toFixed(1)}。`,
+        };
+      }
+    }
+  }
+  const rated = timeline.filter((p) => p.rating !== undefined && p.rating > 0);
+  if (timeline.length < 3 || rated.length < 3 || rated.length / timeline.length < 0.8)
+    return { ...base, reason: '名次对照不足；难度估算至少需要 3 道有难度的题，且覆盖完整题集的 80%。' };
+  const solved = rated.filter((p) => p.ac !== null).length;
+  const target = (rated.length * (solved + 0.5)) / (rated.length + 1);
+  const expected = (rating: number) => rated.reduce((sum, p) => sum + 1 - ratingChance(rating, p.rating!), 0);
+  // Expected solves increase with rating, unlike expected rank.
+  let low = 0,
+    high = 4000;
+  let bound: PerformanceRating['bound'] = null;
+  if (target <= expected(low)) bound = 'lower';
+  else if (target >= expected(high)) bound = 'upper';
+  else
+    for (let i = 0; i < 40; i++) {
+      const mid = (low + high) / 2;
+      if (expected(mid) < target) low = mid;
+      else high = mid;
+    }
+  return {
+    ...base,
+    value: bound === 'lower' ? 0 : bound === 'upper' ? 4000 : Math.round((low + high) / 2),
+    bound,
+    method: 'difficulty',
+    samples: rated.length,
+    reason: `低置信度难度估算：${rated.length}/${timeline.length} 题有难度，赛时 AC ${solved} 题；平滑目标完成数 ${target.toFixed(2)}。`,
+  };
+}
 const personal = (p: CFSubmission['author']) =>
   !p.teamId && !p.ghost && (!p.members || p.members.length === 1);
 export function contestSessions(contest: CFContest, all: CFSubmission[]): Session[] {
@@ -392,6 +500,22 @@ export function analyzeContest(input: AnalysisInput): ContestAnalysis[] {
       eligibleWeight >= 65 && valid.some((p) => p.id === 'rank' || p.id === 'difficulty')
         ? Math.round(valid.reduce((n, p) => n + p.weight * p.score!, 0) / eligibleWeight)
         : null;
+    const contestOldRating = ownChange?.oldRating ?? input.contest.rating?.oldRating;
+    const performanceRating = estimatePerformance(
+      session,
+      timeline,
+      ranked,
+      cache?.ratings ?? [],
+      handle,
+      session.type === 'CONTESTANT' && contestOldRating && contestOldRating > 0 ? contestOldRating : null,
+      !!cache &&
+        finished &&
+        complete &&
+        !unsettled &&
+        session.start !== null &&
+        session.duration !== null &&
+        !session.team,
+    );
     const advice: Advice[] = [];
     const add = (
       id: string,
@@ -507,6 +631,7 @@ export function analyzeContest(input: AnalysisInput): ContestAnalysis[] {
       version: '1.0',
       session: sessionInfo,
       score,
+      performanceRating,
       provisional: valid.length < 4 || !finished || unsettled,
       eligibleWeight,
       parts,

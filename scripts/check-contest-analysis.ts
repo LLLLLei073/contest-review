@@ -17,7 +17,7 @@ const candidates = standings.rows.filter(
     r.party.members.length === 1 &&
     !r.party.teamId &&
     r.points > 0 &&
-    ratingByHandle.has(r.party.members[0].handle.toLowerCase()),
+    (ratingByHandle.get(r.party.members[0].handle.toLowerCase())?.oldRating ?? 0) > 0,
 );
 const row = candidates[Math.floor(candidates.length / 2)];
 assert.ok(row, 'No rated individual contestant available');
@@ -47,6 +47,8 @@ try {
   assert.equal(official.official?.rank, row.rank);
   assert.equal(official.official?.points, row.points);
   assert.equal(official.preRating, ratingByHandle.get(handle.toLowerCase())?.oldRating);
+  assert.equal(official.performanceRating.method, 'rank');
+  assert.ok(official.performanceRating.value !== null);
   assert.ok(
     official.timeline
       .flatMap((p) => p.events)
@@ -62,6 +64,7 @@ try {
     solved: official.solved,
     submissions: official.submissions,
     score: official.score,
+    performanceRating: official.performanceRating,
     parts: official.parts,
     task: report.task,
     warnings: official.warnings,

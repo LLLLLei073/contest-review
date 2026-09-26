@@ -18,6 +18,8 @@ type ContestView = {
   inContestSolved: number | null;
   analysisStatus: string;
   analysisScore: number | null;
+  performanceRating?: number | null;
+  performanceBound?: 'lower' | 'upper' | null;
   rating?: CFRating;
   teamName?: string;
   tier?: string;
@@ -238,7 +240,11 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         <div class="contest-bottom">
           <span
             >{{ c.source === 'cf' ? '赛时 AC' : '队伍解题' }} {{ c.inContestSolved ?? '—' }} ·
-            {{ c.analysisStatus }}{{ c.analysisScore === null ? '' : ` ${c.analysisScore}` }}</span
+            {{
+              c.source === 'cf' && c.performanceRating !== null && c.performanceRating !== undefined
+                ? `预估 CF 表现分 ${c.performanceBound === 'upper' ? '≥' : c.performanceBound === 'lower' ? '≤' : ''}${c.performanceRating} · 综合复盘分 ${c.analysisScore === null ? '—' : `${c.analysisScore}/100`}`
+                : `${c.analysisStatus}${c.analysisScore === null ? '' : ` ${c.analysisScore}`}`
+            }}</span
           ><span v-if="c.rating" :class="{ positive: c.rating.newRating >= c.rating.oldRating }"
             >{{ c.rating.newRating - c.rating.oldRating >= 0 ? '+' : ''
             }}{{ c.rating.newRating - c.rating.oldRating }} Rating</span

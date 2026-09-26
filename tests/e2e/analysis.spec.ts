@@ -51,7 +51,8 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
     .first()
     .click();
   await expect(page.getByText('分析已更新', { exact: true })).toBeVisible({ timeout: 20000 });
-  await expect(page.locator('.score-value')).toContainText('62');
+  await expect(page.locator('.score-value')).toContainText('1400');
+  await expect(page.locator('.score-secondary')).toContainText('62 / 100');
   await expect(page.locator('.score-part').first()).toContainText('20 人');
   await expect(page.locator('.timeline-problem').nth(1)).toContainText('未尝试');
   await expect(page.locator('.advice-card').first()).toContainText('3 次失败');
@@ -64,7 +65,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
     .getByRole('button', { name: /Analysis Fixture Round/ })
     .first()
     .click();
-  await expect(page.locator('.score-value')).toContainText('62');
+  await expect(page.locator('.score-value')).toContainText('1400');
   await expect(page.getByLabel('关键失误', { exact: true })).toHaveValue('自动分析后的补充笔记');
   if (isPages) {
     await page.evaluate(async () => {
@@ -76,7 +77,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
       .getByRole('button', { name: /Analysis Fixture Round/ })
       .first()
       .click();
-    await expect(page.locator('.score-value')).toContainText('62');
+    await expect(page.locator('.score-value')).toContainText('1400');
     await context.setOffline(false);
     // A refresh error must preserve the report and personal notes.
     await page.route('https://codeforces.com/api/contest.standings*', (r) =>
@@ -84,7 +85,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
     );
     await page.getByRole('button', { name: '刷新分析' }).click();
     await expect(page.getByRole('status')).toContainText('HTTP 503', { timeout: 20000 });
-    await expect(page.locator('.score-value')).toContainText('62');
+    await expect(page.locator('.score-value')).toContainText('1400');
   }
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

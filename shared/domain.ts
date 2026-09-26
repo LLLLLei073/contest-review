@@ -106,6 +106,8 @@ export interface ContestRow {
   inContestSolved: number | null;
   analysisStatus: string;
   analysisScore: number | null;
+  performanceRating: number | null;
+  performanceBound: 'lower' | 'upper' | null;
 }
 export interface SyncJob {
   id: string;
