@@ -1,7 +1,7 @@
 :root {
   font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  color: #26372f;
-  background: #f6f7f3;
+  color: #21352b;
+  background: #f7f8f4;
   font-synthesis: none;
   font-size: 14px;
   --green: #28553e;
@@ -11,6 +11,10 @@
   --line: #e5e9e1;
   --paper: #fff;
   --accent: #e8b565;
+  --motion-fast: 180ms;
+  --motion-standard: 320ms;
+  --motion-land: linear(0, 0.32 8%, 0.79 20%, 1.03 30%, 1.01 46%, 1);
+  --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 * {
   box-sizing: border-box;
@@ -43,8 +47,9 @@ button,
   font-weight: 600;
   cursor: pointer;
   transition:
-    background 0.16s,
-    border-color 0.16s;
+    background var(--motion-fast) var(--motion-out),
+    border-color var(--motion-fast) var(--motion-out),
+    transform var(--motion-fast) var(--motion-land);
 }
 button:hover,
 .button:hover {
@@ -112,10 +117,11 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 30px;
-  font-weight: 650;
-  letter-spacing: -0.9px;
-  line-height: 1.5;
+  font-family: 'STSong', 'Songti SC', 'Noto Serif CJK SC', serif;
+  font-size: clamp(28px, 2.25vw, 35px);
+  font-weight: 700;
+  letter-spacing: -0.7px;
+  line-height: 1.35;
 }
 h2 {
   font-size: 18px;
@@ -763,6 +769,7 @@ svg {
 }
 .sr-only {
   position: absolute;
+  inset: 0 auto auto 0;
   width: 1px;
   height: 1px;
   overflow: hidden;
@@ -2029,15 +2036,6 @@ svg {
     display: none;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *:before,
-  *:after {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
 /* Automated contest report */
 .auto-report {
   margin: 28px 0;
@@ -2240,7 +2238,9 @@ svg {
   gap: 12px;
 }
 .daily-number {
-  font: 12px Consolas, monospace;
+  font:
+    12px Consolas,
+    monospace;
   color: #96a38c;
   padding-top: 2px;
 }
@@ -2281,7 +2281,7 @@ svg {
   font-size: 10px;
   gap: 3px;
 }
-.daily-attempt input[aria-label="补充笔记"] {
+.daily-attempt input[aria-label='补充笔记'] {
   grid-column: 1 / -1;
   width: 100%;
 }
@@ -2313,7 +2313,8 @@ svg {
   font-size: 15px;
   margin: 0 3px;
 }
-.mastery-panel, .daily-history {
+.mastery-panel,
+.daily-history {
   margin: 22px 0;
 }
 .mastery-content {
@@ -2327,7 +2328,8 @@ svg {
   width: 100%;
   max-width: 350px;
 }
-.radar-ring, .radar-axis {
+.radar-ring,
+.radar-axis {
   fill: none;
   stroke: #dfe8da;
   stroke-width: 1;
@@ -2387,17 +2389,32 @@ svg {
   color: var(--green);
 }
 @media (max-width: 1100px) {
-  .daily-columns { grid-template-columns: 1fr; }
+  .daily-columns {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 800px) {
-  .mastery-content { grid-template-columns: 1fr; justify-items: center; }
-  .mastery-list { width: 100%; }
-  .daily-history-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mastery-content {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .mastery-list {
+    width: 100%;
+  }
+  .daily-history-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 @media (max-width: 520px) {
-  .daily-task { padding: 16px; }
-  .daily-history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .mastery-list { grid-template-columns: 1fr; }
+  .daily-task {
+    padding: 16px;
+  }
+  .daily-history-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mastery-list {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 700px) {
   .score-parts {
@@ -2405,5 +2422,334 @@ svg {
   }
   .report-score {
     padding: 20px;
+  }
+}
+
+/* Motion language: deliberate feedback, still content and cheap transforms. */
+.sidebar nav {
+  position: relative;
+  isolation: isolate;
+}
+.nav-indicator {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: 8px;
+  background: #e7eee3;
+  box-shadow: inset 3px 0 #74906c;
+  will-change: transform;
+}
+.sidebar nav a {
+  position: relative;
+  z-index: 1;
+  transition:
+    color var(--motion-fast) var(--motion-out),
+    transform var(--motion-fast) var(--motion-land);
+}
+.sidebar nav a.active {
+  background: transparent;
+}
+.sidebar nav a:hover {
+  background: #edf1e9;
+}
+.sidebar nav a.active:hover {
+  background: transparent;
+}
+.sidebar nav a:not(.active):hover {
+  transform: translateX(3px);
+}
+.sidebar nav a:active {
+  transform: scale(0.97);
+}
+.sidebar-bottom > a {
+  transition:
+    color var(--motion-fast) var(--motion-out),
+    background var(--motion-fast) var(--motion-out);
+}
+button:not(:disabled):not(.contest-item):active,
+.button:active {
+  transform: scale(0.97);
+}
+.text-link svg,
+.back-link svg {
+  transition: transform var(--motion-fast) var(--motion-out);
+}
+.text-link:hover svg,
+.back-link:hover svg {
+  transform: translateX(3px);
+}
+.profile-chip {
+  transition:
+    border-color var(--motion-fast) var(--motion-out),
+    background var(--motion-fast) var(--motion-out);
+}
+.profile-chip:hover {
+  border-color: #acc2aa;
+  background: #f4f8f1;
+}
+.panel {
+  border-color: #dce5da;
+}
+.page-head {
+  margin-bottom: 32px;
+}
+.page-head .eyebrow {
+  color: #687f69;
+}
+.page-head p {
+  color: #667667;
+}
+.metric {
+  transition:
+    border-color var(--motion-fast) var(--motion-out),
+    background var(--motion-fast) var(--motion-out);
+}
+.metric:hover {
+  border-color: #c4d4c0;
+}
+.toast {
+  box-shadow: 0 13px 35px #173d2b30;
+}
+.notice-enter-active,
+.notice-leave-active {
+  transition:
+    transform var(--motion-standard) var(--motion-land),
+    opacity var(--motion-fast) var(--motion-out);
+}
+.notice-enter-from,
+.notice-leave-to {
+  transform: translateY(12px) scale(0.96);
+  opacity: 0;
+}
+.daily-panel .section-head {
+  align-items: flex-end;
+}
+.daily-progress {
+  flex: 0 0 76px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #e7ede3;
+  margin-bottom: 7px;
+}
+.daily-progress span,
+.history-progress i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: #5d8965;
+  transform-origin: left center;
+  transition: transform 420ms var(--motion-out);
+}
+.daily-task {
+  position: relative;
+  transition: background var(--motion-fast) var(--motion-out);
+}
+.daily-task::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: transparent;
+  transition:
+    background var(--motion-fast) var(--motion-out),
+    transform var(--motion-standard) var(--motion-land);
+  transform: scaleY(0.35);
+}
+.daily-task:hover {
+  background: #fafcf8;
+}
+.daily-task:hover::before {
+  background: #91ad8c;
+  transform: scaleY(1);
+}
+.daily-task[data-phase='reflection']::before {
+  background: #d6ad72;
+  transform: scaleY(1);
+}
+.daily-task[data-phase='evaluation']::before {
+  background: #7a9b78;
+  transform: scaleY(1);
+}
+.daily-task[data-phase='done']::before {
+  background: #89a785;
+  transform: scaleY(0.6);
+}
+.daily-task-content strong {
+  color: #173d2b;
+}
+.daily-task .badge {
+  align-self: flex-start;
+}
+.task-state-enter-active,
+.task-state-leave-active {
+  transition:
+    transform var(--motion-fast) var(--motion-land),
+    opacity var(--motion-fast) var(--motion-out);
+}
+.task-state-enter-from {
+  transform: scale(0.88) translateY(3px);
+  opacity: 0;
+}
+.task-state-leave-to {
+  transform: scale(0.94);
+  opacity: 0;
+}
+.daily-attempt {
+  border: 1px solid #e2e9df;
+  animation: motion-open var(--motion-standard) var(--motion-out) both;
+}
+@keyframes motion-open {
+  from {
+    opacity: 0.45;
+    transform: translateY(-5px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mastery-radar {
+  overflow: visible;
+}
+.radar-value {
+  fill: #72a47b4d;
+  stroke-width: 2.4;
+}
+.radar-dot {
+  stroke: white;
+  stroke-width: 1.5;
+}
+.mastery-row {
+  transition:
+    background var(--motion-fast) var(--motion-out),
+    padding var(--motion-fast) var(--motion-out);
+}
+.mastery-row:hover {
+  background: #f7faf5;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.history-progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #e1e9dc;
+  margin-top: 2px;
+}
+.daily-history-day {
+  transition: background var(--motion-fast) var(--motion-out);
+}
+.daily-history-day:hover {
+  background: #eff5eb;
+}
+.bar-stack > div {
+  transform-origin: bottom center;
+  animation: chart-grow 480ms var(--motion-out) both;
+}
+.bar-stack > div:nth-child(2) {
+  animation-delay: 35ms;
+}
+.bar-stack > div:nth-child(3) {
+  animation-delay: 70ms;
+}
+@keyframes chart-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.contest-item {
+  transition:
+    background var(--motion-fast) var(--motion-out),
+    box-shadow var(--motion-standard) var(--motion-out);
+}
+.contest-item.selected {
+  box-shadow: inset 4px 0 #62884b;
+}
+.report-switch-enter-active,
+.report-switch-leave-active {
+  transition:
+    opacity var(--motion-fast) var(--motion-out),
+    transform var(--motion-standard) var(--motion-out);
+}
+.report-switch-enter-from {
+  opacity: 0.35;
+  transform: translateY(8px);
+}
+.report-switch-leave-to {
+  opacity: 0;
+  transform: translateY(-5px);
+}
+.report-score {
+  animation: report-land var(--motion-standard) var(--motion-out) both;
+}
+.score-parts {
+  animation: report-land var(--motion-standard) var(--motion-out) both;
+}
+@keyframes report-land {
+  from {
+    opacity: 0.65;
+    transform: translateY(7px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.score-track span {
+  width: 100%;
+  transform-origin: left center;
+  transition: transform 420ms var(--motion-out);
+}
+.timeline-problem {
+  animation: timeline-land 280ms var(--motion-out) both;
+  animation-delay: calc(var(--motion-index, 0) * 35ms);
+}
+@keyframes timeline-land {
+  from {
+    opacity: 0.55;
+    transform: translateX(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+details[open] > :not(summary) {
+  animation: detail-open var(--motion-fast) var(--motion-out);
+}
+@keyframes detail-open {
+  from {
+    opacity: 0.6;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (max-width: 650px) {
+  .nav-indicator {
+    box-shadow: inset 0 3px #74906c;
+  }
+  .sidebar nav a:not(.active):hover {
+    transform: none;
+  }
+  .daily-progress {
+    flex-basis: 54px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }

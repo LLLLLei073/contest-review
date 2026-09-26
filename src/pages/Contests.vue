@@ -252,83 +252,85 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         </div>
       </button>
     </section>
-    <section v-if="selected" class="panel contest-editor">
-      <div class="section-head">
-        <div>
-          <span class="eyebrow"
-            >{{ selected.source === 'cf' ? 'CODEFORCES' : 'XCPC RATING' }} / {{ selected.id }}</span
+    <Transition name="report-switch" mode="out-in"
+      ><section v-if="selected" :key="selected.key" class="panel contest-editor">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow"
+              >{{ selected.source === 'cf' ? 'CODEFORCES' : 'XCPC RATING' }} / {{ selected.id }}</span
+            >
+            <h2>{{ selected.name }}</h2>
+          </div>
+        </div>
+        <div class="editor-body">
+          <div
+            v-if="
+              selected.source === 'cf' &&
+              selected.types.length &&
+              !selected.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
+            "
+            class="alert"
           >
-          <h2>{{ selected.name }}</h2>
+            这场比赛只有练习记录，不计为正式或虚拟参赛。
+          </div>
+          <p v-if="selected.rating" class="subtle">
+            评级变化：{{ selected.rating.oldRating }} → {{ selected.rating.newRating }} · 评级结算排名 #{{
+              selected.rating.rank
+            }}
+          </p>
+          <RouterLink
+            v-if="selected.source === 'cf'"
+            class="text-link"
+            :to="'/problems?contestId=' + selected.id"
+            >查看这场比赛的错题 <ArrowUpRight :size="15"
+          /></RouterLink>
+          <ContestReport
+            v-if="selected.source === 'cf'"
+            :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
+            :contest-id="Number(selected.id)"
+            @updated="load"
+          />
+          <XcpcReport
+            v-else
+            :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
+            :slug="String(selected.id)"
+            @updated="load"
+          />
+          <details class="manual-contest-notes" open>
+            <summary>补充笔记 · 保留我的复盘</summary>
+            <form @submit.prevent="save">
+              <label
+                >时间分配<textarea
+                  v-model="draft.timeAllocation"
+                  rows="5"
+                  placeholder="在哪道题停留太久？是否及时切换思路？"
+                ></textarea></label
+              ><label
+                >关键失误<textarea
+                  v-model="draft.mistakes"
+                  rows="5"
+                  placeholder="记录读题、实现、策略或心态上的失误。"
+                ></textarea></label
+              ><label
+                >下一场的改进<textarea
+                  v-model="draft.improvements"
+                  rows="5"
+                  placeholder="把反思变成具体可执行的动作。"
+                ></textarea>
+              </label>
+              <div class="editor-actions">
+                <span class="small subtle">{{ dirty ? '有未保存的修改' : '内容已保存' }}</span
+                ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
+              </div>
+            </form>
+          </details>
         </div>
-      </div>
-      <div class="editor-body">
-        <div
-          v-if="
-            selected.source === 'cf' &&
-            selected.types.length &&
-            !selected.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
-          "
-          class="alert"
-        >
-          这场比赛只有练习记录，不计为正式或虚拟参赛。
-        </div>
-        <p v-if="selected.rating" class="subtle">
-          评级变化：{{ selected.rating.oldRating }} → {{ selected.rating.newRating }} · 评级结算排名 #{{
-            selected.rating.rank
-          }}
-        </p>
-        <RouterLink
-          v-if="selected.source === 'cf'"
-          class="text-link"
-          :to="'/problems?contestId=' + selected.id"
-          >查看这场比赛的错题 <ArrowUpRight :size="15"
-        /></RouterLink>
-        <ContestReport
-          v-if="selected.source === 'cf'"
-          :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
-          :contest-id="Number(selected.id)"
-          @updated="load"
-        />
-        <XcpcReport
-          v-else
-          :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
-          :slug="String(selected.id)"
-          @updated="load"
-        />
-        <details class="manual-contest-notes" open>
-          <summary>补充笔记 · 保留我的复盘</summary>
-          <form @submit.prevent="save">
-            <label
-              >时间分配<textarea
-                v-model="draft.timeAllocation"
-                rows="5"
-                placeholder="在哪道题停留太久？是否及时切换思路？"
-              ></textarea></label
-            ><label
-              >关键失误<textarea
-                v-model="draft.mistakes"
-                rows="5"
-                placeholder="记录读题、实现、策略或心态上的失误。"
-              ></textarea></label
-            ><label
-              >下一场的改进<textarea
-                v-model="draft.improvements"
-                rows="5"
-                placeholder="把反思变成具体可执行的动作。"
-              ></textarea>
-            </label>
-            <div class="editor-actions">
-              <span class="small subtle">{{ dirty ? '有未保存的修改' : '内容已保存' }}</span
-              ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
-            </div>
-          </form>
-        </details>
-      </div>
-    </section>
-    <section v-else class="panel contest-placeholder">
-      <Flag :size="38" />
-      <h2>选一场比赛，慢慢回看。</h2>
-      <p>自动分析赛时表现、提交节奏和下一场的行动建议。</p>
-    </section>
+      </section>
+      <section v-else class="panel contest-placeholder">
+        <Flag :size="38" />
+        <h2>选一场比赛，慢慢回看。</h2>
+        <p>自动分析赛时表现、提交节奏和下一场的行动建议。</p>
+      </section></Transition
+    >
   </div>
 </template>

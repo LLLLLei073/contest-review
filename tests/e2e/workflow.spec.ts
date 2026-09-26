@@ -40,6 +40,11 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
   await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
   await expect(page.getByText('Two Screens', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: '今日复习进度' })).toHaveAttribute('aria-valuenow', '1');
+  await expect(page.locator('.daily-panel').first().locator('.daily-task').first()).toHaveAttribute(
+    'data-phase',
+    'done',
+  );
   await page.screenshot({ path: testInfo.outputPath('dashboard-desktop.png'), fullPage: true });
   await page.getByRole('link', { name: '查看笔记' }).first().click();
   await page.getByRole('button', { name: /重做历史/ }).click();
@@ -66,7 +71,9 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   const backup = JSON.parse(readFileSync(path!, 'utf8'));
   expect(backup.format).toBe('contest-review');
   expect(backup.version).toBe(4);
-  expect(backup.tables.catalog_cache).toHaveLength(1);
+  expect(
+    backup.tables.catalog_cache.filter((row: { profile: string }) => row.profile === 'review_tester'),
+  ).toHaveLength(1);
   expect(backup.tables.attempts).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path!);
   page.once('dialog', (d) => d.accept());

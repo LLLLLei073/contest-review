@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import {
   BookOpen,
   LayoutDashboard,
@@ -13,6 +14,27 @@ import {
   X,
 } from 'lucide-vue-next';
 import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
+import { useSpringValues } from './motion';
+const route = useRoute();
+const navElement = ref<HTMLElement | null>(null);
+const navVisible = ref(false);
+const navSpring = useSpringValues([0, 0, 0, 0]);
+let navObserver: ResizeObserver | undefined;
+function measureNav(immediate = false) {
+  const nav = navElement.value;
+  const active = nav?.querySelector<HTMLElement>('a.active');
+  if (!nav || !active) {
+    navVisible.value = false;
+    return;
+  }
+  const parent = nav.getBoundingClientRect();
+  const rect = active.getBoundingClientRect();
+  navSpring.setTarget(
+    [rect.left - parent.left, rect.top - parent.top, rect.width, rect.height],
+    immediate || !navVisible.value,
+  );
+  navVisible.value = true;
+}
 const navigation = [
   { to: '/', label: '今日题单', icon: LayoutDashboard },
   { to: '/problems', label: '错题库', icon: Library },
@@ -22,6 +44,13 @@ const navigation = [
 const initError = ref('');
 let poll: ReturnType<typeof setInterval>;
 onMounted(async () => {
+  await nextTick();
+  measureNav(true);
+  if (navElement.value) {
+    navObserver = new ResizeObserver(() => measureNav());
+    navObserver.observe(navElement.value);
+  }
+  window.addEventListener('resize', onResize);
   try {
     await loadSettings();
     await loadJob();
@@ -30,7 +59,19 @@ onMounted(async () => {
   }
   poll = setInterval(() => loadJob().catch(() => {}), 2500);
 });
-onUnmounted(() => clearInterval(poll));
+const onResize = () => measureNav(true);
+watch(
+  () => route.path,
+  async () => {
+    await nextTick();
+    measureNav();
+  },
+);
+onUnmounted(() => {
+  clearInterval(poll);
+  navObserver?.disconnect();
+  window.removeEventListener('resize', onResize);
+});
 </script>
 <template>
   <div class="app-shell">
@@ -40,7 +81,17 @@ onUnmounted(() => clearInterval(poll));
         ><span>回解<small>CONTEST REVIEW</small></span></RouterLink
       >
       <div class="nav-caption">训练工作台</div>
-      <nav>
+      <nav ref="navElement">
+        <span
+          v-if="navVisible"
+          class="nav-indicator"
+          aria-hidden="true"
+          :style="{
+            transform: `translate3d(${navSpring.values.value[0]}px, ${navSpring.values.value[1]}px, 0)`,
+            width: `${navSpring.values.value[2]}px`,
+            height: `${navSpring.values.value[3]}px`,
+          }"
+        ></span>
         <RouterLink
           v-for="n in navigation"
           :key="n.to"
@@ -78,7 +129,7 @@ onUnmounted(() => clearInterval(poll));
                   ? '训练统计'
                   : $route.path === '/settings'
                     ? '设置与数据'
-                  : '今日题单'
+                    : '今日题单'
           }}</b>
         </div>
         <RouterLink to="/settings" class="profile-chip"
@@ -103,9 +154,10 @@ onUnmounted(() => clearInterval(poll));
       </main>
       <footer><span>回解 / 每一题，都值得真正理解。</span><span>LOCAL FIRST · CONTEST REVIEW</span></footer>
     </div>
-    <div v-if="toast" class="toast" role="status">
-      <Check :size="17" />{{ toast
-      }}<button class="icon-button" aria-label="关闭通知" @click="toast = ''"><X :size="15" /></button>
-    </div>
+    <Transition name="notice"
+      ><div v-if="toast" class="toast" role="status">
+        <Check :size="17" />{{ toast
+        }}<button class="icon-button" aria-label="关闭通知" @click="toast = ''"><X :size="15" /></button></div
+    ></Transition>
   </div>
 </template>

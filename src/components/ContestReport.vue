@@ -95,7 +95,7 @@ onBeforeUnmount(() => {
       </select></label
     >
     <template v-if="current">
-      <div class="report-score">
+      <div :key="current.session.key" class="report-score">
         <div>
           <span class="eyebrow">{{ labels[current.session.type] }} / CF PERFORMANCE</span>
           <div class="score-value">
@@ -153,14 +153,16 @@ onBeforeUnmount(() => {
         <p v-if="current.performanceRating.bound">结果超出 0–4000 的显示范围，仅显示边界。</p>
       </details>
       <p v-for="warning in current.warnings" :key="warning" class="small subtle">{{ warning }}</p>
-      <div class="score-parts">
+      <div :key="current.session.key" class="score-parts">
         <article v-for="part in current.parts" :key="part.id" class="score-part">
           <div class="report-toolbar">
             <strong>{{ part.label }}</strong
             ><span>{{ part.weight }}%</span>
           </div>
           <b class="part-number">{{ part.score === null ? '—' : part.score.toFixed(1) }}</b>
-          <div class="score-track"><span :style="{ width: (part.score ?? 0) + '%' }"></span></div>
+          <div class="score-track">
+            <span :style="{ transform: `scaleX(${(part.score ?? 0) / 100})` }"></span>
+          </div>
           <p>{{ part.reason }}</p>
           <details>
             <summary>公式与样本</summary>
@@ -182,7 +184,12 @@ onBeforeUnmount(() => {
       </div>
       <h3>分题提交时间线</h3>
       <p class="small subtle">时间为开赛后分钟:秒；提交间隔不等于思考时长。未提交题仅供补题参考。</p>
-      <article v-for="p in current.timeline" :key="p.index" class="timeline-problem">
+      <article
+        v-for="(p, index) in current.timeline"
+        :key="`${current.session.key}:${p.index}`"
+        class="timeline-problem"
+        :style="{ '--motion-index': Math.min(index, 5) }"
+      >
         <div class="report-toolbar">
           <a
             :href="`https://codeforces.com/contest/${contestId}/problem/${p.index}`"
