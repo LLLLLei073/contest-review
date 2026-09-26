@@ -76,19 +76,64 @@ test('new lane is never-submitted, fixed all day and responds to AC, pending and
   s.close();
 });
 
-test('review completion uses manual result and note transition, not CF AC', () => {
+test('same-day AC confirms redo, reflection then evaluation advance separately', () => {
   const s = store();
   s.ingest('tester', [make(1, 'A'), make(2, 'B')]);
-  s.saveReview('tester', '2000:A', { ...emptyReview(), status: 'reviewing', nextReview: new Date(now.getTime() - 86400000).toISOString() });
-  const first = s.trainingDay('tester');
-  s.ingest('tester', [make(3, 'A', 'OK')]);
-  assert.equal(s.trainingDay('tester').review.find((p) => p.key === '2000:A')?.completed, false);
-  s.attempt('tester', '2000:A', { result: 'hint', minutes: 15, note: '' });
-  assert.equal(s.trainingDay('tester').review.find((p) => p.key === '2000:A')?.completed, true);
-  s.saveReview('tester', '2000:B', { ...emptyReview(), status: 'reviewing', nextReview: tomorrow.toISOString() });
-  assert.equal(s.trainingDay('tester').review.find((p) => p.key === '2000:B')?.completed, true);
-  assert.equal(s.statistics('tester').dailyTraining.at(-1)?.reviewCompleted, 2);
-  assert.deepEqual(first.review.map((p) => p.key), s.trainingDay('tester').review.map((p) => p.key));
+  const first = s.trainingDay('tester', now);
+  assert.throws(() => s.attempt('tester', '2000:A', { result: 'independent', minutes: 1, note: '' }, now));
+  s.ingest('tester', [make(3, 'A', 'OK', now)]);
+  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.phase, 'reflection');
+  assert.equal(s.review('tester', '2000:A').nextReview, null);
+  assert.equal(s.review('tester', '2000:A').stage, 0);
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), reasons: ['边界遗漏'] });
+  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.phase, 'reflection');
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), solution: '分析后找到正确解法' });
+  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.phase, 'evaluation');
+  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.completed, true);
+  s.ingest('tester', [make(4, 'A', 'OK', now)]);
+  assert.equal(s.review('tester', '2000:A').stage, 0);
+  s.attempt('tester', '2000:A', { result: 'independent', minutes: 15, note: '' }, now);
+  assert.equal(s.review('tester', '2000:A').stage, 1);
+  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.completed, true);
+  assert.throws(() => s.attempt('tester', '2000:A', { result: 'independent', minutes: 1, note: '' }, now));
+  assert.deepEqual(first.review.map((p) => p.key), s.trainingDay('tester', now).review.map((p) => p.key));
+  s.close();
+});
+
+test('pending and rejudged submissions do not confirm redo; no-AC attempt needs reflection', () => {
+  const s = store();
+  s.ingest('tester', [make(1, 'A')]);
+  s.trainingDay('tester', now);
+  s.ingest('tester', [make(2, 'A', 'TESTING')]);
+  assert.equal(s.trainingDay('tester', now).review[0].redoAccepted, false);
+  s.ingest('tester', [make(2, 'A', 'OK')]);
+  assert.equal(s.trainingDay('tester', now).review[0].redoAccepted, true);
+  s.ingest('tester', [make(2, 'A', 'WRONG_ANSWER')]);
+  assert.equal(s.trainingDay('tester', now).review[0].redoAccepted, false);
+  assert.equal(s.review('tester', '2000:A').awaitingEvaluation, null);
+  s.attempt('tester', '2000:A', { result: 'hint', minutes: 10, note: '' }, now);
+  assert.equal(s.trainingDay('tester', now).review[0].phase, 'reflection');
+  assert.equal(s.review('tester', '2000:A').stage, 0);
+  assert.equal(localDay(new Date(s.review('tester', '2000:A').nextReview!)), localDay(tomorrow));
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), rootCause: '遗漏边界' });
+  assert.equal(s.trainingDay('tester', now).review[0].completed, true);
+  s.activate('other');
+  assert.equal(s.trainingDay('other', now).review.length, 0);
+  s.close();
+});
+
+test('late subjective evaluation schedules from AC day, so overdue remains overdue', () => {
+  const s = store();
+  s.ingest('tester', [make(1, 'A')]);
+  s.trainingDay('tester', now);
+  s.ingest('tester', [make(2, 'A', 'OK')]);
+  const late = new Date(now.getTime() + 5 * 86400000);
+  assert.equal(s.trainingDay('tester', late).review[0].phase, 'reflection');
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), wrongIdea: '漏看条件' });
+  assert.equal(s.trainingDay('tester', late).review[0].phase, 'evaluation');
+  s.attempt('tester', '2000:A', { result: 'independent', minutes: 20, note: '' }, late);
+  assert.equal(localDay(new Date(s.review('tester', '2000:A').nextReview!)), localDay(new Date(now.getTime() + 3 * 86400000)));
+  assert.equal(s.trainingDay('tester', late).review[0].completed, true);
   s.close();
 });
 

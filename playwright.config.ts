@@ -11,7 +11,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npx tsx tests/fixture-server.ts',
+    command: 'node --import tsx tests/fixture-server.ts',
     url: 'http://127.0.0.1:3211/api/health',
     reuseExistingServer: false,
     timeout: 30000,

@@ -29,13 +29,13 @@ async function load() {
   } catch (e) { error.value = (e as Error).message; }
   finally { loading.value = false; }
 }
-async function checkRecent() {
+async function checkRecent(force = false) {
   if (!settings.value.activeHandle || job.value?.status === 'running') return;
   const handle = settings.value.activeHandle;
   checking.value = true;
   recentError.value = '';
   try {
-    const outcome = await api<{ checkedAt: string | null; error: string | null }>('/training/recent', {}, 'POST');
+    const outcome = await api<{ checkedAt: string | null; error: string | null }>('/training/recent', { force }, 'POST');
     if (settings.value.activeHandle !== handle) return;
     recentError.value = outcome.error ?? '';
     await load();
@@ -46,7 +46,7 @@ function openAttempt(task: TrainingTask) {
   activeKey.value = activeKey.value === task.key ? '' : task.key;
   minutes.value = 0;
   note.value = '';
-  result.value = 'independent';
+  result.value = task.redoAccepted ? 'independent' : 'hint';
 }
 async function saveAttempt(key: string) {
   busy.value = true;
@@ -55,12 +55,12 @@ async function saveAttempt(key: string) {
     await api('/problems/' + encodeURIComponent(key) + '/attempts', { result: result.value, minutes: minutes.value, note: note.value });
     activeKey.value = '';
     await load();
-    notify('重做结果已记录，复习日期已更新');
+    notify('结果已记录，复习日期已更新');
   } catch (e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
-onMounted(() => { void load().then(checkRecent); });
-watch(() => settings.value.activeHandle, () => { void load().then(checkRecent); });
+onMounted(() => { void load().then(() => checkRecent()); });
+watch(() => settings.value.activeHandle, () => { void load().then(() => checkRecent()); });
 watch(() => job.value?.status, (status, previous) => {
   if (status === 'completed' && previous === 'running') void load();
 });
@@ -83,7 +83,7 @@ watch(() => job.value?.status, (status, previous) => {
     <div v-if="job?.status === 'running'" class="alert"><RefreshCw :size="16" class="spin" />{{ job.message }} · 已读取 {{ job.processed }} 条</div>
     <div class="training-sync">
       <span>{{ checking ? '正在检查近期提交…' : day?.recentCheckedAt ? `提交检查：${fullDate(day.recentCheckedAt)}` : '近期提交尚未检查' }}</span>
-      <button class="small-button" :disabled="checking || job?.status === 'running'" @click="checkRecent"><RefreshCw :size="14" :class="{ spin: checking }" />检查提交</button>
+      <button class="small-button" :disabled="checking || job?.status === 'running'" @click="checkRecent(true)"><RefreshCw :size="14" :class="{ spin: checking }" />检查提交</button>
     </div>
     <div v-if="recentError" class="alert">近期提交检查失败，继续使用已保存数据：{{ recentError }}</div>
     <div class="daily-columns">
@@ -95,12 +95,12 @@ watch(() => job.value?.status, (status, previous) => {
         <article v-for="(task, index) in day?.review ?? []" :key="task.key" class="daily-task">
           <div class="daily-task-main"><span class="daily-number">{{ String(index + 1).padStart(2, '0') }}</span>
             <div class="daily-task-content"><strong>{{ task.name }}</strong><div class="daily-meta">{{ task.key.replace(':', '') }} · {{ task.rating ?? '暂无难度' }} · {{ task.tags.slice(0, 2).join(' / ') || '暂无标签' }}</div></div>
-            <span :class="['badge', task.completed ? 'mastered' : task.kind === 'pending' ? 'pending' : 'reviewing']">{{ task.completed ? '今日完成' : task.kind === 'pending' ? '待复盘' : '到期重做' }}</span></div>
+            <span :class="['badge', task.completed ? 'mastered' : task.phase === 'reflection' ? 'pending' : 'reviewing']">{{ task.phase === 'reflection' ? (task.redoAccepted ? '重做完成 · 待复盘' : '已尝试 · 待复盘') : task.phase === 'evaluation' ? '重做完成 · 待评价' : task.completed ? (task.redoAccepted ? '今日 AC' : '今日已尝试') : '待重做' }}</span></div>
           <div class="daily-actions"><a :href="task.url" target="_blank" rel="noreferrer" class="text-link">原题 <ExternalLink :size="13" /></a>
-            <RouterLink :to="'/problems/' + encodeURIComponent(task.key)" class="text-link">{{ task.kind === 'pending' ? '写复盘' : '查看笔记' }} <ArrowRight :size="13" /></RouterLink>
-            <button v-if="task.kind === 'due' && !task.completed" class="small-button" @click="openAttempt(task)">记录重做</button></div>
+            <RouterLink :to="'/problems/' + encodeURIComponent(task.key)" class="text-link">{{ task.phase === 'reflection' ? '写复盘' : '查看笔记' }} <ArrowRight :size="13" /></RouterLink>
+            <button v-if="task.phase === 'evaluation' || (!task.completed && task.phase !== 'reflection')" class="small-button" @click="openAttempt(task)">{{ task.redoAccepted ? '手动评价' : '记录尝试' }}</button></div>
           <form v-if="activeKey === task.key" class="daily-attempt" @submit.prevent="saveAttempt(task.key)">
-            <select v-model="result" aria-label="重做结果"><option value="independent">独立做对</option><option value="hint">借助提示</option><option value="failed">仍未做出</option></select>
+            <select v-model="result" aria-label="重做结果"><option value="independent" :disabled="!task.redoAccepted">独立做对（需当天 AC）</option><option value="hint">借助提示</option><option value="failed">仍未做出</option></select>
             <label>耗时（分钟）<input v-model.number="minutes" type="number" min="0" step="0.5" required /></label>
             <input v-model="note" aria-label="补充笔记" placeholder="补充笔记（可选）" maxlength="100000" />
             <button class="primary" :disabled="busy">保存结果</button>
@@ -122,6 +122,6 @@ watch(() => job.value?.status, (status, previous) => {
         <p v-if="day && day.catalogCount && day.newProblems.length < 5" class="daily-footnote">符合条件的候选不足 5 道，今天安排了 {{ day.newProblems.length }} 道。</p>
       </section>
     </div>
-    <p class="daily-footnote">当天题单固定，不会在完成后补题。新知仅以当天 CF AC 标为完成；复习结果由你记录。<RouterLink to="/statistics">查看全部训练数据 <ArrowRight :size="13" /></RouterLink></p>
+    <p class="daily-footnote">当天题单固定，不会在完成后补题。新知和复习的重做成功均以当天 CF AC 确认；是否独立做对由你评价。<RouterLink to="/statistics">查看全部训练数据 <ArrowRight :size="13" /></RouterLink></p>
   </template>
 </template>

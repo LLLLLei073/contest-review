@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { onBeforeRouteLeave, useRoute } from 'vue-router';
-import { ArrowLeft, ExternalLink, Save, CheckCheck, RotateCcw, Eye, EyeOff, Clock3 } from 'lucide-vue-next';
+import { ArrowLeft, ExternalLink, Save, RotateCcw, Eye, EyeOff, Clock3 } from 'lucide-vue-next';
 import { api, notify, statusLabels, resultLabels, fullDate, localDate } from '../api';
 import {
   reasonOptions,
@@ -48,6 +48,7 @@ async function load() {
   try {
     data.value = await api('/problems/' + encodeURIComponent(key));
     draft.value = JSON.parse(JSON.stringify(data.value!.problem.review));
+    attempt.value.result = draft.value.awaitingEvaluation ? 'independent' : 'hint';
     snapshot.value = JSON.stringify(draft.value);
   } catch (e) {
     error.value = (e as Error).message;
@@ -66,9 +67,7 @@ async function save(action = 'save') {
     snapshot.value = JSON.stringify(updated);
     await load();
     notify(
-      action === 'complete'
-        ? '复盘已完成，明天开始重做'
-        : action === 'restart'
+      action === 'restart'
           ? '已重新加入复习'
           : '复盘已保存',
     );
@@ -93,8 +92,8 @@ async function submitAttempt() {
   try {
     await api('/problems/' + encodeURIComponent(key) + '/attempts', attempt.value);
     await load();
-    attempt.value = { result: 'independent', minutes: 0, note: '' };
-    notify('重做结果已记录，复习安排已更新');
+    attempt.value = { result: 'hint', minutes: 0, note: '' };
+    notify('评价已记录，复习安排已更新');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -212,15 +211,7 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
             <span :class="['small', dirty ? 'unsaved' : 'subtle']">{{
               dirty ? '有未保存的修改' : '内容已保存'
             }}</span
-            ><button :disabled="busy" @click="save()"><Save :size="15" />保存笔记</button
-            ><button
-              v-if="draft.status === 'pending'"
-              class="primary"
-              :disabled="busy"
-              @click="save('complete')"
-            >
-              <CheckCheck :size="16" />完成复盘
-            </button>
+            ><button :disabled="busy" @click="save()"><Save :size="15" />保存笔记</button>
           </div>
         </div>
         <div v-if="tab === 'submissions'" class="editor-body">
@@ -276,6 +267,9 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
             {{ draft.status === 'mastered' ? '五轮独立重做已完成。' : '依次独立重做，逐步拉长复习间隔。'
             }}<br />次日 → 3 天 → 7 天 → 14 天 → 30 天
           </p>
+          <p v-if="draft.awaitingEvaluation" class="small">当天 AC 已确认重做完成；请评价是否独立做对。评价前不安排下次复习。</p>
+          <p v-if="draft.firstReflectionRequired && draft.firstRedoAt && !draft.firstReflectionAt" class="small">首次重做后，请在左侧至少填写一项分析并保存，完成今天的复盘步骤。</p>
+          <p v-if="draft.status === 'pending' && !draft.firstRedoAt" class="small">先打开原题重做；当天 CF AC 会自动确认重做完成。未 AC 时也可记录一次尝试。</p>
           <label v-if="draft.status === 'reviewing'"
             >下次复习日期<input v-model="nextDate" type="date" /></label
           ><button v-if="draft.status === 'reviewing'" class="wide" :disabled="busy" @click="save()">
@@ -285,13 +279,13 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
           </button>
           <div v-if="draft.ignored" class="alert">此题已忽略，不会出现在复习队列中。</div>
         </section>
-        <section v-if="draft.status === 'reviewing' && !draft.ignored" class="panel side-card">
-          <h2><Clock3 :size="18" />记录这次重做</h2>
-          <p class="small subtle">合上题解，独立推导与实现后再记录。</p>
+        <section v-if="draft.status !== 'mastered' && !draft.ignored" class="panel side-card">
+          <h2><Clock3 :size="18" />{{ draft.awaitingEvaluation ? '评价这次重做' : '重做与尝试' }}</h2>
+          <p class="small subtle">{{ draft.awaitingEvaluation ? 'AC 只确认通过；是否独立完成由你评价。' : '先打开原题重做。没有当天 AC 时，可以记录借助提示或仍未做出。' }}</p>
           <form @submit.prevent="submitAttempt">
             <label
               >重做结果<select v-model="attempt.result">
-                <option value="independent">独立做对</option>
+                <option value="independent" :disabled="!draft.awaitingEvaluation">独立做对（需当天 AC）</option>
                 <option value="hint">借助提示</option>
                 <option value="failed">仍未做出</option>
               </select></label
@@ -308,7 +302,7 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
                 rows="3"
                 placeholder="这次还有哪里不熟悉？"
               ></textarea></label
-            ><button class="primary wide" :disabled="busy || dirty">记录结果</button>
+            ><button class="primary wide" :disabled="busy || dirty">{{ draft.awaitingEvaluation ? '保存评价' : '记录尝试' }}</button>
             <p v-if="dirty" class="small unsaved">请先保存笔记，再记录重做结果。</p>
           </form>
         </section>

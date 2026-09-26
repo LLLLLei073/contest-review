@@ -24,6 +24,11 @@ export const reviewSchema = z.object({
   ignored: z.boolean().default(false),
   stage: z.number().int().min(0).max(5).default(0),
   nextReview: z.string().datetime().nullable().default(null),
+  firstRedoAt: z.string().datetime().nullable().default(null),
+  firstReflectionAt: z.string().datetime().nullable().default(null),
+  firstReflectionRequired: z.boolean().default(false),
+  awaitingEvaluation: z.object({ date: z.string(), submissionId: z.number().int().positive(), redoAt: z.string().datetime(), previousNextReview: z.string().datetime().nullable().default(null) }).nullable().default(null),
+  lastEvaluatedDay: z.string().nullable().default(null),
 });
 export type Review = z.infer<typeof reviewSchema>;
 export const attemptSchema = z.object({
@@ -165,6 +170,10 @@ export const verdictLabel: Record<string, string> = {
 };
 export function emptyReview(): Review {
   return reviewSchema.parse({});
+}
+export function hasReflection(review: Review): boolean {
+  return [review.wrongIdea, review.rootCause, review.solution, review.complexity, review.counterexample]
+    .some((value) => value.trim().length > 0);
 }
 export function nextReviewState(review: Review, result: AttemptInput['result'], now = new Date()): Review {
   const next = { ...review, status: 'reviewing' as Review['status'], ignored: false };

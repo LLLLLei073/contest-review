@@ -127,11 +127,14 @@ test('review attempt atomic persistence and per-profile isolation', () => {
     status: 'reviewing',
     nextReview: '2026-09-01T00:00:00Z',
   });
+  const redoDay = new Date('2026-09-18T08:00:00Z');
+  s.trainingDay('tester', redoDay);
+  s.ingest('tester', [{ ...sub(2, 'OK'), creationTimeSeconds: Math.floor(redoDay.getTime() / 1000) }]);
   s.attempt(
     'tester',
     '2000:A',
     { result: 'independent', minutes: 10, note: 'Now understood' },
-    new Date('2026-09-18T08:00:00Z'),
+    redoDay,
   );
   assert.equal(s.all('attempts', 'tester').length, 1);
   assert.equal(s.review('tester', '2000:A').stage, 1);
@@ -343,14 +346,16 @@ test('API validation, origin/host guard, completion and manual date, search and 
     headers,
     payload: { review: emptyReview(), action: 'complete' },
   });
-  assert.equal(complete.json().status, 'reviewing');
-  assert.ok(new Date(complete.json().nextReview).getTime() > Date.now());
+  assert.notEqual(complete.statusCode, 200);
+  const restart = await app.inject({ method: 'PUT', url: '/api/problems/2000%3AB/review', headers,
+    payload: { review: emptyReview(), action: 'restart' } });
+  assert.equal(restart.json().status, 'reviewing');
   const date = '2026-12-01T01:00:00.000Z';
   await app.inject({
     method: 'PUT',
     url: '/api/problems/2000%3AB/review',
     headers,
-    payload: { review: { ...complete.json(), nextReview: date }, action: 'save' },
+    payload: { review: { ...restart.json(), nextReview: date }, action: 'save' },
   });
   assert.equal(s.review('tester', '2000:B').nextReview, date);
   assert.equal((await app.inject({ url: '/api/problems?q=Manual', headers })).json().total, 1);

@@ -112,10 +112,11 @@ export async function buildApp(
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
   app.get('/api/training/day', async () => store.trainingDay(profile()));
-  app.post('/api/training/recent', async () => {
+  app.post('/api/training/recent', async (req) => {
     const h = profile();
     if (sync.running) return { checkedAt: store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null, error: '完整同步正在进行' };
-    return training.recent(h);
+    const { force } = z.object({ force: z.boolean().default(false) }).parse(req.body ?? {});
+    return training.recent(h, force);
   });
   app.post('/api/sync', async (req) => {
     if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
@@ -200,19 +201,7 @@ export async function buildApp(
     const body = z
       .object({ review: reviewSchema, action: z.enum(['save', 'complete', 'restart']).default('save') })
       .parse(req.body);
-    const h = profile();
-    const old = store.review(h, req.params.key);
-    const review = { ...body.review, stage: old.stage, status: old.status };
-    if ((body.action === 'complete' && old.status === 'pending') || body.action === 'restart') {
-      review.status = 'reviewing';
-      review.stage = 0;
-      review.ignored = false;
-      review.nextReview = new Date(Date.now() + 86400000).toISOString();
-    }
-    if (review.status === 'mastered') review.nextReview = null;
-    if (review.status === 'reviewing' && !review.nextReview) throw new Error('复习中的题目需要设置下次日期');
-    store.saveReview(h, req.params.key, review);
-    return review;
+    return store.updateReview(profile(), req.params.key, body.review, body.action);
   });
   app.post<{ Params: { key: string } }>('/api/problems/:key/attempts', async (req) =>
     store.attempt(profile(), req.params.key, attemptSchema.parse(req.body)),

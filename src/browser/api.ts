@@ -74,9 +74,10 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       await runtime.flush();
     } else if (route === '/training/recent' && method === 'POST') {
       const h = profile();
+      const { force } = z.object({ force: z.boolean().default(false) }).parse(body ?? {});
       result = sync.running
         ? { checkedAt: store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null, error: '完整同步正在进行' }
-        : await training.recent(h);
+        : await training.recent(h, force);
     }
     else if (route === '/sync' && method === 'POST') {
       if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
@@ -163,21 +164,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const key = decodeURIComponent(route.split('/')[2]),
         data = z
           .object({ review: reviewSchema, action: z.enum(['save', 'complete', 'restart']).default('save') })
-          .parse(body),
-        h = profile(),
-        old = store.review(h, key);
-      const review = { ...data.review, stage: old.stage, status: old.status };
-      if ((data.action === 'complete' && old.status === 'pending') || data.action === 'restart') {
-        review.status = 'reviewing';
-        review.stage = 0;
-        review.ignored = false;
-        review.nextReview = new Date(Date.now() + 86400000).toISOString();
-      }
-      if (review.status === 'mastered') review.nextReview = null;
-      if (review.status === 'reviewing' && !review.nextReview)
-        throw new Error('复习中的题目需要设置下次日期');
-      store.saveReview(h, key, review);
-      result = review;
+          .parse(body);
+      result = store.updateReview(profile(), key, data.review, data.action);
     } else if (/^\/problems\/[^/]+\/attempts$/.test(route) && method === 'POST')
       result = store.attempt(profile(), decodeURIComponent(route.split('/')[2]), attemptSchema.parse(body));
     else if (route === '/contests' && method === 'GET') result = store.contests(store.active());

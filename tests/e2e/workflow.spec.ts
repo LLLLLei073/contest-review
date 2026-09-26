@@ -15,9 +15,15 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await expect(page.getByText('已绑定', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
+  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await expect(page.getByText('Two Screens', { exact: true }).first()).toBeVisible();
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await expect(page.getByRole('link', { name: '2000C Two Screens', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '2000C Two Screens', exact: true }).click();
+  await page.getByLabel('耗时（分钟）').fill('18');
+  await page.getByLabel('新的发现').fill('先证明，再实现。');
+  await page.getByRole('button', { name: '记录尝试', exact: true }).click();
+  await expect(page.getByRole('button', { name: /重做历史 1/ })).toBeVisible();
   await page.getByLabel('当时的思路', { exact: false }).fill('只考虑了单个字符串。');
   await page.getByLabel('边界遗漏', { exact: true }).check();
   await page
@@ -29,20 +35,13 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('button', { name: '预览笔记' }).click();
   await expect(page.locator('.katex').first()).toBeVisible();
   await expect(page.locator('.markdown img')).toHaveCount(0);
-  await page.getByRole('button', { name: '完成复盘', exact: true }).click();
-  await expect(page.getByRole('button', { name: '记录结果', exact: true })).toBeEnabled();
-  await page.getByLabel('下次复习日期').fill('2026-01-01');
-  await page.getByRole('button', { name: '保存日期与笔记' }).click();
-  await expect(page.getByRole('button', { name: '记录结果', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '保存笔记', exact: true }).click();
+  await expect(page.getByText('复盘已保存')).toBeVisible();
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
   await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
   await expect(page.getByText('Two Screens', { exact: true }).first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('dashboard-desktop.png'), fullPage: true });
   await page.getByRole('link', { name: '查看笔记' }).first().click();
-  await page.getByLabel('耗时（分钟）').fill('18');
-  await page.getByLabel('新的发现').fill('先证明，再实现。');
-  await page.getByRole('button', { name: '记录结果', exact: true }).click();
-  await expect(page.getByText('重做结果已记录，复习安排已更新')).toBeVisible();
   await page.getByRole('button', { name: /重做历史/ }).click();
   await expect(page.getByText('先证明，再实现。')).toBeVisible();
   await page.reload();

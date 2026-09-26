@@ -11,6 +11,7 @@ import {
 import {
   attemptSchema,
   emptyReview,
+  hasReflection,
   failures,
   nextReviewState,
   problemSchema,
@@ -310,16 +311,55 @@ export class CoreStore {
     });
   }
   review(h: string, key: string): Review {
-    return this.get<Review>('reviews', h, key) || emptyReview();
+    return reviewSchema.parse(this.get<Review>('reviews', h, key) || emptyReview());
   }
   saveReview(h: string, key: string, review: Review) {
     if (!this.get('problems', h, key)) throw new Error('题目不存在');
     const old = this.review(h, key);
-    this.put('reviews', h, key, reviewSchema.parse(review));
-    if (old.status === 'pending' && review.status === 'reviewing') {
-      const date = localDay(new Date()), plan = this.get<DailyPlan>('daily_plans', h, date);
-      if (plan?.review.some((item) => item.key === key && item.kind === 'pending'))
-        this.put('daily_plans', h, date, { ...plan, review: plan.review.map((item) => item.key === key && item.kind === 'pending' ? { ...item, completedAt: new Date().toISOString() } : item) });
+    const next = reviewSchema.parse({ ...review, firstRedoAt: old.firstRedoAt,
+      firstReflectionAt: old.firstReflectionAt, firstReflectionRequired: old.firstReflectionRequired,
+      awaitingEvaluation: old.awaitingEvaluation,
+      lastEvaluatedDay: old.lastEvaluatedDay });
+    if (old.firstReflectionRequired && old.firstRedoAt && !old.firstReflectionAt && hasReflection(next)) next.firstReflectionAt = new Date().toISOString();
+    this.put('reviews', h, key, next);
+    return next;
+  }
+  updateReview(h: string, key: string, review: Review, action: 'save' | 'complete' | 'restart') {
+    const old = this.review(h, key);
+    const next = { ...review, stage: old.stage, status: old.status,
+      nextReview: old.awaitingEvaluation ? null : review.nextReview };
+    if (action === 'restart') {
+      next.status = 'reviewing'; next.stage = 0; next.ignored = false;
+      next.nextReview = new Date(Date.now() + 86400000).toISOString();
+    }
+    if (action === 'complete' && !old.firstRedoAt) throw new Error('请先重做题目，再保存复盘');
+    if (next.status === 'mastered') next.nextReview = null;
+    if (next.status === 'reviewing' && !next.nextReview && !old.awaitingEvaluation && action !== 'complete')
+      throw new Error('复习中的题目需要设置下次日期');
+    return this.saveReview(h, key, reviewSchema.parse(next));
+  }
+  private reconcileAcceptedRedo(h: string, date: string) {
+    const plan = this.get<DailyPlan>('daily_plans', h, date);
+    if (!plan) return;
+    const submissions = this.all<CFSubmission>('submissions', h);
+    for (const item of plan.review) {
+      const review = this.review(h, item.key);
+      if (review.ignored || review.status === 'mastered' || review.lastEvaluatedDay === date) continue;
+      const accepted = submissions.filter((s) => !s.author.teamId && problemKey(s) === item.key && s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date)
+        .sort((a, b) => a.creationTimeSeconds - b.creationTimeSeconds || a.id - b.id)[0];
+      if (accepted) {
+        const redoAt = new Date(accepted.creationTimeSeconds * 1000).toISOString();
+        if (review.awaitingEvaluation?.submissionId !== accepted.id || !review.firstRedoAt) {
+          this.put('reviews', h, item.key, { ...review, firstRedoAt: review.firstRedoAt ?? redoAt,
+            firstReflectionRequired: review.firstReflectionRequired || review.status === 'pending',
+            awaitingEvaluation: { date, submissionId: accepted.id, redoAt,
+              previousNextReview: review.awaitingEvaluation?.previousNextReview ?? review.nextReview }, nextReview: null });
+        }
+      } else if (review.awaitingEvaluation?.date === date) {
+        this.put('reviews', h, item.key, { ...review, awaitingEvaluation: null,
+          nextReview: review.awaitingEvaluation.previousNextReview,
+          firstRedoAt: review.status === 'pending' ? null : review.firstRedoAt });
+      }
     }
   }
   manualProblem(
@@ -345,6 +385,7 @@ export class CoreStore {
   }
   ingest(h: string, input: CFSubmission[]) {
     const submissions = z.array(submissionSchema).parse(input);
+    const affectedDays = new Set(submissions.map((s) => localDay(new Date(s.creationTimeSeconds * 1000))));
     this.transaction(() => {
       for (const s of submissions) {
         const key = problemKey(s),
@@ -366,6 +407,7 @@ export class CoreStore {
         if (failures.has(s.verdict || '') && !this.get('reviews', h, key))
           this.put('reviews', h, key, emptyReview());
       }
+      for (const date of affectedDays) this.reconcileAcceptedRedo(h, date);
     });
   }
   enrich(h: string, contests: CFContest[], ratings: CFRating[], problems: CFSubmission['problem'][]) {
@@ -409,6 +451,7 @@ export class CoreStore {
   }
   trainingDay(h: string, now = new Date()): TrainingDay {
     const date = localDay(now);
+    this.reconcileAcceptedRedo(h, date);
     const catalog = this.get<Catalog>('catalog_cache', h, 'current');
     const rows = this.problems(h);
     const submissions = this.all<CFSubmission>('submissions', h);
@@ -419,32 +462,40 @@ export class CoreStore {
     let plan = this.get<DailyPlan>('daily_plans', h, date);
     if (!plan || (!plan.catalogReady && catalog)) {
       const eligible = rows.filter((p) => !p.review.ignored);
-      const due = eligible.filter((p) => p.review.status === 'reviewing' && p.review.nextReview && localDay(new Date(p.review.nextReview)) <= date)
+      const carry = eligible.filter((p) => p.review.awaitingEvaluation || (p.review.firstReflectionRequired && p.review.firstRedoAt && !p.review.firstReflectionAt))
+        .sort((a, b) => (a.review.firstRedoAt ?? '').localeCompare(b.review.firstRedoAt ?? '') || a.key.localeCompare(b.key));
+      const due = eligible.filter((p) => !p.review.awaitingEvaluation && p.review.status === 'reviewing' && p.review.nextReview && localDay(new Date(p.review.nextReview)) <= date)
         .sort((a, b) => a.review.nextReview!.localeCompare(b.review.nextReview!) || a.key.localeCompare(b.key));
-      const pending = eligible.filter((p) => p.review.status === 'pending')
+      const pending = eligible.filter((p) => p.review.status === 'pending' && !p.review.awaitingEvaluation && !p.review.firstRedoAt)
         .sort((a, b) => b.failures - a.failures || a.key.localeCompare(b.key));
-      const review = plan?.review ?? [...due.map((p) => ({ key: p.key, kind: 'due' as const })), ...pending.map((p) => ({ key: p.key, kind: 'pending' as const }))].slice(0, 5);
+      const review = plan?.review ?? [...carry.map((p) => ({ key: p.key, kind: (p.review.firstRedoAt && !p.review.firstReflectionAt ? 'reflection' : 'evaluation') as 'reflection' | 'evaluation' })), ...due.filter((p) => !carry.some((c) => c.key === p.key)).map((p) => ({ key: p.key, kind: 'due' as const })), ...pending.map((p) => ({ key: p.key, kind: 'pending' as const }))].slice(0, 5);
       const blocked = new Set([...known.map((p) => p.key), ...review.map((p) => p.key)]);
       plan = dailyPlanSchema.parse({ date, review, newKeys: chooseNewProblems(catalog?.problems ?? [], blocked, mastery, targetDifficulty(known, submissions, problemKey), date), catalogReady: !!catalog, createdAt: plan?.createdAt ?? now.toISOString() });
       if (known.length || catalog || this.all<SyncJob>('jobs', h).some((j) => j.mode === 'full' && j.status === 'completed'))
         this.put('daily_plans', h, date, plan);
     }
+    this.reconcileAcceptedRedo(h, date);
     const byKey = new Map(known.map((p) => [p.key, p]));
     const catalogByKey = new Map(catalog?.problems.map((p) => [p.key, p]) ?? []);
     const attemptsToday = new Set(attempts.filter((a) => localDay(new Date(a.createdAt)) === date).map((a) => a.problemKey));
     const submittedToday = new Set(submissions.filter((s) => localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
-    const acceptedToday = new Set(submissions.filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
+    const acceptedToday = new Set(submissions.filter((s) => !s.author.teamId && s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
     const review: TrainingDay['review'] = plan.review.flatMap(({ key, kind, completedAt }) => {
-      const p = byKey.get(key), r = reviews.get(key);
+      const p = byKey.get(key), r = this.review(h, key);
       if (!p || !r || r.ignored) return [];
+      const redoAccepted = acceptedToday.has(key) || !!r.awaitingEvaluation;
+      const attempted = attemptsToday.has(key);
+      const needsReflection = r.firstReflectionRequired && !!r.firstRedoAt && !r.firstReflectionAt;
+      const needsEvaluation = !!r.awaitingEvaluation;
+      const phase = needsReflection ? 'reflection' : needsEvaluation ? 'evaluation' : (redoAccepted || attempted || !!completedAt) ? 'done' : 'redo';
       return [{ key, name: p.name, rating: p.rating, tags: p.tags, url: p.url, kind,
-        completed: kind === 'due' ? attemptsToday.has(key) : !!completedAt,
-        attempted: kind === 'due' && attemptsToday.has(key), nextReview: r.nextReview }];
+        phase, redoAccepted, completed: !needsReflection && (redoAccepted || attempted || !!completedAt), attempted, nextReview: r.nextReview }];
     });
     const newProblems: TrainingDay['newProblems'] = plan.newKeys.flatMap((key) => {
       const p = catalogByKey.get(key) ?? byKey.get(key);
       if (!p) return [];
       return [{ key, name: p.name, rating: p.rating, tags: p.tags, url: p.url, kind: 'new' as const,
+        phase: acceptedToday.has(key) ? 'done' as const : 'redo' as const, redoAccepted: acceptedToday.has(key),
         completed: acceptedToday.has(key), attempted: submittedToday.has(key), nextReview: null }];
     });
     return { date, review, newProblems, catalogFetchedAt: catalog?.fetchedAt ?? null,
@@ -471,7 +522,7 @@ export class CoreStore {
           key: string;
           value: string;
         }[]
-      ).map((r) => [r.key, JSON.parse(r.value) as Review]),
+      ).map((r) => [r.key, reviewSchema.parse(JSON.parse(r.value))]),
     );
     return this.all<Problem>('problems', h)
       .filter((p) => p.manual || reviews.has(p.key))
@@ -496,9 +547,13 @@ export class CoreStore {
   }
   attempt(h: string, key: string, input: AttemptInput, now = new Date()) {
     const data = attemptSchema.parse(input);
-    const current = this.review(h, key);
     if (!this.get('problems', h, key)) throw new Error('题目不存在');
-    if (current.status !== 'reviewing' || current.ignored) throw new Error('请先完成复盘或重新加入复习');
+    this.reconcileAcceptedRedo(h, localDay(now));
+    const current = this.review(h, key);
+    if (current.status === 'mastered' || current.ignored) throw new Error('此题未处于复习流程');
+    if (current.lastEvaluatedDay === localDay(now)) throw new Error('今天已评价过这道题');
+    if (data.result === 'independent' && !current.awaitingEvaluation) throw new Error('未检测到当天 AC，不能记录独立做对');
+    const redoAt = current.awaitingEvaluation ? new Date(current.awaitingEvaluation.redoAt) : now;
     const attempt: Attempt = {
       ...data,
       id: crypto.randomUUID(),
@@ -507,7 +562,10 @@ export class CoreStore {
     };
     this.transaction(() => {
       this.put('attempts', h, attempt.id, attempt);
-      this.saveReview(h, key, nextReviewState(current, data.result, now));
+      const next = nextReviewState(current, data.result, redoAt);
+      this.put('reviews', h, key, { ...next, firstRedoAt: current.firstRedoAt ?? now.toISOString(),
+        firstReflectionRequired: current.firstReflectionRequired || current.status === 'pending',
+        awaitingEvaluation: null, lastEvaluatedDay: localDay(now) });
     });
     return attempt;
   }
@@ -637,7 +695,11 @@ export class CoreStore {
       const completedDue = new Set(a.map((item) => item.problemKey));
       const ac = new Set(submissions.filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
       dailyTraining.push({ date, reviewAssigned: plan?.review.length ?? 0,
-        reviewCompleted: plan?.review.filter((item) => item.kind === 'pending' ? !!item.completedAt : completedDue.has(item.key)).length ?? 0,
+        reviewCompleted: plan?.review.filter((item) => {
+          const r = reviews.get(item.key);
+          const reflectionDone = !r?.firstReflectionRequired || !!(r.firstReflectionAt && localDay(new Date(r.firstReflectionAt)) <= date);
+          return reflectionDone && (ac.has(item.key) || completedDue.has(item.key) || !!item.completedAt);
+        }).length ?? 0,
         newAssigned: plan?.newKeys.length ?? 0,
         newCompleted: plan?.newKeys.filter((key) => ac.has(key)).length ?? 0 });
     }
@@ -649,6 +711,7 @@ export class CoreStore {
       due: rows.filter(
         (p) =>
           p.review.status === 'reviewing' &&
+          !p.review.awaitingEvaluation &&
           p.review.nextReview &&
           localDay(new Date(p.review.nextReview)) <= localDay(now),
       ).length,

@@ -12,7 +12,9 @@ export interface TrainingTask {
   rating: number | null;
   tags: string[];
   url: string;
-  kind: 'due' | 'pending' | 'new';
+  kind: 'due' | 'pending' | 'reflection' | 'evaluation' | 'new';
+  phase: 'redo' | 'reflection' | 'evaluation' | 'done';
+  redoAccepted: boolean;
   completed: boolean;
   attempted: boolean;
   nextReview: string | null;
@@ -41,7 +43,7 @@ export const catalogSchema = z.object({
 export type Catalog = z.infer<typeof catalogSchema>;
 export const dailyPlanSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  review: z.array(z.object({ key: z.string(), kind: z.enum(['due', 'pending']), completedAt: z.string().datetime().optional() })).max(5),
+  review: z.array(z.object({ key: z.string(), kind: z.enum(['due', 'pending', 'reflection', 'evaluation']), completedAt: z.string().datetime().optional() })).max(5),
   newKeys: z.array(z.string()).max(5),
   catalogReady: z.boolean().default(false),
   createdAt: z.string().datetime(),

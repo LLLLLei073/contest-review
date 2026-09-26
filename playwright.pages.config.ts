@@ -14,7 +14,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run preview:pages',
+    command: 'node node_modules/vite/bin/vite.js preview --mode pages --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173/contest-review/',
     reuseExistingServer: false,
     timeout: 30000,
