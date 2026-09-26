@@ -15,12 +15,14 @@ export class CodeforcesClient implements CFClient {
   ) {}
   cancel() {
     this.controller.abort();
+    this.controller = new AbortController();
   }
   call<T>(method: string, params: Record<string, string | number> = {}): Promise<T> {
+    const controller = this.controller;
     const request = this.tail.then(async () => {
       let error: unknown;
       for (let attempt = 0; attempt < 3; attempt++) {
-        this.controller.signal.throwIfAborted();
+        controller.signal.throwIfAborted();
         const wait = Math.max(0, this.lastStart + this.interval - Date.now());
         if (wait) await new Promise((r) => setTimeout(r, wait));
         this.lastStart = Date.now();
@@ -28,7 +30,7 @@ export class CodeforcesClient implements CFClient {
           const url = new URL(`https://codeforces.com/api/${method}`);
           Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
           const response = await this.fetcher(url, {
-            signal: AbortSignal.any([AbortSignal.timeout(20000), this.controller.signal]),
+            signal: AbortSignal.any([AbortSignal.timeout(20000), controller.signal]),
             headers: { Accept: 'application/json' },
           });
           if (!response.ok) throw new Error(`Codeforces HTTP ${response.status}`);
@@ -36,7 +38,7 @@ export class CodeforcesClient implements CFClient {
           if (body.status !== 'OK') throw new Error(body.comment || 'Codeforces 返回失败');
           return body.result;
         } catch (e) {
-          this.controller.signal.throwIfAborted();
+          controller.signal.throwIfAborted();
           error = e;
           if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
         }
@@ -66,6 +68,7 @@ export class SyncService {
   }
   start(handle: string, mode: 'full' | 'incremental', resume = false): SyncJob {
     if (this.running) throw new Error('已有同步任务正在运行');
+    this.stopping = false;
     const old = this.store.latestJob(handle);
     const canResume = resume && old && ['failed', 'interrupted'].includes(old.status);
     const job: SyncJob = canResume

@@ -140,24 +140,30 @@ test('rated or official zero-submission participation remains an analyzable cont
   assert.equal(s.analysis('tester', 9000).sessions[0].solved, 0);
   s.close();
 });
-test('schema v1 migrates non-destructively; v1/v2 backups roundtrip; corrupt cache rejected', () => {
+test('schema v1 migrates non-destructively; v1/v2/v3 backups roundtrip; corrupt cache rejected', () => {
   const s = seeded();
   s.put('analysis_cache', 'tester', '9000', analysisCacheSchema.parse(fixtureInput().cache));
-  const v2 = s.backup();
-  assert.equal(v2.version, 2);
-  s.restore(v2);
-  assert.deepEqual(s.backup().tables, v2.tables);
-  const bad = structuredClone(v2);
+  const v3 = s.backup();
+  assert.equal(v3.version, 3);
+  s.restore(v3);
+  assert.deepEqual(s.backup().tables, v3.tables);
+  const bad = structuredClone(v3);
   bad.tables.analysis_cache[0].value.id = 123;
   assert.throws(() => s.restore(bad));
-  assert.deepEqual(s.backup().tables, v2.tables);
+  assert.deepEqual(s.backup().tables, v3.tables);
+  const v2 = structuredClone(v3);
+  v2.version = 2;
+  Reflect.deleteProperty(v2, 'external');
+  Reflect.deleteProperty(v2, 'xcpcActive');
+  Reflect.deleteProperty(v2, 'xcpcMode');
+  s.restore(v2);
   const legacy = structuredClone(v2);
   legacy.version = 1;
   delete legacy.tables.analysis_cache;
   s.restore(legacy);
   assert.equal(s.all('analysis_cache', 'tester').length, 0);
   const preserved = s.backup().tables;
-  s.db.exec('DROP TABLE analysis_cache; PRAGMA user_version=1');
+  s.db.exec('DROP TABLE analysis_cache; DROP TABLE external; PRAGMA user_version=1');
   // Re-run migration on the same connection, as browser and server both do on opening existing data.
   return import('../shared/core-store').then(({ CoreStore }) => {
     const reopened = new CoreStore(s.db);

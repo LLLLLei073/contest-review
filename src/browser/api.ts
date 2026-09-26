@@ -5,7 +5,7 @@ import { browserRuntime } from './database';
 
 export async function browserApi<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
   const runtime = await browserRuntime(),
-    { store, sync, cf, analysis } = runtime;
+    { store, sync, cf, analysis, hub } = runtime;
   const url = new URL(path, 'https://local.invalid'),
     route = url.pathname;
   const profile = () => {
@@ -14,14 +14,19 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     return h;
   };
   const idle = () => {
-    if (sync.running || analysis.running) throw new Error('请等待当前同步或比赛分析完成');
+    if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步或比赛分析完成');
   };
   const isWrite = !['GET', 'HEAD'].includes(method);
   if (isWrite) runtime.assertWritable();
   let result: unknown;
   try {
     if (route === '/settings' && method === 'GET')
-      result = { activeHandle: store.active(), handles: store.handles() };
+      result = {
+        activeHandle: store.active(),
+        handles: store.handles(),
+        xcpcPlayer: hub.binding(),
+        xcpcMode: hub.mode(),
+      };
     else if (route === '/settings/handle' && method === 'POST') {
       idle();
       const { handle } = z
@@ -44,9 +49,28 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       }
       result = { activeHandle: store.active(), handles: store.handles() };
       navigator.storage?.persist?.().catch(() => {});
-    } else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
+    } else if (route === '/xcpc/search' && method === 'GET')
+      result = await hub.search(url.searchParams.get('name') ?? '');
+    else if (route === '/xcpc/binding' && method === 'POST')
+      result = await hub.bind(z.object({ key: z.string().min(1).max(300) }).parse(body).key);
+    else if (route === '/xcpc/mode' && method === 'POST') {
+      hub.setMode(z.object({ mode: z.enum(['official', 'all']) }).parse(body).mode);
+      result = { mode: hub.mode() };
+    } else if (route === '/review/contests' && method === 'GET') result = hub.rows();
+    else if (route === '/review/batch' && method === 'GET') result = hub.latestJob();
+    else if (route === '/review/batch' && method === 'POST') result = hub.startBatch();
+    else if (route === '/review/batch/stop' && method === 'POST') {
+      hub.stop();
+      result = hub.latestJob();
+    } else if (/^\/xcpc\/contests\/[^/]+\/analysis$/.test(route) && method === 'GET')
+      result = hub.getReport(decodeURIComponent(route.split('/')[3]));
+    else if (/^\/xcpc\/contests\/[^/]+\/analysis\/refresh$/.test(route) && method === 'POST')
+      result = hub.startReport(decodeURIComponent(route.split('/')[3]));
+    else if (/^\/xcpc\/contests\/[^/]+\/review$/.test(route) && method === 'PUT')
+      result = hub.saveReview(decodeURIComponent(route.split('/')[3]), contestReviewSchema.parse(body));
+    else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
     else if (route === '/sync' && method === 'POST') {
-      if (analysis.running) throw new Error('请等待比赛分析完成');
+      if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
       const data = z
         .object({
           mode: z.enum(['full', 'incremental']).default('incremental'),
@@ -151,7 +175,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (/^\/contests\/\d+\/analysis$/.test(route) && method === 'GET')
       result = analysis.get(profile(), z.coerce.number().int().positive().parse(route.split('/')[2]));
     else if (/^\/contests\/\d+\/analysis\/refresh$/.test(route) && method === 'POST') {
-      if (sync.running) throw new Error('请等待当前同步完成');
+      if (sync.running || hub.isBusy()) throw new Error('请等待当前同步完成');
       result = analysis.start(profile(), z.coerce.number().int().positive().parse(route.split('/')[2]));
     } else if (/^\/contests\/\d+\/review$/.test(route) && method === 'PUT') {
       const id = Number(route.split('/')[2]),
@@ -173,6 +197,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       idle();
       result = store.restore(body);
       analysis.reset();
+      hub.reset();
     } else throw new Error('未知操作');
     if (isWrite) await runtime.flush();
     return result as T;

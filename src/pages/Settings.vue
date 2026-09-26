@@ -1,13 +1,26 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { Download, Upload, RefreshCw, Link2, Database, ShieldCheck, ArrowRight } from 'lucide-vue-next';
+import {
+  Download,
+  Upload,
+  RefreshCw,
+  Link2,
+  Database,
+  ShieldCheck,
+  ArrowRight,
+  Search,
+} from 'lucide-vue-next';
 import { api, settings, loadSettings, loadJob, job, notify, fullDate, browserMode } from '../api';
+import type { XcpcCandidate } from '../../shared/xcpc';
 const handle = ref(''),
   busy = ref(false),
   error = ref(''),
   restoreFile = ref<File | null>(null),
   restoreInput = ref<HTMLInputElement | null>(null),
   restoreResult = ref('');
+const xcpcName = ref(''),
+  candidates = ref<XcpcCandidate[]>([]),
+  xcpcBusy = ref(false);
 onMounted(() => {
   handle.value = settings.value.activeHandle;
 });
@@ -24,6 +37,34 @@ async function bind(value = handle.value) {
     error.value = (e as Error).message;
   } finally {
     busy.value = false;
+  }
+}
+async function searchXcpc() {
+  xcpcBusy.value = true;
+  error.value = '';
+  try {
+    candidates.value = await api<XcpcCandidate[]>(
+      '/xcpc/search?name=' + encodeURIComponent(xcpcName.value.trim()),
+    );
+    if (!candidates.value.length) error.value = '未找到选手，请输入公开榜单中的中文姓名。';
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    xcpcBusy.value = false;
+  }
+}
+async function bindXcpc(key: string) {
+  xcpcBusy.value = true;
+  error.value = '';
+  try {
+    await api('/xcpc/binding', { key });
+    await loadSettings();
+    candidates.value = [];
+    notify('XCPC 选手已绑定，比赛已加入复盘列表');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    xcpcBusy.value = false;
   }
 }
 async function sync(mode = 'incremental', resume = false) {
@@ -134,6 +175,55 @@ async function restore() {
           </button>
         </div>
         <p class="small subtle">切换用户名会使用独立的数据分区；已有笔记和复习进度仍然保留。</p>
+      </section>
+      <section class="panel settings-card">
+        <div class="section-head">
+          <div class="section-title">
+            <span class="section-icon"><Link2 :size="20" /></span>
+            <div>
+              <h2>XCPC Rating 选手</h2>
+              <p>按姓名搜索公开选手，同名时请核对学校或组织。</p>
+            </div>
+          </div>
+          <span v-if="settings.xcpcPlayer" class="badge mastered">已绑定</span>
+        </div>
+        <p v-if="settings.xcpcPlayer" class="alert success">
+          当前选手：{{ settings.xcpcPlayer.name }} · {{ settings.xcpcPlayer.org }} ·
+          {{ settings.xcpcPlayer.contests }} 场比赛
+        </p>
+        <form class="handle-form" @submit.prevent="searchXcpc">
+          <label
+            >选手姓名<input
+              v-model="xcpcName"
+              required
+              maxlength="80"
+              placeholder="输入选手姓名"
+              :disabled="xcpcBusy || busy"
+          /></label>
+          <button class="primary" :disabled="xcpcBusy || busy">
+            <Search :size="16" />{{ xcpcBusy ? '搜索中…' : '搜索选手' }}
+          </button>
+        </form>
+        <div v-if="candidates.length" class="profile-switch" aria-label="XCPC 候选选手">
+          <button
+            v-for="candidate in candidates"
+            :key="candidate.key"
+            :disabled="xcpcBusy || busy"
+            @click="bindXcpc(candidate.key)"
+          >
+            {{ candidate.name }} · {{ candidate.org }} · {{ candidate.contests }} 场
+          </button>
+        </div>
+        <p class="small subtle">
+          只绑定选中的唯一档案。切换后旧选手的比赛报告和补充笔记仍保留在本机；XCPC 与 Codeforces 可单独使用。
+        </p>
+        <a
+          class="text-link"
+          href="https://hei-maom.github.io/xcpcrating/#/"
+          target="_blank"
+          rel="noopener noreferrer"
+          >打开 XCPC Rating 原站</a
+        >
       </section>
       <section class="panel settings-card">
         <div class="section-head">

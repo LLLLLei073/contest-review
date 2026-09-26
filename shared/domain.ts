@@ -121,6 +121,8 @@ export interface SyncJob {
 export interface Settings {
   activeHandle: string;
   handles: string[];
+  xcpcPlayer?: { key: string; name: string; org: string; contests: number } | null;
+  xcpcMode?: 'official' | 'all';
 }
 export interface Statistics {
   total: number;

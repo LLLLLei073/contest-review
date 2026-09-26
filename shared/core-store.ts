@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { xcpcRecordSchema } from './xcpc.js';
 import {
   analysisCacheSchema,
   analyzeContest,
@@ -117,7 +118,7 @@ const handleSchema = z
   .regex(/^[a-zA-Z0-9_.-]+$/);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
-  version: z.union([z.literal(1), z.literal(2)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
   profiles: z.array(handleSchema).max(1000),
@@ -132,6 +133,17 @@ const backupSchema = z.object({
       z.ZodArray<z.ZodObject<{ profile: typeof handleSchema; key: z.ZodString; value: z.ZodUnknown }>>
     >,
   ),
+  external: z
+    .array(
+      z.object({
+        namespace: z.string().min(1).max(300),
+        key: z.string().min(1).max(300),
+        value: z.unknown(),
+      }),
+    )
+    .optional(),
+  xcpcActive: z.string().max(300).optional(),
+  xcpcMode: z.enum(['official', 'all']).optional(),
 });
 export function problemKey(s: CFSubmission): string {
   return s.problem.contestId
@@ -158,7 +170,7 @@ export class CoreStore {
     const version = Number(
       (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
     );
-    if (version > 2) throw new Error('数据库来自更新版本，请升级程序');
+    if (version > 3) throw new Error('数据库来自更新版本，请升级程序');
     if (version === 0)
       this.transaction(() => {
         this.db.exec(
@@ -174,6 +186,12 @@ export class CoreStore {
       this.transaction(() => {
         this.db.exec(
           'CREATE TABLE analysis_cache (profile TEXT NOT NULL REFERENCES profiles(handle), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(profile,key)); PRAGMA user_version=2;',
+        );
+      });
+    if (version <= 2)
+      this.transaction(() => {
+        this.db.exec(
+          'CREATE TABLE external (namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(namespace,key)); PRAGMA user_version=3;',
         );
       });
     for (const h of this.handles())
@@ -213,6 +231,46 @@ export class CoreStore {
         `INSERT INTO ${table}(profile,key,value) VALUES(?,?,?) ON CONFLICT(profile,key) DO UPDATE SET value=excluded.value`,
       )
       .run(profile, key, JSON.stringify(value));
+  }
+  externalGet<T>(namespace: string, key: string): T | undefined {
+    const row = this.db
+      .prepare('SELECT value FROM external WHERE namespace=? AND key=?')
+      .get(namespace, key) as { value: string } | undefined;
+    return row ? (JSON.parse(row.value) as T) : undefined;
+  }
+  externalAll<T>(namespace: string): T[] {
+    return (
+      this.db.prepare('SELECT value FROM external WHERE namespace=? ORDER BY rowid').all(namespace) as {
+        value: string;
+      }[]
+    ).map((row) => JSON.parse(row.value) as T);
+  }
+  externalAllPrefix<T>(namespace: string, prefix: string): T[] {
+    return (
+      this.db
+        .prepare('SELECT value FROM external WHERE namespace=? AND substr(key,1,?)=? ORDER BY rowid')
+        .all(namespace, prefix.length, prefix) as { value: string }[]
+    ).map((row) => JSON.parse(row.value) as T);
+  }
+  externalPut(namespace: string, key: string, value: unknown) {
+    this.db
+      .prepare(
+        'INSERT INTO external(namespace,key,value) VALUES(?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value',
+      )
+      .run(namespace, key, JSON.stringify(value));
+  }
+  setting(key: string): string {
+    return (
+      (this.db.prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined)
+        ?.value || ''
+    );
+  }
+  setSetting(key: string, value: string) {
+    this.db
+      .prepare(
+        'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+      )
+      .run(key, value);
   }
   handles(): string[] {
     return (this.db.prepare('SELECT handle FROM profiles ORDER BY handle').all() as { handle: string }[]).map(
@@ -512,10 +570,19 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: this.handles(),
+      xcpcActive: this.setting('xcpc-active'),
+      xcpcMode: this.setting('xcpc-mode') === 'all' ? 'all' : 'official',
+      external: (
+        this.db.prepare('SELECT namespace,key,value FROM external ORDER BY namespace,key').all() as {
+          namespace: string;
+          key: string;
+          value: string;
+        }[]
+      ).map((row) => ({ ...row, value: JSON.parse(row.value) })),
       tables: Object.fromEntries(
         tables.map((t) => [
           t,
@@ -531,6 +598,14 @@ export class CoreStore {
     };
   }
   restore(input: unknown) {
+    if (
+      input &&
+      typeof input === 'object' &&
+      'version' in input &&
+      input.version === 3 &&
+      (!('external' in input) || !('xcpcActive' in input) || !('xcpcMode' in input))
+    )
+      throw new Error('v3 备份缺少 XCPC 数据字段');
     // Upgrade legacy backups in memory before validation, without mutating the caller's object.
     if (
       input &&
@@ -543,6 +618,35 @@ export class CoreStore {
     )
       input = { ...input, tables: { ...input.tables, analysis_cache: [] } };
     const data = backupSchema.parse(input);
+    if (
+      data.version === 3 &&
+      (data.external === undefined || data.xcpcActive === undefined || data.xcpcMode === undefined)
+    )
+      throw new Error('v3 备份缺少 XCPC 数据字段');
+    const external = data.external ?? [];
+    const externalKeys = new Set<string>();
+    for (const row of external) {
+      const id = `${row.namespace}\0${row.key}`;
+      if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
+      externalKeys.add(id);
+      row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
+    }
+    if (data.xcpcActive && !externalKeys.has(`player\0${data.xcpcActive}`))
+      throw new Error('备份缺少绑定的 XCPC 选手');
+    for (const row of external) {
+      if (row.namespace.startsWith('xcpc:')) {
+        if (!externalKeys.has(`player\0${row.namespace.slice(5)}`)) throw new Error('备份缺少 XCPC 选手档案');
+        if (
+          (row.key.startsWith('review:') || row.key.startsWith('report:')) &&
+          !externalKeys.has(`${row.namespace}\0history:${row.key.slice(row.key.indexOf(':') + 1)}`)
+        )
+          throw new Error('备份缺少 XCPC 比赛记录');
+      }
+      if (row.namespace === 'player')
+        for (const item of (row.value as { history: { contestId: string }[] }).history)
+          if (!externalKeys.has(`xcpc:${row.key}\0history:${item.contestId}`))
+            throw new Error('备份缺少 XCPC 选手比赛历史');
+    }
     if (
       new Set(data.profiles).size !== data.profiles.length ||
       (data.activeHandle && !data.profiles.includes(data.activeHandle))
@@ -587,9 +691,21 @@ export class CoreStore {
     const backupPath = this.beforeRestore?.(this.backup()) ?? null;
     this.transaction(() => {
       for (const t of tables) this.db.exec(`DELETE FROM ${t}`);
-      this.db.exec('DELETE FROM profiles; DELETE FROM settings;');
+      this.db.exec('DELETE FROM profiles; DELETE FROM settings; DELETE FROM external;');
       for (const h of data.profiles) this.db.prepare('INSERT INTO profiles VALUES(?)').run(h);
       this.db.prepare("INSERT INTO settings VALUES('active',?)").run(data.activeHandle);
+      this.setSetting('xcpc-active', data.xcpcActive ?? '');
+      this.setSetting('xcpc-mode', data.xcpcMode ?? 'official');
+      for (const row of external) {
+        if (row.namespace === 'batch' && (row.value as { status: string }).status === 'running')
+          row.value = {
+            ...(row.value as Record<string, unknown>),
+            status: 'interrupted',
+            phase: '从备份恢复，可再次一键复盘',
+            finishedAt: new Date().toISOString(),
+          };
+        this.externalPut(row.namespace, row.key, row.value);
+      }
       for (const t of tables)
         for (const row of data.tables[t]) {
           if (t === 'jobs' && (row.value as SyncJob).status === 'running')

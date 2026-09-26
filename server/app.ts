@@ -7,15 +7,18 @@ import { attemptSchema, reviewSchema, type ProblemRow } from '../shared/domain.j
 import { Store, contestReviewSchema, localDay } from './store.js';
 import { CodeforcesClient, SyncService, type CFClient } from './sync.js';
 import { AnalysisService } from '../shared/analysis-service.js';
+import { ContestHub } from '../shared/contest-hub.js';
+import type { XcpcClient } from '../shared/xcpc.js';
 
 export async function buildApp(
   store: Store,
   cf: CFClient = new CodeforcesClient(),
-  options: { dev?: boolean; logger?: boolean; pageSize?: number } = {},
+  options: { dev?: boolean; logger?: boolean; pageSize?: number; xcpc?: XcpcClient } = {},
 ) {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 100 * 1024 * 1024 });
   const sync = new SyncService(store, cf, options.pageSize);
   const analysis = new AnalysisService(store, cf);
+  const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc);
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host || '';
     if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host))
@@ -48,10 +51,41 @@ export async function buildApp(
     return h;
   };
   const idle = () => {
-    if (sync.running || analysis.running) throw new Error('请等待当前同步或比赛分析完成');
+    if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步或比赛分析完成');
   };
   app.get('/api/health', async () => ({ ok: true }));
-  app.get('/api/settings', async () => ({ activeHandle: store.active(), handles: store.handles() }));
+  app.get('/api/settings', async () => ({
+    activeHandle: store.active(),
+    handles: store.handles(),
+    xcpcPlayer: hub.binding(),
+    xcpcMode: hub.mode(),
+  }));
+  app.get('/api/xcpc/search', async (req) =>
+    hub.search(z.object({ name: z.string() }).parse(req.query).name),
+  );
+  app.post('/api/xcpc/binding', async (req) =>
+    hub.bind(z.object({ key: z.string().min(1).max(300) }).parse(req.body).key),
+  );
+  app.post('/api/xcpc/mode', async (req) => {
+    hub.setMode(z.object({ mode: z.enum(['official', 'all']) }).parse(req.body).mode);
+    return { mode: hub.mode() };
+  });
+  app.get('/api/review/contests', async () => hub.rows());
+  app.get('/api/review/batch', async () => hub.latestJob());
+  app.post('/api/review/batch', async () => hub.startBatch());
+  app.post('/api/review/batch/stop', async () => {
+    hub.stop();
+    return hub.latestJob();
+  });
+  app.get<{ Params: { slug: string } }>('/api/xcpc/contests/:slug/analysis', async (req) =>
+    hub.getReport(req.params.slug),
+  );
+  app.post<{ Params: { slug: string } }>('/api/xcpc/contests/:slug/analysis/refresh', async (req) =>
+    hub.startReport(req.params.slug),
+  );
+  app.put<{ Params: { slug: string } }>('/api/xcpc/contests/:slug/review', async (req) =>
+    hub.saveReview(req.params.slug, contestReviewSchema.parse(req.body)),
+  );
   app.post('/api/settings/handle', async (req) => {
     idle();
     const { handle } = z
@@ -76,7 +110,7 @@ export async function buildApp(
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
   app.post('/api/sync', async (req) => {
-    if (analysis.running) throw new Error('请等待比赛分析完成');
+    if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
     const { mode, resume } = z
       .object({
         mode: z.enum(['full', 'incremental']).default('incremental'),
@@ -180,7 +214,7 @@ export async function buildApp(
     analysis.get(profile(), z.coerce.number().int().positive().parse(req.params.id)),
   );
   app.post<{ Params: { id: string } }>('/api/contests/:id/analysis/refresh', async (req) => {
-    if (sync.running) throw new Error('请等待当前同步完成');
+    if (sync.running || hub.isBusy()) throw new Error('请等待当前同步完成');
     return analysis.start(profile(), z.coerce.number().int().positive().parse(req.params.id));
   });
   app.put<{ Params: { id: string } }>('/api/contests/:id/review', async (req) => {
@@ -205,6 +239,7 @@ export async function buildApp(
     idle();
     const result = store.restore(req.body);
     analysis.reset();
+    hub.reset();
     return result;
   });
   const dist = resolve('dist');
@@ -216,5 +251,5 @@ export async function buildApp(
         : reply.sendFile('index.html'),
     );
   }
-  return { app, sync, analysis };
+  return { app, sync, analysis, hub };
 }

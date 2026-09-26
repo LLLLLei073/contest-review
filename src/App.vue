@@ -83,9 +83,11 @@ onUnmounted(() => clearInterval(poll));
         </div>
         <RouterLink to="/settings" class="profile-chip"
           ><span class="avatar">{{
-            settings.activeHandle ? settings.activeHandle[0].toUpperCase() : 'CF'
+            settings.activeHandle ? settings.activeHandle[0].toUpperCase() : settings.xcpcPlayer ? 'X' : 'CF'
           }}</span
-          ><span>{{ settings.activeHandle || '绑定 Codeforces' }}</span
+          ><span>{{
+            settings.activeHandle || (settings.xcpcPlayer ? settings.xcpcPlayer.name + ' · XCPC' : '绑定账号')
+          }}</span
           ><RefreshCw v-if="job?.status === 'running'" class="spin" :size="14" /><ArrowUpRight
             v-else
             :size="14"
@@ -95,9 +97,11 @@ onUnmounted(() => clearInterval(poll));
         <div v-if="initError" class="alert error">
           {{ browserMode ? '无法打开浏览器错题库：' : '无法连接本地服务：' }}{{ initError }}
         </div>
-        <RouterView :key="$route.fullPath + '|' + settings.activeHandle" />
+        <RouterView
+          :key="$route.fullPath + '|' + settings.activeHandle + '|' + (settings.xcpcPlayer?.key || '')"
+        />
       </main>
-      <footer><span>回解 / 每一题，都值得真正理解。</span><span>LOCAL FIRST · CF CONNECTED</span></footer>
+      <footer><span>回解 / 每一题，都值得真正理解。</span><span>LOCAL FIRST · CONTEST REVIEW</span></footer>
     </div>
     <div v-if="toast" class="toast" role="status">
       <Check :size="17" />{{ toast

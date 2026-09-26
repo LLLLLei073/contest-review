@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { Store } from './store.js';
 import { buildApp } from './app.js';
 const store = new Store(resolve(process.env.DATA_DIR || 'data', 'review.sqlite'));
-const { app, sync, analysis } = await buildApp(store, undefined, {
+const { app, sync, analysis, hub } = await buildApp(store, undefined, {
   dev: process.env.NODE_ENV !== 'production',
   logger: true,
 });
@@ -13,9 +13,11 @@ async function close() {
   if (closing) return;
   closing = true;
   sync.stop();
+  hub.stop();
   await app.close();
   if (sync.running) await sync.running;
   if (analysis.running) await analysis.running;
+  if (hub.running) await hub.running;
   store.close();
   process.exit(0);
 }
