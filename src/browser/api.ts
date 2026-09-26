@@ -5,7 +5,7 @@ import { browserRuntime } from './database';
 
 export async function browserApi<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
   const runtime = await browserRuntime(),
-    { store, sync, cf, analysis, hub } = runtime;
+    { store, sync, cf, analysis, hub, training } = runtime;
   const url = new URL(path, 'https://local.invalid'),
     route = url.pathname;
   const profile = () => {
@@ -69,6 +69,15 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (/^\/xcpc\/contests\/[^/]+\/review$/.test(route) && method === 'PUT')
       result = hub.saveReview(decodeURIComponent(route.split('/')[3]), contestReviewSchema.parse(body));
     else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
+    else if (route === '/training/day' && method === 'GET') {
+      result = store.trainingDay(profile());
+      await runtime.flush();
+    } else if (route === '/training/recent' && method === 'POST') {
+      const h = profile();
+      result = sync.running
+        ? { checkedAt: store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null, error: '完整同步正在进行' }
+        : await training.recent(h);
+    }
     else if (route === '/sync' && method === 'POST') {
       if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
       const data = z
@@ -199,7 +208,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       analysis.reset();
       hub.reset();
     } else throw new Error('未知操作');
-    if (isWrite) await runtime.flush();
+    if (isWrite && route !== '/training/recent') await runtime.flush();
     return result as T;
   } catch (error) {
     if (error instanceof z.ZodError)

@@ -20,6 +20,10 @@ const tags = [
   ['constructive algorithms'],
   ['data structures', 'sortings'],
 ];
+export const fixtureNewProblems: CFSubmission['problem'][] = Array.from({ length: 10 }, (_, i) => ({
+  contestId: 3100 + i, index: 'A', name: `New Knowledge ${i + 1}`,
+  tags: tags[i % tags.length], rating: 1100 + (i % 6) * 100,
+}));
 export const fixtureSubmissions: CFSubmission[] = names
   .flatMap((name, i) => {
     const submission: CFSubmission = {
@@ -59,7 +63,7 @@ export function fixtureResult(method: string, params: Record<string, string | nu
       name: `Codeforces Round ${980 + i} (Div. 2)`,
       startTimeSeconds: 1789500000 + i * 86400,
     }));
-  if (method === 'problemset.problems') return { problems: fixtureSubmissions.map((s) => s.problem) };
+  if (method === 'problemset.problems') return { problems: [...fixtureSubmissions.map((s) => s.problem), ...fixtureNewProblems] };
   if (method === 'user.rating')
     return [
       {

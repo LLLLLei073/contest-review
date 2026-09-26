@@ -14,7 +14,7 @@ import {
 } from 'lucide-vue-next';
 import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
 const navigation = [
-  { to: '/', label: '今日复习', icon: LayoutDashboard },
+  { to: '/', label: '今日题单', icon: LayoutDashboard },
   { to: '/problems', label: '错题库', icon: Library },
   { to: '/contests', label: '比赛复盘', icon: Flag },
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
@@ -78,7 +78,7 @@ onUnmounted(() => clearInterval(poll));
                   ? '训练统计'
                   : $route.path === '/settings'
                     ? '设置与数据'
-                    : '今日复习'
+                  : '今日题单'
           }}</b>
         </div>
         <RouterLink to="/settings" class="profile-chip"

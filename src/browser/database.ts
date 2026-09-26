@@ -4,6 +4,7 @@ import { CoreStore, type DatabaseLike, type SQLValue } from '../../shared/core-s
 import { CodeforcesClient, SyncService } from '../../shared/sync';
 import { AnalysisService } from '../../shared/analysis-service';
 import { ContestHub } from '../../shared/contest-hub';
+import { TrainingService } from '../../shared/training-service';
 
 class BrowserSQLite implements DatabaseLike {
   constructor(public raw: Database) {}
@@ -81,6 +82,7 @@ export class BrowserRuntime {
   readonly sync: SyncService;
   readonly analysis: AnalysisService;
   readonly hub: ContestHub;
+  readonly training: TrainingService;
   private writes: Promise<void> = Promise.resolve();
   private pendingWrites = 0;
   private previous: unknown;
@@ -96,6 +98,7 @@ export class BrowserRuntime {
     this.sync = new SyncService(this.store, this.cf, 1000, () => this.flush());
     this.analysis = new AnalysisService(this.store, this.cf, () => this.flush());
     this.hub = new ContestHub(this.store, this.sync, this.analysis, () => this.flush());
+    this.training = new TrainingService(this.store, this.cf, () => this.flush());
     window.addEventListener('beforeunload', (event) => {
       if (this.pendingWrites || this.sync.running || this.analysis.running || this.hub.isBusy()) {
         event.preventDefault();

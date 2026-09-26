@@ -10,6 +10,9 @@ test('legacy backups, IndexedDB persistence, offline reload and tab ownership', 
   const backup = original.backup();
   backup.version = 1;
   delete backup.tables.analysis_cache;
+  delete backup.tables.catalog_cache;
+  delete backup.tables.daily_plans;
+  delete backup.tables.training_meta;
   original.close();
   const backendRequests: string[] = [];
   page.on('request', (r) => {

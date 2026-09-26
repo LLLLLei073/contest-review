@@ -150,7 +150,7 @@ test('XCPC search disambiguates school, binding works without CF, source score s
   assert.equal(store.externalGet<{ key: string }>('player', a)?.key, a);
   store.close();
 });
-test('XCPC report retains notes and old cache on refresh failure; backup v3 restores archives', async () => {
+test('XCPC report retains notes and old cache on refresh failure; backup v4 restores archives', async () => {
   const { store, hub, setFail } = fixture();
   await hub.bind(a);
   hub.startReport('round_one');
@@ -164,7 +164,7 @@ test('XCPC report retains notes and old cache on refresh failure; backup v3 rest
   assert.equal(stale.task.status, 'failed');
   assert.equal(stale.report?.fetchedAt, result.report?.fetchedAt);
   const backup = store.backup();
-  assert.equal(backup.version, 3);
+  assert.equal(backup.version, 4);
   const bad = structuredClone(backup);
   bad.external.find((r) => r.key === 'report:round_one')!.value = {};
   assert.throws(() => store.restore(bad));

@@ -34,6 +34,9 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   s.close();
   backup.version = 1;
   delete backup.tables.analysis_cache;
+  delete backup.tables.catalog_cache;
+  delete backup.tables.daily_plans;
+  delete backup.tables.training_meta;
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(isPages ? './#/settings' : '/settings');
@@ -95,7 +98,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   await page.getByRole('button', { name: '导出备份', exact: true }).click();
   const path = (await (await downloaded).path())!;
   const result = JSON.parse(readFileSync(path, 'utf8'));
-  expect(result.version).toBe(3);
+  expect(result.version).toBe(4);
   expect(result.tables.analysis_cache).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path);
   page.once('dialog', (d) => d.accept());

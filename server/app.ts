@@ -8,6 +8,7 @@ import { Store, contestReviewSchema, localDay } from './store.js';
 import { CodeforcesClient, SyncService, type CFClient } from './sync.js';
 import { AnalysisService } from '../shared/analysis-service.js';
 import { ContestHub } from '../shared/contest-hub.js';
+import { TrainingService } from '../shared/training-service.js';
 import type { XcpcClient } from '../shared/xcpc.js';
 
 export async function buildApp(
@@ -19,6 +20,7 @@ export async function buildApp(
   const sync = new SyncService(store, cf, options.pageSize);
   const analysis = new AnalysisService(store, cf);
   const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc);
+  const training = new TrainingService(store, cf);
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host || '';
     if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host))
@@ -109,6 +111,12 @@ export async function buildApp(
     return { activeHandle: store.active(), handles: store.handles() };
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
+  app.get('/api/training/day', async () => store.trainingDay(profile()));
+  app.post('/api/training/recent', async () => {
+    const h = profile();
+    if (sync.running) return { checkedAt: store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null, error: '完整同步正在进行' };
+    return training.recent(h);
+  });
   app.post('/api/sync', async (req) => {
     if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
     const { mode, resume } = z

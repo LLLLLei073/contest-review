@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { catalogSchema, dailyPlanSchema, trainingMetaSchema, masteryAreas, chooseNewProblems, targetDifficulty, type Catalog, type DailyPlan, type TrainingDay } from './training.js';
 import { xcpcRecordSchema } from './xcpc.js';
 import {
   analysisCacheSchema,
@@ -37,6 +38,9 @@ export const tables = [
   'attempts',
   'jobs',
   'analysis_cache',
+  'catalog_cache',
+  'daily_plans',
+  'training_meta',
 ] as const;
 export type Table = (typeof tables)[number];
 export const submissionSchema = z.object({
@@ -110,6 +114,9 @@ const payloadSchemas: Record<Table, z.ZodType> = {
   }),
   jobs: jobSchema,
   analysis_cache: analysisCacheSchema,
+  catalog_cache: catalogSchema,
+  daily_plans: dailyPlanSchema,
+  training_meta: trainingMetaSchema,
 };
 const handleSchema = z
   .string()
@@ -118,7 +125,7 @@ const handleSchema = z
   .regex(/^[a-zA-Z0-9_.-]+$/);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
-  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
   profiles: z.array(handleSchema).max(1000),
@@ -170,7 +177,7 @@ export class CoreStore {
     const version = Number(
       (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
     );
-    if (version > 3) throw new Error('数据库来自更新版本，请升级程序');
+    if (version > 4) throw new Error('数据库来自更新版本，请升级程序');
     if (version === 0)
       this.transaction(() => {
         this.db.exec(
@@ -193,6 +200,12 @@ export class CoreStore {
         this.db.exec(
           'CREATE TABLE external (namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(namespace,key)); PRAGMA user_version=3;',
         );
+      });
+    if (version <= 3)
+      this.transaction(() => {
+        for (const table of ['catalog_cache', 'daily_plans', 'training_meta'])
+          this.db.exec(`CREATE TABLE IF NOT EXISTS ${table} (profile TEXT NOT NULL REFERENCES profiles(handle), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(profile,key));`);
+        this.db.exec('PRAGMA user_version=4');
       });
     for (const h of this.handles())
       for (const job of this.all<SyncJob>('jobs', h))
@@ -301,7 +314,13 @@ export class CoreStore {
   }
   saveReview(h: string, key: string, review: Review) {
     if (!this.get('problems', h, key)) throw new Error('题目不存在');
+    const old = this.review(h, key);
     this.put('reviews', h, key, reviewSchema.parse(review));
+    if (old.status === 'pending' && review.status === 'reviewing') {
+      const date = localDay(new Date()), plan = this.get<DailyPlan>('daily_plans', h, date);
+      if (plan?.review.some((item) => item.key === key && item.kind === 'pending'))
+        this.put('daily_plans', h, date, { ...plan, review: plan.review.map((item) => item.key === key && item.kind === 'pending' ? { ...item, completedAt: new Date().toISOString() } : item) });
+    }
   }
   manualProblem(
     h: string,
@@ -373,7 +392,67 @@ export class CoreStore {
         if (old)
           this.put('problems', h, key, { ...old, name: p.name, tags: p.tags, rating: p.rating ?? null });
       }
+      if (problems.length) {
+        const catalog = new Map<string, Catalog['problems'][number]>();
+        for (const p of problems) {
+          if (!p.contestId || p.contestId >= 100000 || !p.index || !p.name) continue;
+          const key = `${p.contestId}:${p.index}`;
+          catalog.set(key, {
+            key, contestId: p.contestId, index: p.index, name: p.name,
+            rating: p.rating ?? null, tags: p.tags,
+            url: `https://codeforces.com/contest/${p.contestId}/problem/${p.index}`,
+          });
+        }
+        this.put('catalog_cache', h, 'current', catalogSchema.parse({ fetchedAt: new Date().toISOString(), problems: [...catalog.values()] }));
+      }
     });
+  }
+  trainingDay(h: string, now = new Date()): TrainingDay {
+    const date = localDay(now);
+    const catalog = this.get<Catalog>('catalog_cache', h, 'current');
+    const rows = this.problems(h);
+    const submissions = this.all<CFSubmission>('submissions', h);
+    const attempts = this.all<Attempt>('attempts', h);
+    const known = this.all<Problem>('problems', h);
+    const reviews = new Map(rows.map((p) => [p.key, p.review]));
+    const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey);
+    let plan = this.get<DailyPlan>('daily_plans', h, date);
+    if (!plan || (!plan.catalogReady && catalog)) {
+      const eligible = rows.filter((p) => !p.review.ignored);
+      const due = eligible.filter((p) => p.review.status === 'reviewing' && p.review.nextReview && localDay(new Date(p.review.nextReview)) <= date)
+        .sort((a, b) => a.review.nextReview!.localeCompare(b.review.nextReview!) || a.key.localeCompare(b.key));
+      const pending = eligible.filter((p) => p.review.status === 'pending')
+        .sort((a, b) => b.failures - a.failures || a.key.localeCompare(b.key));
+      const review = plan?.review ?? [...due.map((p) => ({ key: p.key, kind: 'due' as const })), ...pending.map((p) => ({ key: p.key, kind: 'pending' as const }))].slice(0, 5);
+      const blocked = new Set([...known.map((p) => p.key), ...review.map((p) => p.key)]);
+      plan = dailyPlanSchema.parse({ date, review, newKeys: chooseNewProblems(catalog?.problems ?? [], blocked, mastery, targetDifficulty(known, submissions, problemKey), date), catalogReady: !!catalog, createdAt: plan?.createdAt ?? now.toISOString() });
+      if (known.length || catalog || this.all<SyncJob>('jobs', h).some((j) => j.mode === 'full' && j.status === 'completed'))
+        this.put('daily_plans', h, date, plan);
+    }
+    const byKey = new Map(known.map((p) => [p.key, p]));
+    const catalogByKey = new Map(catalog?.problems.map((p) => [p.key, p]) ?? []);
+    const attemptsToday = new Set(attempts.filter((a) => localDay(new Date(a.createdAt)) === date).map((a) => a.problemKey));
+    const submittedToday = new Set(submissions.filter((s) => localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
+    const acceptedToday = new Set(submissions.filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
+    const review: TrainingDay['review'] = plan.review.flatMap(({ key, kind, completedAt }) => {
+      const p = byKey.get(key), r = reviews.get(key);
+      if (!p || !r || r.ignored) return [];
+      return [{ key, name: p.name, rating: p.rating, tags: p.tags, url: p.url, kind,
+        completed: kind === 'due' ? attemptsToday.has(key) : !!completedAt,
+        attempted: kind === 'due' && attemptsToday.has(key), nextReview: r.nextReview }];
+    });
+    const newProblems: TrainingDay['newProblems'] = plan.newKeys.flatMap((key) => {
+      const p = catalogByKey.get(key) ?? byKey.get(key);
+      if (!p) return [];
+      return [{ key, name: p.name, rating: p.rating, tags: p.tags, url: p.url, kind: 'new' as const,
+        completed: acceptedToday.has(key), attempted: submittedToday.has(key), nextReview: null }];
+    });
+    return { date, review, newProblems, catalogFetchedAt: catalog?.fetchedAt ?? null,
+      recentCheckedAt: this.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null,
+      catalogCount: catalog?.problems.length ?? 0, mastery };
+  }
+  markRecentChecked(h: string, now = new Date()) {
+    this.put('training_meta', h, 'recent', trainingMetaSchema.parse({ recentCheckedAt: now.toISOString() }));
   }
   problems(h: string): ProblemRow[] {
     const subs = this.all<CFSubmission>('submissions', h);
@@ -529,14 +608,20 @@ export class CoreStore {
     };
   }
   statistics(h: string, now = new Date()): Statistics {
-    const rows = this.problems(h).filter((p) => !p.review.ignored),
+    const allRows = this.problems(h),
+      rows = allRows.filter((p) => !p.review.ignored),
       attempts = this.all<Attempt>('attempts', h);
+    const submissions = this.all<CFSubmission>('submissions', h);
+    const known = this.all<Problem>('problems', h);
+    const reviews = new Map(allRows.map((p) => [p.key, p.review]));
+    const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey);
     const count = (items: string[]) => {
       const map = new Map<string, number>();
       items.forEach((s) => map.set(s, (map.get(s) || 0) + 1));
       return [...map.entries()].sort((a, b) => b[1] - a[1]);
     };
     const trend: Statistics['trend'] = [];
+    const dailyTraining: Statistics['dailyTraining'] = [];
     for (let i = 13; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
@@ -548,6 +633,13 @@ export class CoreStore {
         hint: a.filter((a) => a.result === 'hint').length,
         failed: a.filter((a) => a.result === 'failed').length,
       });
+      const plan = this.get<DailyPlan>('daily_plans', h, date);
+      const completedDue = new Set(a.map((item) => item.problemKey));
+      const ac = new Set(submissions.filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
+      dailyTraining.push({ date, reviewAssigned: plan?.review.length ?? 0,
+        reviewCompleted: plan?.review.filter((item) => item.kind === 'pending' ? !!item.completedAt : completedDue.has(item.key)).length ?? 0,
+        newAssigned: plan?.newKeys.length ?? 0,
+        newCompleted: plan?.newKeys.filter((key) => ac.has(key)).length ?? 0 });
     }
     return {
       total: rows.length,
@@ -564,6 +656,8 @@ export class CoreStore {
       reasons: count(rows.flatMap((p) => [...new Set(p.review.reasons)])),
       tags: count(rows.flatMap((p) => [...new Set(p.tags)])),
       trend,
+      mastery,
+      dailyTraining,
     };
   }
   latestJob(h: string) {
@@ -572,7 +666,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: this.handles(),
@@ -619,9 +713,12 @@ export class CoreStore {
       typeof input.tables === 'object'
     )
       input = { ...input, tables: { ...input.tables, analysis_cache: [] } };
+    if (input && typeof input === 'object' && 'version' in input && Number(input.version) < 4 &&
+      'tables' in input && input.tables && typeof input.tables === 'object')
+      input = { ...input, tables: { ...input.tables, catalog_cache: [], daily_plans: [], training_meta: [] } };
     const data = backupSchema.parse(input);
     if (
-      data.version === 3 &&
+      data.version >= 3 &&
       (data.external === undefined || data.xcpcActive === undefined || data.xcpcMode === undefined)
     )
       throw new Error('v3 备份缺少 XCPC 数据字段');
@@ -674,7 +771,29 @@ export class CoreStore {
           throw new Error('备份记录编号不一致');
         if (t === 'problems' && v.contestId && `${v.contestId}:${v.index}` !== row.key)
           throw new Error('备份题号不一致');
+        if ((t === 'catalog_cache' && row.key !== 'current') || (t === 'training_meta' && row.key !== 'recent') ||
+          (t === 'daily_plans' && v.date !== row.key))
+          throw new Error('备份训练记录编号不一致');
       }
+    }
+    const catalogKeys = new Map<string, Set<string>>();
+    for (const row of data.tables.catalog_cache) {
+      const problems = (row.value as Catalog).problems;
+      const keys = new Set<string>();
+      for (const problem of problems) {
+        if (problem.key !== `${problem.contestId}:${problem.index}` || keys.has(problem.key))
+          throw new Error('备份题目目录有重复或编号不一致');
+        keys.add(problem.key);
+      }
+      catalogKeys.set(row.profile, keys);
+    }
+    for (const row of data.tables.daily_plans) {
+      const plan = row.value as DailyPlan;
+      const keys = [...plan.review.map((item) => item.key), ...plan.newKeys];
+      if (new Set(keys).size !== keys.length ||
+        plan.review.some((item) => !known.get('problems')!.has(`${row.profile}\0${item.key}`)) ||
+        plan.newKeys.some((key) => !catalogKeys.get(row.profile)?.has(key) && !known.get('problems')!.has(`${row.profile}\0${key}`)))
+        throw new Error('备份题单包含重复或不存在的题目');
     }
     for (const t of ['reviews', 'attempts', 'submissions'] as const)
       for (const row of data.tables[t]) {

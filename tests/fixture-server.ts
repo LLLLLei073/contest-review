@@ -6,6 +6,7 @@ import { Store } from '../server/store.js';
 import { buildApp } from '../server/app.js';
 import type { CFClient } from '../server/sync.js';
 import type { CFSubmission } from '../shared/domain.js';
+import { fixtureNewProblems } from './cf-fixtures.js';
 const names = [
   'Two Screens',
   'Turtle and a MEX Problem',
@@ -78,7 +79,7 @@ const cf: CFClient = {
         name: `Codeforces Round ${980 + i} (Div. 2)`,
         startTimeSeconds: 1789500000 + i * 86400,
       })) as T;
-    if (method === 'problemset.problems') return { problems: submissions.map((s) => s.problem) } as T;
+    if (method === 'problemset.problems') return { problems: [...submissions.map((s) => s.problem), ...fixtureNewProblems] } as T;
     if (method === 'user.rating')
       return [
         {

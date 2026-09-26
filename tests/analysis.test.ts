@@ -218,17 +218,23 @@ test('rated or official zero-submission participation remains an analyzable cont
   assert.equal(s.analysis('tester', 9000).sessions[0].solved, 0);
   s.close();
 });
-test('schema v1 migrates non-destructively; v1/v2/v3 backups roundtrip; corrupt cache rejected', () => {
+test('schema v1 migrates non-destructively; v1-v4 backups roundtrip; corrupt cache rejected', () => {
   const s = seeded();
   s.put('analysis_cache', 'tester', '9000', analysisCacheSchema.parse(fixtureInput().cache));
-  const v3 = s.backup();
-  assert.equal(v3.version, 3);
-  s.restore(v3);
-  assert.deepEqual(s.backup().tables, v3.tables);
-  const bad = structuredClone(v3);
+  const v4 = s.backup();
+  assert.equal(v4.version, 4);
+  s.restore(v4);
+  assert.deepEqual(s.backup().tables, v4.tables);
+  const bad = structuredClone(v4);
   bad.tables.analysis_cache[0].value.id = 123;
   assert.throws(() => s.restore(bad));
-  assert.deepEqual(s.backup().tables, v3.tables);
+  assert.deepEqual(s.backup().tables, v4.tables);
+  const v3 = structuredClone(v4);
+  v3.version = 3;
+  delete v3.tables.catalog_cache;
+  delete v3.tables.daily_plans;
+  delete v3.tables.training_meta;
+  s.restore(v3);
   const v2 = structuredClone(v3);
   v2.version = 2;
   Reflect.deleteProperty(v2, 'external');

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { MasteryArea } from './training.js';
 
 export const reasonOptions = [
   '思路缺失',
@@ -136,6 +137,8 @@ export interface Statistics {
   reasons: [string, number][];
   tags: [string, number][];
   trend: { date: string; independent: number; hint: number; failed: number }[];
+  mastery: MasteryArea[];
+  dailyTraining: { date: string; reviewAssigned: number; reviewCompleted: number; newAssigned: number; newCompleted: number }[];
 }
 export const failures = new Set([
   'WRONG_ANSWER',

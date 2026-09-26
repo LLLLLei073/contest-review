@@ -8,7 +8,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
-  await expect(page.getByRole('heading', { name: '把错题，解成自己的。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
   await page.locator('.profile-chip').click();
   await page.getByLabel('Codeforces Handle').fill('review_tester');
   await page.getByRole('button', { name: '绑定用户名' }).click();
@@ -34,10 +34,11 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByLabel('下次复习日期').fill('2026-01-01');
   await page.getByRole('button', { name: '保存日期与笔记' }).click();
   await expect(page.getByRole('button', { name: '记录结果', exact: true })).toBeEnabled();
-  await page.getByRole('link', { name: '今日复习', exact: true }).click();
-  await expect(page.getByRole('link', { name: '2000C Two Screens', exact: true }).first()).toBeVisible();
+  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
+  await expect(page.getByText('Two Screens', { exact: true }).first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('dashboard-desktop.png'), fullPage: true });
-  await page.getByRole('link', { name: '2000C Two Screens', exact: true }).first().click();
+  await page.getByRole('link', { name: '查看笔记' }).first().click();
   await page.getByLabel('耗时（分钟）').fill('18');
   await page.getByLabel('新的发现').fill('先证明，再实现。');
   await page.getByRole('button', { name: '记录结果', exact: true }).click();
@@ -54,6 +55,8 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('button', { name: '保存比赛复盘' }).click();
   await expect(page.getByText('比赛复盘已保存')).toBeVisible();
   await page.getByRole('link', { name: '训练统计', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '算法领域掌握度' })).toBeVisible();
+  await expect(page.locator('.mastery-row')).toHaveCount(8);
   await expect(page.getByRole('heading', { name: '最近 14 天的重做记录' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('statistics.png'), fullPage: true });
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
@@ -63,6 +66,8 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   const path = await download.path();
   const backup = JSON.parse(readFileSync(path!, 'utf8'));
   expect(backup.format).toBe('contest-review');
+  expect(backup.version).toBe(4);
+  expect(backup.tables.catalog_cache).toHaveLength(1);
   expect(backup.tables.attempts).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path!);
   page.once('dialog', (d) => d.accept());
@@ -71,7 +76,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await page.getByRole('link', { name: '2000C Two Screens', exact: true }).click();
   await expect(page.getByLabel('当时的思路', { exact: false })).toHaveValue('只考虑了单个字符串。');
-  await page.getByRole('link', { name: '今日复习', exact: true }).click();
+  await page.getByRole('link', { name: '今日题单', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('dashboard-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
