@@ -20,6 +20,8 @@ import {
   atcoderProblemSchema,
   atcoderContestSchema,
   atcoderReportSchema,
+  atcoderCatalogSchema,
+  atcoderHistorySchema,
   type AtcoderSubmission,
   type AtcoderContest,
 } from './atcoder.js';
@@ -151,7 +153,7 @@ const handleSchema = z
 const profileSchema = z.union([handleSchema, z.string().regex(/^ac~[a-z0-9_]{1,64}$/)]);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
-  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
   profiles: z.array(profileSchema).max(1000),
@@ -1199,7 +1201,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 5,
+      version: 6,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
@@ -1275,18 +1277,10 @@ export class CoreStore {
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
       if (row.namespace === 'atcoder-meta' && row.key === 'catalog')
-        row.value = z
-          .object({
-            fetchedAt: z.string().datetime(),
-            problems: z.array(atcoderProblemSchema),
-            contests: z.array(atcoderContestSchema),
-            models: z.record(
-              z.string(),
-              z.object({ difficulty: z.number().nullable().optional() }).passthrough(),
-            ),
-          })
-          .parse(row.value);
+        row.value = atcoderCatalogSchema.parse(row.value);
       else if (row.namespace.startsWith('daily:')) row.value = dailyPlanSchema.parse(row.value);
+      else if (row.namespace.startsWith('atcoder:') && row.key === 'history')
+        row.value = atcoderHistorySchema.parse(row.value);
       else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('report:'))
         row.value = atcoderReportSchema.parse(row.value);
       else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('review:'))

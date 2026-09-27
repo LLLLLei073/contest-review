@@ -3,9 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { api, fullDate } from '../api';
 import type { AtcoderReport } from '../../shared/atcoder';
 const props = defineProps<{ contestId: string }>();
+const emit = defineEmits<{ updated: [] }>();
 const report = ref<AtcoderReport | null>(null),
   error = ref(''),
   busy = ref(false);
+let requestNumber = 0;
 const problemRows = computed(() => {
   const map = new Map<string, AtcoderReport['inContest']>();
   for (const item of report.value?.inContest ?? [])
@@ -28,32 +30,64 @@ const problemRows = computed(() => {
   }));
 });
 async function load(refresh = false) {
+  const current = ++requestNumber;
   busy.value = true;
   error.value = '';
   try {
-    report.value = await api<AtcoderReport>(
+    const next = await api<AtcoderReport>(
       `/atcoder/contests/${encodeURIComponent(props.contestId)}/analysis${refresh ? '/refresh' : ''}`,
       refresh ? {} : undefined,
     );
+    if (current !== requestNumber) return;
+    report.value = next;
+    if (refresh) emit('updated');
   } catch (e) {
-    error.value = (e as Error).message;
+    if (current === requestNumber) error.value = (e as Error).message;
   } finally {
-    busy.value = false;
+    if (current === requestNumber) busy.value = false;
   }
 }
 onMounted(() => load());
 watch(
   () => props.contestId,
-  () => load(),
+  () => {
+    report.value = null;
+    void load();
+  },
 );
 </script>
 <template>
   <div class="report-body">
     <div class="alert">
-      仅根据赛时提交时间与当前判定生成事实分析；无法核实正式或虚拟参赛身份，不提供官方排名、表现分或综合分。
+      官方成绩来自 AtCoder
+      公开历史；时间线与建议仅依据已同步的赛时提交和当前判定。没有官方记录时，赛时提交不能证明参赛身份。
     </div>
     <p v-if="error" class="alert error">{{ error }}<button @click="load()">重试</button></p>
     <div v-if="report">
+      <div v-if="report.official" class="panel settings-card">
+        <h3>AtCoder 官方成绩</h3>
+        <div class="metrics">
+          <div class="metric">
+            <span>官方排名</span><strong>#{{ report.official.place }}</strong>
+          </div>
+          <div class="metric">
+            <span>官方 Performance</span><strong>{{ report.official.performance ?? '暂无数据' }}</strong>
+          </div>
+          <div class="metric">
+            <span>Rating</span
+            ><strong
+              >{{ report.official.oldRating ?? '暂无数据' }} →
+              {{ report.official.newRating ?? '暂无数据' }}</strong
+            >
+          </div>
+        </div>
+        <p class="small subtle">
+          {{ report.official.rated ? '评级场次' : '非评级场次' }} · 历史更新于
+          {{ fullDate(report.official.fetchedAt) }} ·
+          <a :href="report.official.sourceUrl" target="_blank" rel="noreferrer">查看官方历史</a>
+        </p>
+      </div>
+      <p v-else class="small subtle">暂无可匹配的官方参赛记录；参赛身份保持未核实。</p>
       <div class="metrics">
         <div class="metric">
           <span>赛时 AC</span><strong>{{ report.solved }}</strong>
@@ -69,11 +103,14 @@ watch(
       <p class="small subtle">
         来源：AtCoder Problems · 更新于 {{ fullDate(report.fetchedAt) }} ·
         {{
-          report.complete ? '完整历史已同步' : '历史尚未完整同步，分析暂定'
+          report.complete ? '完整提交历史已同步' : '提交历史尚未完整同步，分析暂定'
         }}。当前判定可能包含重判，无法还原赛时评测过程。
       </p>
+      <p v-if="!report.windowAvailable" class="alert">比赛时间资料待补齐，暂不将提交划分为赛时或赛后。</p>
       <h3>赛时分题时间线</h3>
-      <div v-if="!report.inContest.length" class="quiet-empty">无赛时提交，不视为参赛。</div>
+      <div v-if="!report.inContest.length" class="quiet-empty">
+        {{ report.official ? '官方参赛记录已确认；没有已同步的赛时提交。' : '没有已同步的赛时提交。' }}
+      </div>
       <div v-for="row in problemRows" :key="row.key" class="panel settings-card">
         <h4>{{ row.key.slice(8) }}</h4>
         <p class="small subtle">
@@ -97,6 +134,9 @@ watch(
           >
         </div>
       </details>
+      <p v-if="report.unclassified?.length" class="small subtle">
+        另有 {{ report.unclassified.length }} 次提交因比赛时间缺失而暂未分类。
+      </p>
     </div>
     <button class="small-button" :disabled="busy" @click="load(true)">
       {{ busy ? '正在更新…' : '刷新分析' }}

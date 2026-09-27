@@ -99,9 +99,15 @@ export async function buildApp(
     activeHandle: store.activeAtcoder(),
     handles: store.atcoderHandles(),
     verified: !!(
-      store.activeAtcoder() && store.all('submissions', atcoderProfile(store.activeAtcoder())).length
+      store.activeAtcoder() &&
+      (store.all('submissions', atcoderProfile(store.activeAtcoder())).length ||
+        atcoder.history(store.activeAtcoder())?.entries.length)
     ),
     job: store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null,
+    verifiedBy:
+      store.activeAtcoder() && atcoder.history(store.activeAtcoder())?.entries.length
+        ? 'history'
+        : 'submissions',
   }));
   app.post('/api/atcoder/binding', async (req) => {
     idle();
@@ -110,7 +116,9 @@ export async function buildApp(
     return {
       activeHandle: store.activeAtcoder(),
       handles: store.atcoderHandles(),
-      verified: store.all('submissions', atcoderProfile(handle)).length > 0,
+      verified:
+        store.all('submissions', atcoderProfile(handle)).length > 0 ||
+        !!atcoder.history(handle)?.entries.length,
     };
   });
   app.get('/api/atcoder/sync', async () =>

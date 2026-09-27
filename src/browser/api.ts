@@ -58,8 +58,14 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         activeHandle: store.activeAtcoder(),
         handles: store.atcoderHandles(),
         verified: !!(
-          store.activeAtcoder() && store.all('submissions', atcoderProfile(store.activeAtcoder())).length
+          store.activeAtcoder() &&
+          (store.all('submissions', atcoderProfile(store.activeAtcoder())).length ||
+            atcoder.history(store.activeAtcoder())?.entries.length)
         ),
+        verifiedBy:
+          store.activeAtcoder() && atcoder.history(store.activeAtcoder())?.entries.length
+            ? 'history'
+            : 'submissions',
         job: store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null,
       };
     else if (route === '/atcoder/binding' && method === 'POST') {
@@ -69,7 +75,9 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       result = {
         activeHandle: store.activeAtcoder(),
         handles: store.atcoderHandles(),
-        verified: store.all('submissions', atcoderProfile(handle)).length > 0,
+        verified:
+          store.all('submissions', atcoderProfile(handle)).length > 0 ||
+          !!atcoder.history(handle)?.entries.length,
       };
     } else if (route === '/atcoder/sync' && method === 'GET')
       result = store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null;

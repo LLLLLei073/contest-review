@@ -21,6 +21,9 @@ type ContestView = {
   analysisScore: number | null;
   performanceRating?: number | null;
   performanceBound?: 'lower' | 'upper' | null;
+  officialPerformance?: number | null;
+  officialPlace?: number | null;
+  officialRated?: boolean | null;
   rating?: CFRating;
   teamName?: string;
   tier?: string;
@@ -48,9 +51,11 @@ const filtered = computed(() =>
         (filter.value === 'atcoder' && c.source === 'atcoder') ||
         (filter.value === 'cf' && c.source === 'cf') ||
         (filter.value === 'practice'
-          ? c.source === 'cf' &&
-            !c.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
-          : c.types.includes(filter.value))),
+          ? (c.source === 'cf' &&
+              !c.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))) ||
+            (c.source === 'atcoder' && c.types.includes('PRACTICE'))
+          : c.types.includes(filter.value) ||
+            (filter.value === 'CONTESTANT' && c.types.includes('ATCODER_OFFICIAL')))),
   ),
 );
 const typeLabels: Record<string, string> = {
@@ -62,6 +67,8 @@ const typeLabels: Record<string, string> = {
   XCPC_OFFICIAL: 'XCPC 正式',
   XCPC_STARRED: 'XCPC 打星',
   ATCODER_WINDOW: '赛时提交记录',
+  ATCODER_OFFICIAL: 'AtCoder 正式参赛',
+  ATCODER_UNKNOWN: '参赛身份待核实',
 };
 const tierLabels: Record<string, string> = {
   final: '总决赛',
@@ -251,7 +258,9 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             {{
               c.source === 'cf' && c.performanceRating !== null && c.performanceRating !== undefined
                 ? `预估 CF 表现分 ${c.performanceBound === 'upper' ? '≥' : c.performanceBound === 'lower' ? '≤' : ''}${c.performanceRating} · 综合复盘分 ${c.analysisScore === null ? '—' : `${c.analysisScore}/100`}`
-                : `${c.analysisStatus}${c.analysisScore === null ? '' : ` ${c.analysisScore}`}`
+                : c.source === 'atcoder' && c.officialPlace !== null && c.officialPlace !== undefined
+                  ? `官方排名 #${c.officialPlace} · 官方 Performance ${c.officialPerformance ?? '暂无数据'}`
+                  : `${c.analysisStatus}${c.analysisScore === null ? '' : ` ${c.analysisScore}`}`
             }}</span
           ><span v-if="c.rating" :class="{ positive: c.rating.newRating >= c.rating.oldRating }"
             >{{ c.rating.newRating - c.rating.oldRating >= 0 ? '+' : ''
@@ -309,6 +318,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             v-else-if="selected.source === 'atcoder'"
             :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
             :contest-id="String(selected.id)"
+            @updated="load"
           />
           <XcpcReport
             v-else

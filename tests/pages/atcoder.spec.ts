@@ -6,7 +6,30 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await page.route('https://kenkoooo.com/atcoder/**', async (route) => {
     const url = new URL(route.request().url());
     let body: unknown;
-    if (url.pathname.endsWith('/user/submissions')) {
+    if (url.pathname.endsWith('/history/json'))
+      body = [
+        {
+          IsRated: true,
+          Place: 123,
+          OldRating: 400,
+          NewRating: 450,
+          Performance: 900,
+          ContestScreenName: 'abc777.contest.atcoder.jp',
+          ContestName: 'ABC Browser Fixture',
+          EndTime: new Date((now + 1800) * 1000).toISOString(),
+        },
+        {
+          IsRated: false,
+          Place: 7,
+          OldRating: 450,
+          NewRating: 450,
+          Performance: 0,
+          ContestScreenName: 'abc778.contest.atcoder.jp',
+          ContestName: 'Zero Submission Fixture',
+          EndTime: new Date((now - 20000) * 1000).toISOString(),
+        },
+      ];
+    else if (url.pathname.endsWith('/user/submissions')) {
       const all = [
         {
           id: 9001,
@@ -37,6 +60,12 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
     else if (url.pathname.endsWith('/contests.json'))
       body = [
         { id: 'abc777', start_epoch_second: now - 1800, duration_second: 3600, title: 'ABC Browser Fixture' },
+        {
+          id: 'abc778',
+          start_epoch_second: now - 24000,
+          duration_second: 4000,
+          title: 'Zero Submission Fixture',
+        },
       ];
     else body = { abc777_a: { difficulty: 850 } };
     await route.fulfill({
@@ -50,7 +79,7 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await page.getByLabel('AtCoder 用户名').fill('alice');
   await page.getByRole('button', { name: '绑定 AtCoder' }).click();
   await page.getByRole('button', { name: '首次同步', exact: true }).click();
-  await expect(page.getByText('已从公开提交验证该用户名')).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText('已从官方比赛历史验证该用户名')).toBeVisible({ timeout: 20000 });
   await expect(page.locator('.settings-card').first()).toContainText('同步完成', { timeout: 20000 });
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
   await expect(page.getByText('Review A', { exact: true })).toBeVisible();
@@ -71,8 +100,12 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await expect(page.getByText('重做完成 · 待复盘')).toBeVisible();
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page.getByRole('button', { name: /ABC Browser Fixture/ }).click();
+  await expect(page.getByRole('button', { name: /ABC Browser Fixture/ })).toContainText('AtCoder 正式参赛');
+  await expect(page.getByText('官方 Performance 900')).toBeVisible();
   await expect(page.getByText('赛时分题时间线')).toBeVisible();
-  await expect(page.getByText('无法核实正式或虚拟参赛身份')).toBeVisible();
+  await page.getByRole('button', { name: /Zero Submission Fixture/ }).click();
+  await expect(page.getByText('官方参赛记录已确认；没有已同步的赛时提交。')).toBeVisible();
+  await expect(page.getByText('暂无数据', { exact: true }).first()).toBeVisible();
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出备份' }).click();
@@ -83,6 +116,6 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
       .path()
       .then(async (path) => (await import('node:fs/promises')).readFile(path, 'utf8')),
   );
-  expect(backup.version).toBe(5);
+  expect(backup.version).toBe(6);
   expect(backup.activeAtcoder).toBe('alice');
 });

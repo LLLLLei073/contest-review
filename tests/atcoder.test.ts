@@ -7,6 +7,7 @@ import {
   atcoderNamespace,
   type AtcoderClientLike,
   type AtcoderSubmission,
+  type AtcoderHistoryEntry,
 } from '../shared/atcoder.js';
 import { emptyReview } from '../shared/domain.js';
 import { localDay } from '../shared/core-store.js';
@@ -28,6 +29,8 @@ class FakeAtcoder implements AtcoderClientLike {
   items: AtcoderSubmission[] = [];
   calls: number[] = [];
   failAt = 0;
+  historyItems: AtcoderHistoryEntry[] = [];
+  failingResource = '';
   cancel() {}
   async submissions(_handle: string, from: number) {
     this.calls.push(from);
@@ -38,6 +41,7 @@ class FakeAtcoder implements AtcoderClientLike {
       .slice(0, 500);
   }
   async resources<T>(name: 'problems' | 'contests' | 'problem-models'): Promise<T> {
+    if (name === this.failingResource) throw new Error('fixture metadata outage');
     if (name === 'problems')
       return [
         { id: 'abc001_1', contest_id: 'abc001', problem_index: 'A', name: 'Practice A' },
@@ -49,6 +53,9 @@ class FakeAtcoder implements AtcoderClientLike {
       ] as T;
     return { abc001_1: { difficulty: 800 }, abc001_2: { difficulty: 1200 } } as T;
   }
+  async history(_handle: string) {
+    return this.historyItems;
+  }
 }
 function setup() {
   const store = new Store(':memory:');
@@ -59,7 +66,7 @@ function setup() {
   return { store, client, service };
 }
 
-test('AtCoder pagination, repeat import, rejudge, account isolation and backup v5', async () => {
+test('AtCoder pagination, repeat import, rejudge, account isolation and backup v6', async () => {
   const { store, client, service } = setup();
   client.items = Array.from({ length: 501 }, (_, i) =>
     submission(i + 1, 'abc001_1', i === 0 ? 'WA' : 'AC', sec - 500 + i),
@@ -78,7 +85,7 @@ test('AtCoder pagination, repeat import, rejudge, account isolation and backup v
   assert.equal(store.all('submissions', profile).length, 501);
   assert.equal(store.review(profile, 'atcoder:abc001_1').rootCause, '边界漏判');
   const backup = store.backup();
-  assert.equal(backup.version, 5);
+  assert.equal(backup.version, 6);
   store.activateAtcoder('Bob');
   assert.equal(store.problems(atcoderProfile('Bob')).length, 0);
   store.restore(backup);
@@ -155,6 +162,119 @@ test('AtCoder report separates contest-window and after-contest submissions with
   assert.equal(report.afterContest.length, 1);
   assert.equal(service.contests()[0].inContestSolved, 1);
   assert.equal(service.contests()[0].analysisScore, null);
+  store.close();
+});
+
+test('AtCoder official history confirms zero-submission participation and keeps performance separate', async () => {
+  const { store, client, service } = setup();
+  client.historyItems = [
+    {
+      IsRated: true,
+      Place: 1873,
+      OldRating: 242,
+      NewRating: 242,
+      Performance: 1399,
+      ContestScreenName: 'abc001.contest.atcoder.jp',
+      ContestName: 'Official ABC 001',
+      EndTime: new Date((sec + 3600) * 1000).toISOString(),
+    },
+  ];
+  service.start('Alice', 'full');
+  await service.running;
+  const row = service.contests()[0];
+  assert.deepEqual(row.types, ['ATCODER_OFFICIAL']);
+  assert.equal(row.inContestSolved, 0);
+  assert.equal(row.officialPlace, 1873);
+  assert.equal(row.officialPerformance, 1399);
+  const report = service.report('abc001');
+  assert.equal(report.official?.performance, 1399);
+  assert.equal(report.official?.place, 1873);
+  assert.equal(report.inContest.length, 0);
+  assert.equal(report.solved, 0);
+  assert.equal(report.windowAvailable, true);
+  const v5 = {
+    ...store.backup(),
+    version: 5,
+    external: store.backup().external.filter((r) => r.key !== 'history'),
+  };
+  store.restore(v5);
+  assert.equal(service.contests().length, 0);
+  store.close();
+});
+
+test('AtCoder catalog parts survive partial failure and forced refresh repairs a missing contest', async () => {
+  const { store, client, service } = setup();
+  client.items = [submission(1, 'abc001_1', 'WA', sec)];
+  client.failingResource = 'contests';
+  service.start('Alice', 'full');
+  await service.running;
+  assert.match(store.latestJob(atcoderProfile('Alice'))?.message ?? '', /比赛目录未补齐/);
+  assert.equal(store.problems(atcoderProfile('Alice'))[0].name, 'Practice A');
+  assert.equal(service.contests()[0].analysisStatus, '比赛资料待补齐');
+  client.failingResource = '';
+  const report = await service.refresh('abc001');
+  assert.equal(report.windowAvailable, true);
+  assert.equal(service.contests()[0].name, 'ABC Fixture');
+  store.close();
+});
+
+test('AtCoder non-rated official record retains rank but treats zero performance as unavailable', async () => {
+  const { store, client, service } = setup();
+  client.historyItems = [
+    {
+      IsRated: false,
+      Place: 12,
+      OldRating: 500,
+      NewRating: 500,
+      Performance: 0,
+      ContestScreenName: 'abc001.contest.atcoder.jp',
+      ContestName: 'ABC',
+      EndTime: new Date().toISOString(),
+    },
+  ];
+  service.start('Alice', 'full');
+  await service.running;
+  assert.equal(service.contests()[0].officialPerformance, null);
+  assert.equal(service.report('abc001').official?.rated, false);
+  assert.equal(service.report('abc001').official?.performance, null);
+  store.close();
+});
+
+test('AtCoder official history is isolated by account and stale contest catalog is refreshed', async () => {
+  const { store, client, service } = setup();
+  client.historyItems = [
+    {
+      IsRated: true,
+      Place: 10,
+      OldRating: 100,
+      NewRating: 200,
+      Performance: 700,
+      ContestScreenName: 'abc001.contest.atcoder.jp',
+      ContestName: 'ABC',
+      EndTime: new Date().toISOString(),
+    },
+  ];
+  service.start('Alice', 'full');
+  await service.running;
+  assert.equal(service.contests().length, 1);
+  const catalog = store.externalGet<{
+    fetchedAt: string;
+    fetched: { contests: string };
+    contests: unknown[];
+  }>('atcoder-meta', 'catalog')!;
+  store.externalPut('atcoder-meta', 'catalog', {
+    ...catalog,
+    contests: [],
+    fetched: { ...catalog.fetched, contests: new Date(0).toISOString() },
+  });
+  client.historyItems = [];
+  store.activateAtcoder('Bob');
+  service.start('Bob', 'full');
+  await service.running;
+  assert.equal(service.contests().length, 0);
+  assert.equal(store.externalGet<{ contests: unknown[] }>('atcoder-meta', 'catalog')?.contests.length, 1);
+  store.activateAtcoder('Alice');
+  assert.equal(service.contests()[0].officialPlace, 10);
   store.close();
 });
 

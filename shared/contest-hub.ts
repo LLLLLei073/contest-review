@@ -305,7 +305,7 @@ export class ContestHub {
           ?.contests()
           .filter(
             (c) =>
-              c.types.includes('ATCODER_WINDOW') &&
+              (c.types.includes('ATCODER_WINDOW') || c.types.includes('ATCODER_OFFICIAL')) &&
               !this.store.externalGet(atcoderNamespace(this.store.activeAtcoder()), 'report:' + c.id),
           ) ?? [];
       job.total = cfPending.length + xcpcPending.length + atcoderPending.length;

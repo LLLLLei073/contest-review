@@ -24,12 +24,14 @@ const xcpcName = ref(''),
   xcpcBusy = ref(false);
 const atcoderHandle = ref(''),
   atcoderJob = ref<SyncJob | null>(null),
-  atcoderVerified = ref(false);
+  atcoderVerified = ref(false),
+  atcoderVerifiedBy = ref('submissions');
 let atcoderTimer: ReturnType<typeof setInterval> | undefined;
 async function loadAtcoder() {
-  const data = await api<{ job: SyncJob | null; verified: boolean }>('/atcoder/binding');
+  const data = await api<{ job: SyncJob | null; verified: boolean; verifiedBy: string }>('/atcoder/binding');
   atcoderJob.value = data.job;
   atcoderVerified.value = data.verified;
+  atcoderVerifiedBy.value = data.verifiedBy;
 }
 async function bindAtcoder(value = atcoderHandle.value) {
   busy.value = true;
@@ -223,7 +225,12 @@ async function restore() {
           </button>
         </div>
         <p v-if="settings.activeAtcoder" class="small subtle">
-          {{ atcoderVerified ? '已从公开提交验证该用户名' : '尚无法验证：无公开提交或尚未同步'
+          {{
+            atcoderVerified
+              ? atcoderVerifiedBy === 'history'
+                ? '已从官方比赛历史验证该用户名'
+                : '已从公开提交验证该用户名'
+              : '尚无法验证：无公开提交或尚未同步'
           }}<template v-if="atcoderJob">
             ·
             {{
