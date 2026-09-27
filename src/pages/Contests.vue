@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
-import { Flag, ArrowUpRight, Search, Save, RefreshCw } from 'lucide-vue-next';
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { Flag, ArrowUpRight, Search, Save, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 import type { ContestReview, CFRating } from '../../shared/domain';
 import type { BatchJob } from '../../shared/xcpc';
 import { api, notify, job, settings, loadSettings } from '../api';
 import ContestReport from '../components/ContestReport.vue';
 import XcpcReport from '../components/XcpcReport.vue';
 import AtcoderReport from '../components/AtcoderReport.vue';
-import { onBeforeRouteLeave } from 'vue-router';
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 type ContestView = {
   source: 'cf' | 'xcpc' | 'atcoder';
   key: string;
@@ -28,13 +28,21 @@ type ContestView = {
   teamName?: string;
   tier?: string;
 };
+const route = useRoute(),
+  router = useRouter();
+const routeValue = (key: string) => (typeof route.query[key] === 'string' ? String(route.query[key]) : '');
+const pageSize = 20;
 const rows = ref<ContestView[]>([]),
   selected = ref<ContestView | null>(null),
   draft = ref<ContestReview>({ timeAllocation: '', mistakes: '', improvements: '' }),
   error = ref(''),
   busy = ref(false),
-  query = ref(''),
-  filter = ref('all'),
+  query = ref(routeValue('q')),
+  sourceFilter = ref(routeValue('source') || 'all'),
+  yearFilter = ref(routeValue('year') || 'all'),
+  typeFilter = ref(routeValue('type') || 'all'),
+  page = ref(Math.max(1, Number(routeValue('page')) || 1)),
+  mobileShowingReport = ref(Boolean(routeValue('contest'))),
   batch = ref<BatchJob | null>(null),
   batchBusy = ref(false);
 let batchTimer: ReturnType<typeof setInterval> | undefined;
@@ -42,22 +50,67 @@ let batchPolling = false;
 const dirty = computed(
   () => selected.value && JSON.stringify(draft.value) !== JSON.stringify(selected.value.review),
 );
+const years = computed(() =>
+  [
+    ...new Set(
+      rows.value.map((c) =>
+        c.startTimeSeconds ? new Date(c.startTimeSeconds * 1000).getFullYear().toString() : 'unknown',
+      ),
+    ),
+  ].sort((a, b) => (a === 'unknown' ? 1 : b === 'unknown' ? -1 : Number(b) - Number(a))),
+);
 const filtered = computed(() =>
   rows.value.filter(
     (c) =>
       (c.name + ' ' + c.id).toLowerCase().includes(query.value.toLowerCase()) &&
-      (filter.value === 'all' ||
-        (filter.value === 'xcpc' && c.source === 'xcpc') ||
-        (filter.value === 'atcoder' && c.source === 'atcoder') ||
-        (filter.value === 'cf' && c.source === 'cf') ||
-        (filter.value === 'practice'
+      (sourceFilter.value === 'all' || c.source === sourceFilter.value) &&
+      (yearFilter.value === 'all' ||
+        (c.startTimeSeconds ? new Date(c.startTimeSeconds * 1000).getFullYear().toString() : 'unknown') ===
+          yearFilter.value) &&
+      (typeFilter.value === 'all' ||
+        (typeFilter.value === 'practice'
           ? (c.source === 'cf' &&
               !c.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))) ||
             (c.source === 'atcoder' && c.types.includes('PRACTICE'))
-          : c.types.includes(filter.value) ||
-            (filter.value === 'CONTESTANT' && c.types.includes('ATCODER_OFFICIAL')))),
+          : c.types.includes(typeFilter.value) ||
+            (typeFilter.value === 'CONTESTANT' && c.types.includes('ATCODER_OFFICIAL')))),
   ),
 );
+const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)));
+const pageRows = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize));
+const selectedIndex = computed(() => filtered.value.findIndex((c) => c.key === selected.value?.key));
+let locationWrite = Promise.resolve();
+function syncLocation() {
+  locationWrite = locationWrite
+    .then(async () => {
+      await router.replace({
+        query: {
+          ...route.query,
+          source: sourceFilter.value === 'all' ? undefined : sourceFilter.value,
+          year: yearFilter.value === 'all' ? undefined : yearFilter.value,
+          type: typeFilter.value === 'all' ? undefined : typeFilter.value,
+          q: query.value || undefined,
+          page: page.value === 1 ? undefined : String(page.value),
+          contest: selected.value?.key || undefined,
+        },
+      });
+    })
+    .catch(() => {});
+}
+watch([query, sourceFilter, yearFilter, typeFilter], () => {
+  page.value = 1;
+  syncLocation();
+});
+watch(page, () => {
+  syncLocation();
+  void nextTick(() => {
+    const list = document.querySelector('.contest-list-results');
+    if (list) list.scrollTop = 0;
+  });
+});
+watch(pageCount, (count) => {
+  if (page.value > count) page.value = count;
+});
 const typeLabels: Record<string, string> = {
   CONTESTANT: '正式参赛',
   VIRTUAL: '虚拟参赛',
@@ -79,15 +132,41 @@ const tierLabels: Record<string, string> = {
 async function load() {
   try {
     rows.value = await api('/review/contests');
-    if (selected.value) selected.value = rows.value.find((r) => r.key === selected.value?.key) ?? null;
+    const key = selected.value?.key || routeValue('contest');
+    selected.value = rows.value.find((r) => r.key === key) ?? null;
+    if (selected.value && !draft.value.timeAllocation && !draft.value.mistakes && !draft.value.improvements)
+      draft.value = { ...selected.value.review };
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
-function choose(c: ContestView) {
-  if (dirty.value && !confirm('比赛复盘尚未保存，确定切换吗？')) return;
+function choose(c: ContestView): boolean {
+  if (selected.value?.key === c.key) {
+    mobileShowingReport.value = true;
+    void nextTick(focusSelectedReport);
+    return true;
+  }
+  if (dirty.value && !confirm('比赛复盘尚未保存，确定切换吗？')) return false;
   selected.value = c;
-  draft.value = JSON.parse(JSON.stringify(c.review));
+  draft.value = { ...c.review };
+  mobileShowingReport.value = true;
+  syncLocation();
+  return true;
+}
+function focusSelectedReport() {
+  if (window.innerWidth > 650) return;
+  const heading = document.querySelector<HTMLElement>('.contest-editor h2');
+  heading?.focus({ preventScroll: true });
+  heading?.scrollIntoView({ block: 'start' });
+}
+function returnToList() {
+  mobileShowingReport.value = false;
+  void nextTick(() => document.querySelector<HTMLElement>('.contest-list input')?.focus());
+}
+function adjacent(direction: -1 | 1) {
+  const next = filtered.value[selectedIndex.value + direction];
+  if (!next) return;
+  if (choose(next)) page.value = Math.floor(selectedIndex.value / pageSize) + 1;
 }
 async function save() {
   busy.value = true;
@@ -208,69 +287,135 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
       </select></label
     >
   </div>
-  <div class="contest-layout">
-    <section class="panel contest-list">
+  <div class="contest-layout" :class="{ 'mobile-report-open': mobileShowingReport && selected }">
+    <section class="panel contest-list" aria-label="比赛列表">
       <div class="filter-top">
         <label class="search-field"
           ><Search :size="17" /><input v-model="query" aria-label="搜索比赛" placeholder="搜索比赛名称或编号"
         /></label>
       </div>
-      <div class="contest-filter">
-        <select v-model="filter" aria-label="参赛类型">
-          <option value="all">全部关联比赛</option>
-          <option value="cf">Codeforces</option>
-          <option value="xcpc">XCPC Rating</option>
-          <option value="atcoder">AtCoder</option>
+      <div class="contest-source-tabs" role="group" aria-label="比赛平台">
+        <button
+          v-for="source in [
+            { value: 'all', label: '全部' },
+            { value: 'cf', label: 'CF' },
+            { value: 'atcoder', label: 'AtCoder' },
+            { value: 'xcpc', label: 'XCPC' },
+          ]"
+          :key="source.value"
+          type="button"
+          :aria-pressed="sourceFilter === source.value"
+          :class="{ active: sourceFilter === source.value }"
+          @click="sourceFilter = source.value"
+        >
+          {{ source.label }}
+        </button>
+      </div>
+      <div class="contest-filter contest-filter-grid">
+        <select v-model="yearFilter" aria-label="比赛年份">
+          <option value="all">所有年份</option>
+          <option v-for="year in years" :key="year" :value="year">
+            {{ year === 'unknown' ? '时间待补全' : year + ' 年' }}
+          </option>
+        </select>
+        <select v-model="typeFilter" aria-label="参赛类型">
+          <option value="all">所有类型</option>
           <option value="CONTESTANT">正式参赛</option>
           <option value="VIRTUAL">虚拟参赛</option>
           <option value="practice">仅练习 / 无参赛记录</option>
         </select>
       </div>
-      <div v-if="!filtered.length" class="empty-state">
-        <Flag :size="28" />
-        <h3>还没有关联比赛</h3>
-        <p>同步提交记录后，比赛会自动归集。</p>
+      <p class="contest-result-count" aria-live="polite">
+        找到 {{ filtered.length }} 场<span v-if="filtered.length"> · 第 {{ page }} / {{ pageCount }} 页</span>
+      </p>
+      <div class="contest-list-results">
+        <div v-if="!filtered.length" class="empty-state">
+          <Flag :size="28" />
+          <h3>{{ rows.length ? '没有符合条件的比赛' : '还没有关联比赛' }}</h3>
+          <p>{{ rows.length ? '试试其他年份、平台或关键词。' : '同步提交记录后，比赛会自动归集。' }}</p>
+        </div>
+        <button
+          v-for="c in pageRows"
+          :key="c.key"
+          class="contest-item"
+          :class="{ selected: selected?.key === c.key }"
+          :aria-pressed="selected?.key === c.key"
+          @click="choose(c)"
+        >
+          <div class="contest-meta">
+            <span>{{ c.source === 'cf' ? 'CF #' + c.id : c.source === 'atcoder' ? 'AtCoder' : 'XCPC' }}</span
+            ><span>{{
+              c.startTimeSeconds
+                ? new Date(c.startTimeSeconds * 1000).toLocaleDateString('zh-CN')
+                : '时间待补全'
+            }}</span>
+          </div>
+          <h3>{{ c.name }}</h3>
+          <div class="tag-line">
+            <span v-for="t in c.types" :key="t">{{ typeLabels[t] || t }}</span
+            ><span v-if="c.source === 'xcpc' && c.tier">{{ tierLabels[c.tier] || c.tier }}</span
+            ><span v-if="!c.types.length">无提交记录</span>
+          </div>
+          <div class="contest-bottom">
+            <span
+              >{{ c.source === 'xcpc' ? '队伍解题' : '赛时 AC' }} {{ c.inContestSolved ?? '—' }} ·
+              {{
+                c.source === 'cf' && c.performanceRating !== null && c.performanceRating !== undefined
+                  ? `预估 CF 表现分 ${c.performanceBound === 'upper' ? '≥' : c.performanceBound === 'lower' ? '≤' : ''}${c.performanceRating} · 综合复盘分 ${c.analysisScore === null ? '—' : `${c.analysisScore}/100`}`
+                  : c.source === 'atcoder' && c.officialPlace !== null && c.officialPlace !== undefined
+                    ? `官方排名 #${c.officialPlace} · 官方 Performance ${c.officialPerformance ?? '暂无数据'}`
+                    : `${c.analysisStatus}${c.analysisScore === null ? '' : ` ${c.analysisScore}`}`
+              }}</span
+            ><span v-if="c.rating" :class="{ positive: c.rating.newRating >= c.rating.oldRating }"
+              >{{ c.rating.newRating - c.rating.oldRating >= 0 ? '+' : ''
+              }}{{ c.rating.newRating - c.rating.oldRating }} Rating</span
+            >
+          </div>
+        </button>
       </div>
-      <button
-        v-for="c in filtered"
-        :key="c.key"
-        class="contest-item"
-        :class="{ selected: selected?.key === c.key }"
-        @click="choose(c)"
-      >
-        <div class="contest-meta">
-          <span>{{ c.source === 'cf' ? 'CF #' + c.id : c.source === 'atcoder' ? 'AtCoder' : 'XCPC' }}</span
-          ><span>{{
-            c.startTimeSeconds
-              ? new Date(c.startTimeSeconds * 1000).toLocaleDateString('zh-CN')
-              : '时间待补全'
-          }}</span>
-        </div>
-        <h3>{{ c.name }}</h3>
-        <div class="tag-line">
-          <span v-for="t in c.types" :key="t">{{ typeLabels[t] || t }}</span
-          ><span v-if="c.source === 'xcpc' && c.tier">{{ tierLabels[c.tier] || c.tier }}</span
-          ><span v-if="!c.types.length">无提交记录</span>
-        </div>
-        <div class="contest-bottom">
-          <span
-            >{{ c.source === 'xcpc' ? '队伍解题' : '赛时 AC' }} {{ c.inContestSolved ?? '—' }} ·
-            {{
-              c.source === 'cf' && c.performanceRating !== null && c.performanceRating !== undefined
-                ? `预估 CF 表现分 ${c.performanceBound === 'upper' ? '≥' : c.performanceBound === 'lower' ? '≤' : ''}${c.performanceRating} · 综合复盘分 ${c.analysisScore === null ? '—' : `${c.analysisScore}/100`}`
-                : c.source === 'atcoder' && c.officialPlace !== null && c.officialPlace !== undefined
-                  ? `官方排名 #${c.officialPlace} · 官方 Performance ${c.officialPerformance ?? '暂无数据'}`
-                  : `${c.analysisStatus}${c.analysisScore === null ? '' : ` ${c.analysisScore}`}`
-            }}</span
-          ><span v-if="c.rating" :class="{ positive: c.rating.newRating >= c.rating.oldRating }"
-            >{{ c.rating.newRating - c.rating.oldRating >= 0 ? '+' : ''
-            }}{{ c.rating.newRating - c.rating.oldRating }} Rating</span
-          >
-        </div>
-      </button>
+      <div v-if="filtered.length > pageSize" class="contest-pagination">
+        <button
+          type="button"
+          class="small-button"
+          :disabled="page <= 1"
+          aria-label="上一页比赛"
+          @click="page--"
+        >
+          <ChevronLeft :size="15" />上一页
+        </button>
+        <span>{{ page }} / {{ pageCount }}</span>
+        <button
+          type="button"
+          class="small-button"
+          :disabled="page >= pageCount"
+          aria-label="下一页比赛"
+          @click="page++"
+        >
+          下一页<ChevronRight :size="15" />
+        </button>
+      </div>
     </section>
-    <Transition name="report-switch" mode="out-in"
+    <Transition name="report-switch" mode="out-in" @after-enter="focusSelectedReport"
       ><section v-if="selected" :key="selected.key" class="panel contest-editor">
+        <div class="contest-report-navigation">
+          <button class="small-button contest-back" type="button" @click="returnToList">返回比赛列表</button>
+          <span v-if="selectedIndex >= 0" class="small subtle"
+            >当前结果 {{ selectedIndex + 1 }} / {{ filtered.length }}</span
+          >
+          <div class="button-row">
+            <button class="small-button" type="button" :disabled="selectedIndex <= 0" @click="adjacent(-1)">
+              <ChevronLeft :size="15" />上一场
+            </button>
+            <button
+              class="small-button"
+              type="button"
+              :disabled="selectedIndex < 0 || selectedIndex >= filtered.length - 1"
+              @click="adjacent(1)"
+            >
+              下一场<ChevronRight :size="15" />
+            </button>
+          </div>
+        </div>
         <div class="section-head">
           <div>
             <span class="eyebrow"
@@ -283,7 +428,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
               }}
               / {{ selected.id }}</span
             >
-            <h2>{{ selected.name }}</h2>
+            <h2 tabindex="-1">{{ selected.name }}</h2>
           </div>
         </div>
         <div class="editor-body">

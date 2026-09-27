@@ -161,7 +161,7 @@ onUnmounted(() => {
         </div>
         <RouterView
           :key="
-            $route.fullPath +
+            ($route.path === '/contests' ? $route.path : $route.fullPath) +
             '|' +
             settings.activeHandle +
             '|' +
