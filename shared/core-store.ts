@@ -1,6 +1,28 @@
 import { z } from 'zod';
-import { catalogSchema, dailyPlanSchema, trainingMetaSchema, masteryAreas, chooseNewProblems, targetDifficulty, type Catalog, type DailyPlan, type TrainingDay } from './training.js';
+import {
+  catalogSchema,
+  dailyPlanSchema,
+  trainingMetaSchema,
+  masteryAreas,
+  chooseNewProblems,
+  targetDifficulty,
+  type Catalog,
+  type DailyPlan,
+  type TrainingDay,
+} from './training.js';
 import { xcpcRecordSchema } from './xcpc.js';
+import {
+  atcoderHandleSchema,
+  atcoderProfile,
+  atcoderKey,
+  normalizeAtcoder,
+  atcoderSubmissionSchema,
+  atcoderProblemSchema,
+  atcoderContestSchema,
+  atcoderReportSchema,
+  type AtcoderSubmission,
+  type AtcoderContest,
+} from './atcoder.js';
 import {
   analysisCacheSchema,
   analyzeContest,
@@ -46,6 +68,8 @@ export const tables = [
 export type Table = (typeof tables)[number];
 export const submissionSchema = z.object({
   id: z.number().int().positive(),
+  source: z.enum(['cf', 'atcoder']).optional(),
+  contestKey: z.string().optional(),
   contestId: z.number().int().positive().optional(),
   creationTimeSeconds: z.number().nonnegative(),
   relativeTimeSeconds: z.number().optional(),
@@ -124,21 +148,23 @@ const handleSchema = z
   .min(1)
   .max(64)
   .regex(/^[a-zA-Z0-9_.-]+$/);
+const profileSchema = z.union([handleSchema, z.string().regex(/^ac~[a-z0-9_]{1,64}$/)]);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
-  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
-  profiles: z.array(handleSchema).max(1000),
+  profiles: z.array(profileSchema).max(1000),
+  activeAtcoder: z.string().optional(),
   tables: z.object(
     Object.fromEntries(
       tables.map((t) => [
         t,
-        z.array(z.object({ profile: handleSchema, key: z.string().min(1).max(200), value: z.unknown() })),
+        z.array(z.object({ profile: profileSchema, key: z.string().min(1).max(200), value: z.unknown() })),
       ]),
     ) as Record<
       Table,
-      z.ZodArray<z.ZodObject<{ profile: typeof handleSchema; key: z.ZodString; value: z.ZodUnknown }>>
+      z.ZodArray<z.ZodObject<{ profile: typeof profileSchema; key: z.ZodString; value: z.ZodUnknown }>>
     >,
   ),
   external: z
@@ -178,7 +204,7 @@ export class CoreStore {
     const version = Number(
       (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
     );
-    if (version > 4) throw new Error('数据库来自更新版本，请升级程序');
+    if (version > 5) throw new Error('数据库来自更新版本，请升级程序');
     if (version === 0)
       this.transaction(() => {
         this.db.exec(
@@ -205,10 +231,13 @@ export class CoreStore {
     if (version <= 3)
       this.transaction(() => {
         for (const table of ['catalog_cache', 'daily_plans', 'training_meta'])
-          this.db.exec(`CREATE TABLE IF NOT EXISTS ${table} (profile TEXT NOT NULL REFERENCES profiles(handle), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(profile,key));`);
+          this.db.exec(
+            `CREATE TABLE IF NOT EXISTS ${table} (profile TEXT NOT NULL REFERENCES profiles(handle), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(profile,key));`,
+          );
         this.db.exec('PRAGMA user_version=4');
       });
-    for (const h of this.handles())
+    if (version <= 4) this.db.exec('PRAGMA user_version=5');
+    for (const h of [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)])
       for (const job of this.all<SyncJob>('jobs', h))
         if (job.status === 'running')
           this.put('jobs', h, job.id, { ...job, status: 'interrupted', message: '程序已重启，可继续同步。' });
@@ -287,9 +316,43 @@ export class CoreStore {
       .run(key, value);
   }
   handles(): string[] {
-    return (this.db.prepare('SELECT handle FROM profiles ORDER BY handle').all() as { handle: string }[]).map(
-      (r) => r.handle,
-    );
+    return (
+      this.db.prepare("SELECT handle FROM profiles WHERE handle NOT LIKE 'ac~%' ORDER BY handle").all() as {
+        handle: string;
+      }[]
+    ).map((r) => r.handle);
+  }
+  atcoderHandles(): string[] {
+    return (
+      this.db.prepare("SELECT handle FROM profiles WHERE handle LIKE 'ac~%' ORDER BY handle").all() as {
+        handle: string;
+      }[]
+    ).map((r) => r.handle.slice(3));
+  }
+  activeAtcoder(): string {
+    return this.setting('atcoder-active');
+  }
+  profileForKey(key: string): string {
+    if (key.startsWith('atcoder:')) {
+      if (!this.activeAtcoder()) throw new Error('请先绑定 AtCoder 用户名');
+      return atcoderProfile(this.activeAtcoder());
+    }
+    if (!this.active()) throw new Error('请先绑定 Codeforces 用户名');
+    return this.active();
+  }
+  combinedProblems(): ProblemRow[] {
+    return [
+      ...(this.active() ? this.problems(this.active()) : []),
+      ...(this.activeAtcoder() ? this.problems(atcoderProfile(this.activeAtcoder())) : []),
+    ];
+  }
+  activateAtcoder(handle: string) {
+    const name = atcoderHandleSchema.parse(handle),
+      profile = atcoderProfile(name);
+    this.transaction(() => {
+      this.db.prepare('INSERT OR IGNORE INTO profiles(handle) VALUES(?)').run(profile);
+      this.setSetting('atcoder-active', name);
+    });
   }
   active(): string {
     return (
@@ -316,20 +379,31 @@ export class CoreStore {
   saveReview(h: string, key: string, review: Review) {
     if (!this.get('problems', h, key)) throw new Error('题目不存在');
     const old = this.review(h, key);
-    const next = reviewSchema.parse({ ...review, firstRedoAt: old.firstRedoAt,
-      firstReflectionAt: old.firstReflectionAt, firstReflectionRequired: old.firstReflectionRequired,
+    const next = reviewSchema.parse({
+      ...review,
+      firstRedoAt: old.firstRedoAt,
+      firstReflectionAt: old.firstReflectionAt,
+      firstReflectionRequired: old.firstReflectionRequired,
       awaitingEvaluation: old.awaitingEvaluation,
-      lastEvaluatedDay: old.lastEvaluatedDay });
-    if (old.firstReflectionRequired && old.firstRedoAt && !old.firstReflectionAt && hasReflection(next)) next.firstReflectionAt = new Date().toISOString();
+      lastEvaluatedDay: old.lastEvaluatedDay,
+    });
+    if (old.firstReflectionRequired && old.firstRedoAt && !old.firstReflectionAt && hasReflection(next))
+      next.firstReflectionAt = new Date().toISOString();
     this.put('reviews', h, key, next);
     return next;
   }
   updateReview(h: string, key: string, review: Review, action: 'save' | 'complete' | 'restart') {
     const old = this.review(h, key);
-    const next = { ...review, stage: old.stage, status: old.status,
-      nextReview: old.awaitingEvaluation ? null : review.nextReview };
+    const next = {
+      ...review,
+      stage: old.stage,
+      status: old.status,
+      nextReview: old.awaitingEvaluation ? null : review.nextReview,
+    };
     if (action === 'restart') {
-      next.status = 'reviewing'; next.stage = 0; next.ignored = false;
+      next.status = 'reviewing';
+      next.stage = 0;
+      next.ignored = false;
       next.nextReview = new Date(Date.now() + 86400000).toISOString();
     }
     if (action === 'complete' && !old.firstRedoAt) throw new Error('请先重做题目，再保存复盘');
@@ -339,26 +413,46 @@ export class CoreStore {
     return this.saveReview(h, key, reviewSchema.parse(next));
   }
   private reconcileAcceptedRedo(h: string, date: string) {
-    const plan = this.get<DailyPlan>('daily_plans', h, date);
+    const plan = this.combinedPlan(date) ?? this.get<DailyPlan>('daily_plans', h, date);
     if (!plan) return;
     const submissions = this.all<CFSubmission>('submissions', h);
-    for (const item of plan.review) {
+    for (const item of plan.review.filter(
+      (item) => h.startsWith('ac~') === item.key.startsWith('atcoder:'),
+    )) {
       const review = this.review(h, item.key);
       if (review.ignored || review.status === 'mastered' || review.lastEvaluatedDay === date) continue;
-      const accepted = submissions.filter((s) => !s.author.teamId && problemKey(s) === item.key && s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date)
+      const accepted = submissions
+        .filter(
+          (s) =>
+            !s.author.teamId &&
+            problemKey(s) === item.key &&
+            s.verdict === 'OK' &&
+            localDay(new Date(s.creationTimeSeconds * 1000)) === date,
+        )
         .sort((a, b) => a.creationTimeSeconds - b.creationTimeSeconds || a.id - b.id)[0];
       if (accepted) {
         const redoAt = new Date(accepted.creationTimeSeconds * 1000).toISOString();
         if (review.awaitingEvaluation?.submissionId !== accepted.id || !review.firstRedoAt) {
-          this.put('reviews', h, item.key, { ...review, firstRedoAt: review.firstRedoAt ?? redoAt,
+          this.put('reviews', h, item.key, {
+            ...review,
+            firstRedoAt: review.firstRedoAt ?? redoAt,
             firstReflectionRequired: review.firstReflectionRequired || review.status === 'pending',
-            awaitingEvaluation: { date, submissionId: accepted.id, redoAt,
-              previousNextReview: review.awaitingEvaluation?.previousNextReview ?? review.nextReview }, nextReview: null });
+            awaitingEvaluation: {
+              date,
+              submissionId: accepted.id,
+              redoAt,
+              previousNextReview: review.awaitingEvaluation?.previousNextReview ?? review.nextReview,
+            },
+            nextReview: null,
+          });
         }
       } else if (review.awaitingEvaluation?.date === date) {
-        this.put('reviews', h, item.key, { ...review, awaitingEvaluation: null,
+        this.put('reviews', h, item.key, {
+          ...review,
+          awaitingEvaluation: null,
           nextReview: review.awaitingEvaluation.previousNextReview,
-          firstRedoAt: review.status === 'pending' ? null : review.firstRedoAt });
+          firstRedoAt: review.status === 'pending' ? null : review.firstRedoAt,
+        });
       }
     }
   }
@@ -410,6 +504,186 @@ export class CoreStore {
       for (const date of affectedDays) this.reconcileAcceptedRedo(h, date);
     });
   }
+  ingestAtcoder(profile: string, input: AtcoderSubmission[]) {
+    const meta = this.externalGet<{
+      problems: z.infer<typeof atcoderProblemSchema>[];
+      models: Record<string, { difficulty?: number }>;
+    }>('atcoder-meta', 'catalog');
+    const names = new Map(meta?.problems.map((p) => [p.id, p]) ?? []);
+    const normalized = z
+      .array(atcoderSubmissionSchema)
+      .parse(input)
+      .filter((s) => !s.contest_id.startsWith('ahc'))
+      .map((s) => normalizeAtcoder(s, names.get(s.problem_id), meta?.models[s.problem_id]?.difficulty));
+    const affected = new Set(normalized.map((s) => localDay(new Date(s.creationTimeSeconds * 1000))));
+    this.transaction(() => {
+      for (const s of normalized) {
+        const key = problemKey(s),
+          old = this.get<Problem>('problems', profile, key);
+        const contestId = s.contestKey!;
+        this.put(
+          'problems',
+          profile,
+          key,
+          problemSchema.parse({
+            key,
+            source: 'atcoder',
+            contestId: null,
+            index: s.problem.index,
+            name: s.problem.name,
+            rating: s.problem.rating ?? old?.rating ?? null,
+            tags: [],
+            manual: false,
+            url: `https://atcoder.jp/contests/${contestId}/tasks/${s.problem.index}`,
+          }),
+        );
+        this.put('submissions', profile, String(s.id), s);
+        if (failures.has(s.verdict ?? '') && !this.get('reviews', profile, key))
+          this.put('reviews', profile, key, emptyReview());
+      }
+      for (const day of affected) this.reconcileAcceptedRedo(profile, day);
+    });
+  }
+  enrichAtcoder(profile: string) {
+    const meta = this.externalGet<{
+      problems: z.infer<typeof atcoderProblemSchema>[];
+      models: Record<string, { difficulty?: number }>;
+    }>('atcoder-meta', 'catalog');
+    if (!meta) return;
+    this.transaction(() => {
+      for (const item of meta.problems) {
+        const key = atcoderKey(item.id),
+          old = this.get<Problem>('problems', profile, key);
+        if (!old) continue;
+        const d = meta.models[item.id]?.difficulty;
+        this.put('problems', profile, key, {
+          ...old,
+          name: item.name,
+          rating: typeof d === 'number' && d >= 0 ? Math.round(d) : null,
+          url: `https://atcoder.jp/contests/${item.contest_id}/tasks/${item.id}`,
+        });
+      }
+      for (const s of this.all<CFSubmission>('submissions', profile)) {
+        const p = this.get<Problem>('problems', profile, problemKey(s));
+        if (p && (s.problem.name !== p.name || s.problem.rating !== p.rating))
+          this.put('submissions', profile, String(s.id), {
+            ...s,
+            problem: { ...s.problem, name: p.name, rating: p.rating ?? undefined },
+          });
+      }
+    });
+  }
+  private combinedNamespace() {
+    return `daily:${this.active() || '-'}:${this.activeAtcoder().toLowerCase() || '-'}`;
+  }
+  private combinedPlan(date: string): DailyPlan | undefined {
+    return this.activeAtcoder() ? this.externalGet<DailyPlan>(this.combinedNamespace(), date) : undefined;
+  }
+  combinedTrainingDay(now = new Date()): TrainingDay {
+    const cf = this.active(),
+      ac = this.activeAtcoder();
+    if (!ac) return this.trainingDay(cf, now);
+    const date = localDay(now),
+      acProfile = atcoderProfile(ac);
+    const cfPlan = cf ? this.get<DailyPlan>('daily_plans', cf, date) : undefined;
+    const inherited = cf ? this.externalGet<DailyPlan>(`daily:-:${ac.toLowerCase()}`, date) : undefined;
+    let plan = this.combinedPlan(date);
+    if (!plan) {
+      const rows = [...(cf ? this.problems(cf) : []), ...this.problems(acProfile)].filter(
+        (p) => !p.review.ignored,
+      );
+      const carry = rows
+        .filter(
+          (p) =>
+            p.review.awaitingEvaluation ||
+            (p.review.firstReflectionRequired && p.review.firstRedoAt && !p.review.firstReflectionAt),
+        )
+        .sort(
+          (a, b) =>
+            (a.review.firstRedoAt ?? '').localeCompare(b.review.firstRedoAt ?? '') ||
+            a.key.localeCompare(b.key),
+        );
+      const due = rows
+        .filter(
+          (p) =>
+            !p.review.awaitingEvaluation &&
+            p.review.status === 'reviewing' &&
+            p.review.nextReview &&
+            localDay(new Date(p.review.nextReview)) <= date,
+        )
+        .sort(
+          (a, b) => a.review.nextReview!.localeCompare(b.review.nextReview!) || a.key.localeCompare(b.key),
+        );
+      const pending = rows
+        .filter((p) => p.review.status === 'pending' && !p.review.awaitingEvaluation && !p.review.firstRedoAt)
+        .sort((a, b) => b.failures - a.failures || a.key.localeCompare(b.key));
+      const review =
+        cfPlan?.review ??
+        inherited?.review ??
+        [
+          ...carry.map((p) => ({
+            key: p.key,
+            kind: (p.review.firstRedoAt && !p.review.firstReflectionAt ? 'reflection' : 'evaluation') as
+              'reflection' | 'evaluation',
+          })),
+          ...due
+            .filter((p) => !carry.some((c) => c.key === p.key))
+            .map((p) => ({ key: p.key, kind: 'due' as const })),
+          ...pending.map((p) => ({ key: p.key, kind: 'pending' as const })),
+        ].slice(0, 5);
+      // A plan already issued today remains fixed even when a second account is bound.
+      const cfCatalog = cf ? this.get<Catalog>('catalog_cache', cf, 'current') : undefined;
+      const cfKnown = cf ? this.all<Problem>('problems', cf) : [];
+      const cfSubmissions = cf ? this.all<CFSubmission>('submissions', cf) : [];
+      const newKeys =
+        cfPlan?.newKeys ??
+        inherited?.newKeys ??
+        (cf
+          ? chooseNewProblems(
+              cfCatalog?.problems ?? [],
+              new Set([...cfKnown.map((p) => p.key), ...review.map((p) => p.key)]),
+              this.combinedStatistics('all', now).mastery,
+              targetDifficulty(cfKnown, cfSubmissions, problemKey),
+              date,
+            )
+          : []);
+      plan = dailyPlanSchema.parse({
+        date,
+        review,
+        newKeys,
+        catalogReady: !!cfPlan?.catalogReady,
+        createdAt: now.toISOString(),
+      });
+      this.externalPut(this.combinedNamespace(), date, plan);
+    }
+    if (cf && !cfPlan)
+      this.put(
+        'daily_plans',
+        cf,
+        date,
+        dailyPlanSchema.parse({
+          date,
+          review: plan.review.filter((p) => !p.key.startsWith('atcoder:')),
+          newKeys: plan.newKeys,
+          catalogReady: true,
+          createdAt: plan.createdAt,
+        }),
+      );
+    if (cf) this.reconcileAcceptedRedo(cf, date);
+    this.reconcileAcceptedRedo(acProfile, date);
+    const cfDay = cf ? this.trainingDay(cf, now) : null;
+    const acDay = this.trainingDay(acProfile, now);
+    const available = new Map([...(cfDay?.review ?? []), ...acDay.review].map((p) => [p.key, p]));
+    return {
+      date,
+      review: plan.review.flatMap((item) => (available.get(item.key) ? [available.get(item.key)!] : [])),
+      newProblems: cfDay?.newProblems.filter((p) => plan.newKeys.includes(p.key)) ?? [],
+      catalogFetchedAt: cfDay?.catalogFetchedAt ?? null,
+      recentCheckedAt: [cfDay?.recentCheckedAt, acDay.recentCheckedAt].filter(Boolean).sort().at(0) ?? null,
+      catalogCount: cfDay?.catalogCount ?? 0,
+      mastery: this.combinedStatistics('all', now).mastery,
+    };
+  }
   enrich(h: string, contests: CFContest[], ratings: CFRating[], problems: CFSubmission['problem'][]) {
     const relevant = new Set(this.all<Problem>('problems', h).map((p) => p.contestId));
     this.transaction(() => {
@@ -440,12 +714,21 @@ export class CoreStore {
           if (!p.contestId || p.contestId >= 100000 || !p.index || !p.name) continue;
           const key = `${p.contestId}:${p.index}`;
           catalog.set(key, {
-            key, contestId: p.contestId, index: p.index, name: p.name,
-            rating: p.rating ?? null, tags: p.tags,
+            key,
+            contestId: p.contestId,
+            index: p.index,
+            name: p.name,
+            rating: p.rating ?? null,
+            tags: p.tags,
             url: `https://codeforces.com/contest/${p.contestId}/problem/${p.index}`,
           });
         }
-        this.put('catalog_cache', h, 'current', catalogSchema.parse({ fetchedAt: new Date().toISOString(), problems: [...catalog.values()] }));
+        this.put(
+          'catalog_cache',
+          h,
+          'current',
+          catalogSchema.parse({ fetchedAt: new Date().toISOString(), problems: [...catalog.values()] }),
+        );
       }
     });
   }
@@ -462,45 +745,146 @@ export class CoreStore {
     let plan = this.get<DailyPlan>('daily_plans', h, date);
     if (!plan || (!plan.catalogReady && catalog)) {
       const eligible = rows.filter((p) => !p.review.ignored);
-      const carry = eligible.filter((p) => p.review.awaitingEvaluation || (p.review.firstReflectionRequired && p.review.firstRedoAt && !p.review.firstReflectionAt))
-        .sort((a, b) => (a.review.firstRedoAt ?? '').localeCompare(b.review.firstRedoAt ?? '') || a.key.localeCompare(b.key));
-      const due = eligible.filter((p) => !p.review.awaitingEvaluation && p.review.status === 'reviewing' && p.review.nextReview && localDay(new Date(p.review.nextReview)) <= date)
-        .sort((a, b) => a.review.nextReview!.localeCompare(b.review.nextReview!) || a.key.localeCompare(b.key));
-      const pending = eligible.filter((p) => p.review.status === 'pending' && !p.review.awaitingEvaluation && !p.review.firstRedoAt)
+      const carry = eligible
+        .filter(
+          (p) =>
+            p.review.awaitingEvaluation ||
+            (p.review.firstReflectionRequired && p.review.firstRedoAt && !p.review.firstReflectionAt),
+        )
+        .sort(
+          (a, b) =>
+            (a.review.firstRedoAt ?? '').localeCompare(b.review.firstRedoAt ?? '') ||
+            a.key.localeCompare(b.key),
+        );
+      const due = eligible
+        .filter(
+          (p) =>
+            !p.review.awaitingEvaluation &&
+            p.review.status === 'reviewing' &&
+            p.review.nextReview &&
+            localDay(new Date(p.review.nextReview)) <= date,
+        )
+        .sort(
+          (a, b) => a.review.nextReview!.localeCompare(b.review.nextReview!) || a.key.localeCompare(b.key),
+        );
+      const pending = eligible
+        .filter((p) => p.review.status === 'pending' && !p.review.awaitingEvaluation && !p.review.firstRedoAt)
         .sort((a, b) => b.failures - a.failures || a.key.localeCompare(b.key));
-      const review = plan?.review ?? [...carry.map((p) => ({ key: p.key, kind: (p.review.firstRedoAt && !p.review.firstReflectionAt ? 'reflection' : 'evaluation') as 'reflection' | 'evaluation' })), ...due.filter((p) => !carry.some((c) => c.key === p.key)).map((p) => ({ key: p.key, kind: 'due' as const })), ...pending.map((p) => ({ key: p.key, kind: 'pending' as const }))].slice(0, 5);
+      const review =
+        plan?.review ??
+        [
+          ...carry.map((p) => ({
+            key: p.key,
+            kind: (p.review.firstRedoAt && !p.review.firstReflectionAt ? 'reflection' : 'evaluation') as
+              'reflection' | 'evaluation',
+          })),
+          ...due
+            .filter((p) => !carry.some((c) => c.key === p.key))
+            .map((p) => ({ key: p.key, kind: 'due' as const })),
+          ...pending.map((p) => ({ key: p.key, kind: 'pending' as const })),
+        ].slice(0, 5);
       const blocked = new Set([...known.map((p) => p.key), ...review.map((p) => p.key)]);
-      plan = dailyPlanSchema.parse({ date, review, newKeys: chooseNewProblems(catalog?.problems ?? [], blocked, mastery, targetDifficulty(known, submissions, problemKey), date), catalogReady: !!catalog, createdAt: plan?.createdAt ?? now.toISOString() });
-      if (known.length || catalog || this.all<SyncJob>('jobs', h).some((j) => j.mode === 'full' && j.status === 'completed'))
+      plan = dailyPlanSchema.parse({
+        date,
+        review,
+        newKeys: chooseNewProblems(
+          catalog?.problems ?? [],
+          blocked,
+          mastery,
+          targetDifficulty(known, submissions, problemKey),
+          date,
+        ),
+        catalogReady: !!catalog,
+        createdAt: plan?.createdAt ?? now.toISOString(),
+      });
+      if (
+        known.length ||
+        catalog ||
+        this.all<SyncJob>('jobs', h).some((j) => j.mode === 'full' && j.status === 'completed')
+      )
         this.put('daily_plans', h, date, plan);
     }
     this.reconcileAcceptedRedo(h, date);
     const byKey = new Map(known.map((p) => [p.key, p]));
     const catalogByKey = new Map(catalog?.problems.map((p) => [p.key, p]) ?? []);
-    const attemptsToday = new Set(attempts.filter((a) => localDay(new Date(a.createdAt)) === date).map((a) => a.problemKey));
-    const submittedToday = new Set(submissions.filter((s) => localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
-    const acceptedToday = new Set(submissions.filter((s) => !s.author.teamId && s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
+    const attemptsToday = new Set(
+      attempts.filter((a) => localDay(new Date(a.createdAt)) === date).map((a) => a.problemKey),
+    );
+    const submittedToday = new Set(
+      submissions.filter((s) => localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey),
+    );
+    const acceptedToday = new Set(
+      submissions
+        .filter(
+          (s) =>
+            !s.author.teamId &&
+            s.verdict === 'OK' &&
+            localDay(new Date(s.creationTimeSeconds * 1000)) === date,
+        )
+        .map(problemKey),
+    );
     const review: TrainingDay['review'] = plan.review.flatMap(({ key, kind, completedAt }) => {
-      const p = byKey.get(key), r = this.review(h, key);
+      const p = byKey.get(key),
+        r = this.review(h, key);
       if (!p || !r || r.ignored) return [];
       const redoAccepted = acceptedToday.has(key) || !!r.awaitingEvaluation;
       const attempted = attemptsToday.has(key);
       const needsReflection = r.firstReflectionRequired && !!r.firstRedoAt && !r.firstReflectionAt;
       const needsEvaluation = !!r.awaitingEvaluation;
-      const phase = needsReflection ? 'reflection' : needsEvaluation ? 'evaluation' : (redoAccepted || attempted || !!completedAt) ? 'done' : 'redo';
-      return [{ key, name: p.name, rating: p.rating, tags: p.tags, url: p.url, kind,
-        phase, redoAccepted, completed: !needsReflection && (redoAccepted || attempted || !!completedAt), attempted, nextReview: r.nextReview }];
+      const phase = needsReflection
+        ? 'reflection'
+        : needsEvaluation
+          ? 'evaluation'
+          : redoAccepted || attempted || !!completedAt
+            ? 'done'
+            : 'redo';
+      return [
+        {
+          key,
+          source: p.source ?? 'cf',
+          name: p.name,
+          rating: p.rating,
+          tags: p.tags,
+          url: p.url,
+          kind,
+          phase,
+          redoAccepted,
+          completed: !needsReflection && (redoAccepted || attempted || !!completedAt),
+          attempted,
+          nextReview: r.nextReview,
+        },
+      ];
     });
     const newProblems: TrainingDay['newProblems'] = plan.newKeys.flatMap((key) => {
       const p = catalogByKey.get(key) ?? byKey.get(key);
       if (!p) return [];
-      return [{ key, name: p.name, rating: p.rating, tags: p.tags, url: p.url, kind: 'new' as const,
-        phase: acceptedToday.has(key) ? 'done' as const : 'redo' as const, redoAccepted: acceptedToday.has(key),
-        completed: acceptedToday.has(key), attempted: submittedToday.has(key), nextReview: null }];
+      return [
+        {
+          key,
+          source: 'cf' as const,
+          name: p.name,
+          rating: p.rating,
+          tags: p.tags,
+          url: p.url,
+          kind: 'new' as const,
+          phase: acceptedToday.has(key) ? ('done' as const) : ('redo' as const),
+          redoAccepted: acceptedToday.has(key),
+          completed: acceptedToday.has(key),
+          attempted: submittedToday.has(key),
+          nextReview: null,
+        },
+      ];
     });
-    return { date, review, newProblems, catalogFetchedAt: catalog?.fetchedAt ?? null,
-      recentCheckedAt: this.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null,
-      catalogCount: catalog?.problems.length ?? 0, mastery };
+    return {
+      date,
+      review,
+      newProblems,
+      catalogFetchedAt: catalog?.fetchedAt ?? null,
+      recentCheckedAt:
+        this.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null,
+      catalogCount: catalog?.problems.length ?? 0,
+      mastery,
+    };
   }
   markRecentChecked(h: string, now = new Date()) {
     this.put('training_meta', h, 'recent', trainingMetaSchema.parse({ recentCheckedAt: now.toISOString() }));
@@ -552,7 +936,8 @@ export class CoreStore {
     const current = this.review(h, key);
     if (current.status === 'mastered' || current.ignored) throw new Error('此题未处于复习流程');
     if (current.lastEvaluatedDay === localDay(now)) throw new Error('今天已评价过这道题');
-    if (data.result === 'independent' && !current.awaitingEvaluation) throw new Error('未检测到当天 AC，不能记录独立做对');
+    if (data.result === 'independent' && !current.awaitingEvaluation)
+      throw new Error('未检测到当天 AC，不能记录独立做对');
     const redoAt = current.awaitingEvaluation ? new Date(current.awaitingEvaluation.redoAt) : now;
     const attempt: Attempt = {
       ...data,
@@ -563,9 +948,13 @@ export class CoreStore {
     this.transaction(() => {
       this.put('attempts', h, attempt.id, attempt);
       const next = nextReviewState(current, data.result, redoAt);
-      this.put('reviews', h, key, { ...next, firstRedoAt: current.firstRedoAt ?? now.toISOString(),
+      this.put('reviews', h, key, {
+        ...next,
+        firstRedoAt: current.firstRedoAt ?? now.toISOString(),
         firstReflectionRequired: current.firstReflectionRequired || current.status === 'pending',
-        awaitingEvaluation: null, lastEvaluatedDay: localDay(now) });
+        awaitingEvaluation: null,
+        lastEvaluatedDay: localDay(now),
+      });
     });
     return attempt;
   }
@@ -693,15 +1082,25 @@ export class CoreStore {
       });
       const plan = this.get<DailyPlan>('daily_plans', h, date);
       const completedDue = new Set(a.map((item) => item.problemKey));
-      const ac = new Set(submissions.filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date).map(problemKey));
-      dailyTraining.push({ date, reviewAssigned: plan?.review.length ?? 0,
-        reviewCompleted: plan?.review.filter((item) => {
-          const r = reviews.get(item.key);
-          const reflectionDone = !r?.firstReflectionRequired || !!(r.firstReflectionAt && localDay(new Date(r.firstReflectionAt)) <= date);
-          return reflectionDone && (ac.has(item.key) || completedDue.has(item.key) || !!item.completedAt);
-        }).length ?? 0,
+      const ac = new Set(
+        submissions
+          .filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === date)
+          .map(problemKey),
+      );
+      dailyTraining.push({
+        date,
+        reviewAssigned: plan?.review.length ?? 0,
+        reviewCompleted:
+          plan?.review.filter((item) => {
+            const r = reviews.get(item.key);
+            const reflectionDone =
+              !r?.firstReflectionRequired ||
+              !!(r.firstReflectionAt && localDay(new Date(r.firstReflectionAt)) <= date);
+            return reflectionDone && (ac.has(item.key) || completedDue.has(item.key) || !!item.completedAt);
+          }).length ?? 0,
         newAssigned: plan?.newKeys.length ?? 0,
-        newCompleted: plan?.newKeys.filter((key) => ac.has(key)).length ?? 0 });
+        newCompleted: plan?.newKeys.filter((key) => ac.has(key)).length ?? 0,
+      });
     }
     return {
       total: rows.length,
@@ -717,9 +1116,80 @@ export class CoreStore {
       ).length,
       submissions: this.all('submissions', h).length,
       reasons: count(rows.flatMap((p) => [...new Set(p.review.reasons)])),
-      tags: count(rows.flatMap((p) => [...new Set(p.tags)])),
+      tags: count(rows.flatMap((p) => [...new Set(p.source === 'atcoder' ? p.review.categories : p.tags)])),
       trend,
       mastery,
+      dailyTraining,
+    };
+  }
+  combinedStatistics(source: 'all' | 'cf' | 'atcoder' = 'all', now = new Date()): Statistics {
+    const profiles = [
+      ...(source !== 'atcoder' && this.active() ? [this.active()] : []),
+      ...(source !== 'cf' && this.activeAtcoder() ? [atcoderProfile(this.activeAtcoder())] : []),
+    ];
+    if (profiles.length === 1) return this.statistics(profiles[0], now);
+    const parts = profiles.map((h) => this.statistics(h, now));
+    const empty = () => this.statistics('', now);
+    if (!parts.length) return empty();
+    const sum = (key: 'total' | 'unsolved' | 'mastered' | 'pending' | 'due' | 'submissions') =>
+      parts.reduce((n, p) => n + p[key], 0);
+    const count = (key: 'reasons' | 'tags') => {
+      const values = new Map<string, number>();
+      for (const part of parts)
+        for (const [name, n] of part[key]) values.set(name, (values.get(name) ?? 0) + n);
+      return [...values].sort((a, b) => b[1] - a[1]);
+    };
+    const problems = profiles.flatMap((h) => this.all<Problem>('problems', h));
+    const submissions = profiles.flatMap((h) => this.all<CFSubmission>('submissions', h));
+    const attempts = profiles.flatMap((h) => this.all<Attempt>('attempts', h));
+    const reviews = new Map(profiles.flatMap((h) => this.problems(h).map((p) => [p.key, p.review] as const)));
+    const mastery = masteryAreas(problems, submissions, attempts, reviews, problemKey);
+    const dailyTraining = parts[0].dailyTraining.map((t, i) => {
+      const merged = {
+        date: t.date,
+        reviewAssigned: parts.reduce((n, p) => n + p.dailyTraining[i].reviewAssigned, 0),
+        reviewCompleted: parts.reduce((n, p) => n + p.dailyTraining[i].reviewCompleted, 0),
+        newAssigned: parts.reduce((n, p) => n + p.dailyTraining[i].newAssigned, 0),
+        newCompleted: parts.reduce((n, p) => n + p.dailyTraining[i].newCompleted, 0),
+      };
+      const plan = this.combinedPlan(t.date);
+      if (plan && source === 'all') {
+        merged.reviewAssigned = plan.review.length;
+        const ac = new Set(
+          submissions
+            .filter((s) => s.verdict === 'OK' && localDay(new Date(s.creationTimeSeconds * 1000)) === t.date)
+            .map(problemKey),
+        );
+        const attempted = new Set(
+          attempts.filter((a) => localDay(new Date(a.createdAt)) === t.date).map((a) => a.problemKey),
+        );
+        merged.reviewCompleted = plan.review.filter((item) => {
+          const r = reviews.get(item.key);
+          return (
+            (!r?.firstReflectionRequired ||
+              !!(r.firstReflectionAt && localDay(new Date(r.firstReflectionAt)) <= t.date)) &&
+            (ac.has(item.key) || attempted.has(item.key) || !!item.completedAt)
+          );
+        }).length;
+      }
+      return merged;
+    });
+    return {
+      total: sum('total'),
+      unsolved: sum('unsolved'),
+      mastered: sum('mastered'),
+      pending: sum('pending'),
+      due: sum('due'),
+      submissions: sum('submissions'),
+      reasons: count('reasons'),
+      tags: count('tags'),
+      mastery,
+      trend: parts[0].trend.map((t, i) => ({
+        date: t.date,
+        independent: parts.reduce((n, p) => n + p.trend[i].independent, 0),
+        hint: parts.reduce((n, p) => n + p.trend[i].hint, 0),
+        failed: parts.reduce((n, p) => n + p.trend[i].failed, 0),
+      })),
       dailyTraining,
     };
   }
@@ -729,10 +1199,11 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 4,
+      version: 5,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
-      profiles: this.handles(),
+      profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
+      activeAtcoder: this.activeAtcoder(),
       xcpcActive: this.setting('xcpc-active'),
       xcpcMode: this.setting('xcpc-mode') === 'all' ? 'all' : 'official',
       external: (
@@ -776,10 +1247,22 @@ export class CoreStore {
       typeof input.tables === 'object'
     )
       input = { ...input, tables: { ...input.tables, analysis_cache: [] } };
-    if (input && typeof input === 'object' && 'version' in input && Number(input.version) < 4 &&
-      'tables' in input && input.tables && typeof input.tables === 'object')
-      input = { ...input, tables: { ...input.tables, catalog_cache: [], daily_plans: [], training_meta: [] } };
+    if (
+      input &&
+      typeof input === 'object' &&
+      'version' in input &&
+      Number(input.version) < 4 &&
+      'tables' in input &&
+      input.tables &&
+      typeof input.tables === 'object'
+    )
+      input = {
+        ...input,
+        tables: { ...input.tables, catalog_cache: [], daily_plans: [], training_meta: [] },
+      };
     const data = backupSchema.parse(input);
+    if (data.version === 5 && data.activeAtcoder === undefined)
+      throw new Error('v5 备份缺少 AtCoder 账号字段');
     if (
       data.version >= 3 &&
       (data.external === undefined || data.xcpcActive === undefined || data.xcpcMode === undefined)
@@ -791,7 +1274,24 @@ export class CoreStore {
       const id = `${row.namespace}\0${row.key}`;
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
-      row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
+      if (row.namespace === 'atcoder-meta' && row.key === 'catalog')
+        row.value = z
+          .object({
+            fetchedAt: z.string().datetime(),
+            problems: z.array(atcoderProblemSchema),
+            contests: z.array(atcoderContestSchema),
+            models: z.record(
+              z.string(),
+              z.object({ difficulty: z.number().nullable().optional() }).passthrough(),
+            ),
+          })
+          .parse(row.value);
+      else if (row.namespace.startsWith('daily:')) row.value = dailyPlanSchema.parse(row.value);
+      else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('report:'))
+        row.value = atcoderReportSchema.parse(row.value);
+      else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('review:'))
+        row.value = contestReviewSchema.parse(row.value);
+      else row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
     }
     if (data.xcpcActive && !externalKeys.has(`player\0${data.xcpcActive}`))
       throw new Error('备份缺少绑定的 XCPC 选手');
@@ -811,7 +1311,8 @@ export class CoreStore {
     }
     if (
       new Set(data.profiles).size !== data.profiles.length ||
-      (data.activeHandle && !data.profiles.includes(data.activeHandle))
+      (data.activeHandle && !data.profiles.includes(data.activeHandle)) ||
+      (data.activeAtcoder && !data.profiles.includes(atcoderProfile(data.activeAtcoder)))
     )
       throw new Error('备份账号信息不完整');
     const known = new Map<Table, Set<string>>();
@@ -829,13 +1330,23 @@ export class CoreStore {
           (t === 'problems' && v.key !== row.key) ||
           (['submissions', 'contests', 'attempts', 'jobs', 'analysis_cache'].includes(t) &&
             String(v.id) !== row.key) ||
-          (t === 'jobs' && v.handle !== row.profile)
+          (t === 'jobs' &&
+            (row.profile.startsWith('ac~')
+              ? atcoderProfile(String(v.handle)) !== row.profile
+              : v.handle !== row.profile))
         )
           throw new Error('备份记录编号不一致');
-        if (t === 'problems' && v.contestId && `${v.contestId}:${v.index}` !== row.key)
+        if (
+          t === 'problems' &&
+          ((v.source === 'atcoder' && atcoderKey(String(v.index)) !== row.key) ||
+            (v.source !== 'atcoder' && v.contestId && `${v.contestId}:${v.index}` !== row.key))
+        )
           throw new Error('备份题号不一致');
-        if ((t === 'catalog_cache' && row.key !== 'current') || (t === 'training_meta' && row.key !== 'recent') ||
-          (t === 'daily_plans' && v.date !== row.key))
+        if (
+          (t === 'catalog_cache' && row.key !== 'current') ||
+          (t === 'training_meta' && row.key !== 'recent') ||
+          (t === 'daily_plans' && v.date !== row.key)
+        )
           throw new Error('备份训练记录编号不一致');
       }
     }
@@ -853,10 +1364,30 @@ export class CoreStore {
     for (const row of data.tables.daily_plans) {
       const plan = row.value as DailyPlan;
       const keys = [...plan.review.map((item) => item.key), ...plan.newKeys];
-      if (new Set(keys).size !== keys.length ||
+      if (
+        new Set(keys).size !== keys.length ||
         plan.review.some((item) => !known.get('problems')!.has(`${row.profile}\0${item.key}`)) ||
-        plan.newKeys.some((key) => !catalogKeys.get(row.profile)?.has(key) && !known.get('problems')!.has(`${row.profile}\0${key}`)))
+        plan.newKeys.some(
+          (key) =>
+            !catalogKeys.get(row.profile)?.has(key) && !known.get('problems')!.has(`${row.profile}\0${key}`),
+        )
+      )
         throw new Error('备份题单包含重复或不存在的题目');
+    }
+    for (const row of external.filter((r) => r.namespace.startsWith('daily:'))) {
+      const plan = row.value as DailyPlan;
+      if (plan.date !== row.key) throw new Error('备份合并题单日期不一致');
+      const keys = [...plan.review.map((i) => i.key), ...plan.newKeys];
+      if (
+        new Set(keys).size !== keys.length ||
+        plan.review.some((i) => !data.profiles.some((h) => known.get('problems')!.has(`${h}\0${i.key}`))) ||
+        plan.newKeys.some(
+          (k) =>
+            !data.tables.catalog_cache.some((c) => (c.value as Catalog).problems.some((p) => p.key === k)) &&
+            !data.profiles.some((h) => known.get('problems')!.has(`${h}\0${k}`)),
+        )
+      )
+        throw new Error('备份合并题单包含重复或不存在的题目');
     }
     for (const t of ['reviews', 'attempts', 'submissions'] as const)
       for (const row of data.tables[t]) {
@@ -878,6 +1409,7 @@ export class CoreStore {
       this.db.exec('DELETE FROM profiles; DELETE FROM settings; DELETE FROM external;');
       for (const h of data.profiles) this.db.prepare('INSERT INTO profiles VALUES(?)').run(h);
       this.db.prepare("INSERT INTO settings VALUES('active',?)").run(data.activeHandle);
+      this.setSetting('atcoder-active', data.activeAtcoder ?? '');
       this.setSetting('xcpc-active', data.xcpcActive ?? '');
       this.setSetting('xcpc-mode', data.xcpcMode ?? 'official');
       for (const row of external) {

@@ -13,6 +13,7 @@ import {
   type Review,
 } from '../../shared/domain';
 import Markdown from '../components/Markdown.vue';
+import { categoryNames } from '../../shared/training';
 const route = useRoute(),
   key = String(route.params.key);
 const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[] } | null>(null),
@@ -44,6 +45,7 @@ const nextDate = computed({
   get: () => (draft.value.nextReview ? localDate(draft.value.nextReview) : ''),
   set: (v) => (draft.value.nextReview = v ? new Date(v + 'T09:00:00').toISOString() : null),
 });
+let inFlightSave: Promise<void> | null = null;
 async function load() {
   try {
     data.value = await api('/problems/' + encodeURIComponent(key));
@@ -55,6 +57,15 @@ async function load() {
   }
 }
 async function save(action = 'save') {
+  if (inFlightSave) return inFlightSave;
+  inFlightSave = saveInner(action);
+  try {
+    await inFlightSave;
+  } finally {
+    inFlightSave = null;
+  }
+}
+async function saveInner(action: string) {
   busy.value = true;
   error.value = '';
   try {
@@ -66,11 +77,7 @@ async function save(action = 'save') {
     draft.value = updated;
     snapshot.value = JSON.stringify(updated);
     await load();
-    notify(
-      action === 'restart'
-          ? '已重新加入复习'
-          : '复盘已保存',
-    );
+    notify(action === 'restart' ? '已重新加入复习' : '复盘已保存');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -111,7 +118,10 @@ onMounted(() => {
   window.addEventListener('beforeunload', unload);
 });
 onUnmounted(() => window.removeEventListener('beforeunload', unload));
-onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保存，确定离开吗？'));
+onBeforeRouteLeave(async () => {
+  if (inFlightSave) await inFlightSave;
+  return !dirty.value || window.confirm('复盘内容尚未保存，确定离开吗？');
+});
 </script>
 <template>
   <RouterLink class="back-link" to="/problems"><ArrowLeft :size="15" />返回错题库</RouterLink>
@@ -119,10 +129,19 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
   <template v-if="data"
     ><div class="page-head detail-head">
       <div>
-        <div class="eyebrow">CODEFORCES / {{ data.problem.contestId }}{{ data.problem.index }}</div>
+        <div class="eyebrow">
+          {{ data.problem.source === 'atcoder' ? 'ATCODER' : 'CODEFORCES' }} /
+          {{
+            data.problem.source === 'atcoder'
+              ? data.problem.index
+              : `${data.problem.contestId}${data.problem.index}`
+          }}
+        </div>
         <h1>{{ data.problem.name }}</h1>
         <div class="detail-meta">
-          <span class="rating">{{ data.problem.rating ?? '暂无难度' }}</span
+          <span class="rating"
+            >{{ data.problem.rating ?? '暂无难度'
+            }}{{ data.problem.source === 'atcoder' ? ' · AtCoder Problems 估计难度' : '' }}</span
           ><span v-for="t in data.problem.tags" :key="t" class="tag">{{ t }}</span
           ><span :class="['badge', draft.status]">{{ statusLabels[draft.status] }}</span
           ><span class="solve-label">{{ data.problem.solved ? '已 AC' : '尚未 AC' }}</span>
@@ -174,6 +193,17 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
               @keydown.enter.prevent="addReason"
             /><button @click="addReason">添加</button>
           </div>
+          <template v-if="data.problem.source === 'atcoder'">
+            <label class="field-title">算法领域（手动标注，可多选）</label>
+            <div class="reason-picker">
+              <label
+                v-for="category in categoryNames"
+                :key="category"
+                :class="{ picked: draft.categories.includes(category) }"
+                ><input v-model="draft.categories" type="checkbox" :value="category" />{{ category }}</label
+              >
+            </div>
+          </template>
           <div v-for="(field, i) in fields" :key="field.key" class="note-field">
             <label :for="field.key"
               ><span>0{{ i + 1 }}</span
@@ -223,7 +253,11 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
             }}</span>
             <div>
               <a
-                :href="`https://codeforces.com/${(s.contestId || 0) >= 100000 ? 'gym' : 'contest'}/${s.contestId}/submission/${s.id}`"
+                :href="
+                  s.source === 'atcoder'
+                    ? `https://atcoder.jp/contests/${s.contestKey}/submissions/${s.id}`
+                    : `https://codeforces.com/${(s.contestId || 0) >= 100000 ? 'gym' : 'contest'}/${s.contestId}/submission/${s.id}`
+                "
                 target="_blank"
                 rel="noreferrer"
                 >#{{ s.id }} <ExternalLink :size="12" /></a
@@ -267,9 +301,18 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
             {{ draft.status === 'mastered' ? '五轮独立重做已完成。' : '依次独立重做，逐步拉长复习间隔。'
             }}<br />次日 → 3 天 → 7 天 → 14 天 → 30 天
           </p>
-          <p v-if="draft.awaitingEvaluation" class="small">当天 AC 已确认重做完成；请评价是否独立做对。评价前不安排下次复习。</p>
-          <p v-if="draft.firstReflectionRequired && draft.firstRedoAt && !draft.firstReflectionAt" class="small">首次重做后，请在左侧至少填写一项分析并保存，完成今天的复盘步骤。</p>
-          <p v-if="draft.status === 'pending' && !draft.firstRedoAt" class="small">先打开原题重做；当天 CF AC 会自动确认重做完成。未 AC 时也可记录一次尝试。</p>
+          <p v-if="draft.awaitingEvaluation" class="small">
+            当天 AC 已确认重做完成；请评价是否独立做对。评价前不安排下次复习。
+          </p>
+          <p
+            v-if="draft.firstReflectionRequired && draft.firstRedoAt && !draft.firstReflectionAt"
+            class="small"
+          >
+            首次重做后，请在左侧至少填写一项分析并保存，完成今天的复盘步骤。
+          </p>
+          <p v-if="draft.status === 'pending' && !draft.firstRedoAt" class="small">
+            先打开原题重做；当天 CF AC 会自动确认重做完成。未 AC 时也可记录一次尝试。
+          </p>
           <label v-if="draft.status === 'reviewing'"
             >下次复习日期<input v-model="nextDate" type="date" /></label
           ><button v-if="draft.status === 'reviewing'" class="wide" :disabled="busy" @click="save()">
@@ -281,11 +324,19 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
         </section>
         <section v-if="draft.status !== 'mastered' && !draft.ignored" class="panel side-card">
           <h2><Clock3 :size="18" />{{ draft.awaitingEvaluation ? '评价这次重做' : '重做与尝试' }}</h2>
-          <p class="small subtle">{{ draft.awaitingEvaluation ? 'AC 只确认通过；是否独立完成由你评价。' : '先打开原题重做。没有当天 AC 时，可以记录借助提示或仍未做出。' }}</p>
+          <p class="small subtle">
+            {{
+              draft.awaitingEvaluation
+                ? 'AC 只确认通过；是否独立完成由你评价。'
+                : '先打开原题重做。没有当天 AC 时，可以记录借助提示或仍未做出。'
+            }}
+          </p>
           <form @submit.prevent="submitAttempt">
             <label
               >重做结果<select v-model="attempt.result">
-                <option value="independent" :disabled="!draft.awaitingEvaluation">独立做对（需当天 AC）</option>
+                <option value="independent" :disabled="!draft.awaitingEvaluation">
+                  独立做对（需当天 AC）
+                </option>
                 <option value="hint">借助提示</option>
                 <option value="failed">仍未做出</option>
               </select></label
@@ -302,7 +353,9 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('复盘内容尚未保�
                 rows="3"
                 placeholder="这次还有哪里不熟悉？"
               ></textarea></label
-            ><button class="primary wide" :disabled="busy || dirty">{{ draft.awaitingEvaluation ? '保存评价' : '记录尝试' }}</button>
+            ><button class="primary wide" :disabled="busy || dirty">
+              {{ draft.awaitingEvaluation ? '保存评价' : '记录尝试' }}
+            </button>
             <p v-if="dirty" class="small unsaved">请先保存笔记，再记录重做结果。</p>
           </form>
         </section>

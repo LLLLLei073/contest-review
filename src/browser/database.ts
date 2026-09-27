@@ -5,6 +5,7 @@ import { CodeforcesClient, SyncService } from '../../shared/sync';
 import { AnalysisService } from '../../shared/analysis-service';
 import { ContestHub } from '../../shared/contest-hub';
 import { TrainingService } from '../../shared/training-service';
+import { AtcoderService, AtcoderClient } from '../../shared/atcoder';
 
 class BrowserSQLite implements DatabaseLike {
   constructor(public raw: Database) {}
@@ -83,6 +84,7 @@ export class BrowserRuntime {
   readonly analysis: AnalysisService;
   readonly hub: ContestHub;
   readonly training: TrainingService;
+  readonly atcoder: AtcoderService;
   private writes: Promise<void> = Promise.resolve();
   private pendingWrites = 0;
   private previous: unknown;
@@ -97,10 +99,28 @@ export class BrowserRuntime {
     });
     this.sync = new SyncService(this.store, this.cf, 1000, () => this.flush());
     this.analysis = new AnalysisService(this.store, this.cf, () => this.flush());
-    this.hub = new ContestHub(this.store, this.sync, this.analysis, () => this.flush());
+    this.atcoder = new AtcoderService(
+      this.store,
+      new AtcoderClient((url, options) => fetch(url, { ...options, credentials: 'omit' })),
+      () => this.flush(),
+    );
+    this.hub = new ContestHub(
+      this.store,
+      this.sync,
+      this.analysis,
+      () => this.flush(),
+      undefined,
+      this.atcoder,
+    );
     this.training = new TrainingService(this.store, this.cf, () => this.flush());
     window.addEventListener('beforeunload', (event) => {
-      if (this.pendingWrites || this.sync.running || this.analysis.running || this.hub.isBusy()) {
+      if (
+        this.pendingWrites ||
+        this.sync.running ||
+        this.analysis.running ||
+        this.hub.isBusy() ||
+        this.atcoder.running
+      ) {
         event.preventDefault();
         event.returnValue = '';
       }
@@ -137,6 +157,7 @@ export class BrowserRuntime {
     } catch (error) {
       this.storageError = '浏览器存储写入失败，已停止后续写入。请立即导出备份，释放空间后重新打开页面。';
       this.sync.stop();
+      this.atcoder.stop();
       throw new Error(this.storageError, { cause: error });
     } finally {
       this.pendingWrites--;

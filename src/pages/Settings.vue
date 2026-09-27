@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import {
   Download,
   Upload,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-vue-next';
 import { api, settings, loadSettings, loadJob, job, notify, fullDate, browserMode } from '../api';
 import type { XcpcCandidate } from '../../shared/xcpc';
+import type { SyncJob } from '../../shared/domain';
 const handle = ref(''),
   busy = ref(false),
   error = ref(''),
@@ -21,9 +22,52 @@ const handle = ref(''),
 const xcpcName = ref(''),
   candidates = ref<XcpcCandidate[]>([]),
   xcpcBusy = ref(false);
+const atcoderHandle = ref(''),
+  atcoderJob = ref<SyncJob | null>(null),
+  atcoderVerified = ref(false);
+let atcoderTimer: ReturnType<typeof setInterval> | undefined;
+async function loadAtcoder() {
+  const data = await api<{ job: SyncJob | null; verified: boolean }>('/atcoder/binding');
+  atcoderJob.value = data.job;
+  atcoderVerified.value = data.verified;
+}
+async function bindAtcoder(value = atcoderHandle.value) {
+  busy.value = true;
+  error.value = '';
+  try {
+    await api('/atcoder/binding', { handle: value });
+    await loadSettings();
+    atcoderHandle.value = settings.value.activeAtcoder ?? '';
+    await loadAtcoder();
+    notify('AtCoder 用户名已绑定，请同步公开提交');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume = false) {
+  busy.value = true;
+  error.value = '';
+  try {
+    await api('/atcoder/sync', { mode, resume });
+    await loadAtcoder();
+    notify('AtCoder 同步已开始');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
 onMounted(() => {
   handle.value = settings.value.activeHandle;
+  atcoderHandle.value = settings.value.activeAtcoder ?? '';
+  void loadAtcoder();
+  atcoderTimer = setInterval(() => {
+    if (atcoderJob.value?.status === 'running') void loadAtcoder();
+  }, 2000);
 });
+onUnmounted(() => clearInterval(atcoderTimer));
 async function bind(value = handle.value) {
   busy.value = true;
   error.value = '';
@@ -139,6 +183,82 @@ async function restore() {
   </div>
   <div class="settings-layout">
     <div>
+      <section class="panel settings-card">
+        <div class="section-head">
+          <div class="section-title">
+            <span class="section-icon"><Link2 :size="20" /></span>
+            <div>
+              <h2>AtCoder 账号</h2>
+              <p>使用公开用户名独立绑定；提交数据来自 AtCoder Problems 非官方接口。</p>
+            </div>
+          </div>
+          <span v-if="settings.activeAtcoder" class="badge mastered">已绑定</span>
+        </div>
+        <form class="handle-form" @submit.prevent="bindAtcoder()">
+          <label
+            >AtCoder 用户名<input
+              v-model="atcoderHandle"
+              required
+              pattern="[A-Za-z0-9_]+"
+              maxlength="64"
+              placeholder="例如 kenkoooo"
+              :disabled="busy || atcoderJob?.status === 'running'" /></label
+          ><button class="primary" :disabled="busy || atcoderJob?.status === 'running'">
+            绑定 AtCoder <ArrowRight :size="16" />
+          </button>
+        </form>
+        <div v-if="settings.atcoderHandles?.length" class="profile-switch">
+          <span class="small subtle">AtCoder 账号分区</span
+          ><button
+            v-for="h in settings.atcoderHandles"
+            :key="h"
+            :disabled="
+              busy ||
+              h.toLowerCase() === settings.activeAtcoder?.toLowerCase() ||
+              atcoderJob?.status === 'running'
+            "
+            @click="bindAtcoder(h)"
+          >
+            {{ h }}
+          </button>
+        </div>
+        <p v-if="settings.activeAtcoder" class="small subtle">
+          {{ atcoderVerified ? '已从公开提交验证该用户名' : '尚无法验证：无公开提交或尚未同步'
+          }}<template v-if="atcoderJob">
+            ·
+            {{
+              { running: '正在同步', completed: '同步完成', failed: '同步未完成', interrupted: '同步已中断' }[
+                atcoderJob.status
+              ]
+            }}
+            · 已读取 {{ atcoderJob.processed }} 条 · {{ atcoderJob.message
+            }}<template v-if="atcoderJob.finishedAt">
+              · {{ fullDate(atcoderJob.finishedAt) }}</template
+            ></template
+          >
+        </p>
+        <div class="button-row">
+          <button
+            class="primary"
+            :disabled="busy || !settings.activeAtcoder || atcoderJob?.status === 'running'"
+            @click="syncAtcoder()"
+          >
+            <RefreshCw :size="15" />{{ atcoderJob ? '增量同步' : '首次同步' }}</button
+          ><button
+            :disabled="busy || !settings.activeAtcoder || atcoderJob?.status === 'running'"
+            @click="syncAtcoder('full')"
+          >
+            全量核对</button
+          ><button
+            v-if="atcoderJob && ['failed', 'interrupted'].includes(atcoderJob.status)"
+            :disabled="busy"
+            @click="syncAtcoder(atcoderJob.mode, true)"
+          >
+            继续同步
+          </button>
+        </div>
+        <p class="small subtle">请求间隔至少一秒。来源可能延迟或中断；失败时保留已导入数据，离线仍可复盘。</p>
+      </section>
       <section class="panel settings-card">
         <div class="section-head">
           <div class="section-title">

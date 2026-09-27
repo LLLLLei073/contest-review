@@ -9,6 +9,7 @@ const route = useRoute(),
   router = useRouter();
 const filters = ref({
   q: '',
+  source: 'all',
   tag: '',
   reason: '',
   status: String(route.query.status || ''),
@@ -133,7 +134,11 @@ async function add() {
       </div>
     </div>
     <div class="filters">
-      <Filter :size="16" class="subtle" /><select v-model="filters.status" aria-label="复盘状态">
+      <Filter :size="16" class="subtle" /><select v-model="filters.source" aria-label="题目来源">
+        <option value="all">两站全部</option>
+        <option value="cf">Codeforces</option>
+        <option value="atcoder">AtCoder</option></select
+      ><select v-model="filters.status" aria-label="复盘状态">
         <option value="">全部复盘状态</option>
         <option value="pending">待复盘</option>
         <option value="reviewing">复习中</option>
@@ -177,9 +182,9 @@ async function add() {
       <h3>{{ loading ? '正在查找题目…' : '这里还没有匹配的题目' }}</h3>
       <p>
         {{
-          settings.activeHandle
-            ? '同步 Codeforces 记录，或调整筛选条件。'
-            : '先绑定 Codeforces 用户名，开始建立你的错题库。'
+          settings.activeHandle || settings.activeAtcoder
+            ? '同步对应平台的记录，或调整筛选条件。'
+            : '先绑定用户名，开始建立你的错题库。'
         }}
       </p>
       <RouterLink to="/settings" class="text-link">前往设置 <ArrowRight :size="14" /></RouterLink>

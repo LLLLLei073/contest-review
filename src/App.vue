@@ -134,10 +134,21 @@ onUnmounted(() => {
         </div>
         <RouterLink to="/settings" class="profile-chip"
           ><span class="avatar">{{
-            settings.activeHandle ? settings.activeHandle[0].toUpperCase() : settings.xcpcPlayer ? 'X' : 'CF'
+            settings.activeHandle
+              ? settings.activeHandle[0].toUpperCase()
+              : settings.activeAtcoder
+                ? 'A'
+                : settings.xcpcPlayer
+                  ? 'X'
+                  : 'CF'
           }}</span
           ><span>{{
-            settings.activeHandle || (settings.xcpcPlayer ? settings.xcpcPlayer.name + ' · XCPC' : '绑定账号')
+            settings.activeHandle ||
+            (settings.activeAtcoder
+              ? settings.activeAtcoder + ' · AtCoder'
+              : settings.xcpcPlayer
+                ? settings.xcpcPlayer.name + ' · XCPC'
+                : '绑定账号')
           }}</span
           ><RefreshCw v-if="job?.status === 'running'" class="spin" :size="14" /><ArrowUpRight
             v-else
@@ -149,7 +160,15 @@ onUnmounted(() => {
           {{ browserMode ? '无法打开浏览器错题库：' : '无法连接本地服务：' }}{{ initError }}
         </div>
         <RouterView
-          :key="$route.fullPath + '|' + settings.activeHandle + '|' + (settings.xcpcPlayer?.key || '')"
+          :key="
+            $route.fullPath +
+            '|' +
+            settings.activeHandle +
+            '|' +
+            (settings.activeAtcoder || '') +
+            '|' +
+            (settings.xcpcPlayer?.key || '')
+          "
         />
       </main>
       <footer><span>回解 / 每一题，都值得真正理解。</span><span>LOCAL FIRST · CONTEST REVIEW</span></footer>

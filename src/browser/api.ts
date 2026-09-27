@@ -2,10 +2,11 @@ import { z } from 'zod';
 import { attemptSchema, reviewSchema } from '../../shared/domain';
 import { contestReviewSchema, localDay } from '../../shared/core-store';
 import { browserRuntime } from './database';
+import { atcoderHandleSchema, atcoderProfile, atcoderNamespace } from '../../shared/atcoder';
 
 export async function browserApi<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
   const runtime = await browserRuntime(),
-    { store, sync, cf, analysis, hub, training } = runtime;
+    { store, sync, cf, analysis, hub, training, atcoder } = runtime;
   const url = new URL(path, 'https://local.invalid'),
     route = url.pathname;
   const profile = () => {
@@ -14,7 +15,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     return h;
   };
   const idle = () => {
-    if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步或比赛分析完成');
+    if (sync.running || analysis.running || hub.isBusy() || atcoder.running)
+      throw new Error('请等待当前同步或比赛分析完成');
   };
   const isWrite = !['GET', 'HEAD'].includes(method);
   if (isWrite) runtime.assertWritable();
@@ -24,6 +26,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       result = {
         activeHandle: store.active(),
         handles: store.handles(),
+        activeAtcoder: store.activeAtcoder(),
+        atcoderHandles: store.atcoderHandles(),
         xcpcPlayer: hub.binding(),
         xcpcMode: hub.mode(),
       };
@@ -49,6 +53,51 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       }
       result = { activeHandle: store.active(), handles: store.handles() };
       navigator.storage?.persist?.().catch(() => {});
+    } else if (route === '/atcoder/binding' && method === 'GET')
+      result = {
+        activeHandle: store.activeAtcoder(),
+        handles: store.atcoderHandles(),
+        verified: !!(
+          store.activeAtcoder() && store.all('submissions', atcoderProfile(store.activeAtcoder())).length
+        ),
+        job: store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null,
+      };
+    else if (route === '/atcoder/binding' && method === 'POST') {
+      idle();
+      const handle = atcoderHandleSchema.parse(z.object({ handle: z.string() }).parse(body).handle);
+      store.activateAtcoder(handle);
+      result = {
+        activeHandle: store.activeAtcoder(),
+        handles: store.atcoderHandles(),
+        verified: store.all('submissions', atcoderProfile(handle)).length > 0,
+      };
+    } else if (route === '/atcoder/sync' && method === 'GET')
+      result = store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null;
+    else if (route === '/atcoder/sync' && method === 'POST') {
+      if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步完成');
+      const { mode, resume } = z
+        .object({
+          mode: z.enum(['full', 'incremental']).default('incremental'),
+          resume: z.boolean().default(false),
+        })
+        .parse(body);
+      if (!store.activeAtcoder()) throw new Error('请先绑定 AtCoder');
+      result = atcoder.start(store.activeAtcoder(), mode, resume);
+    } else if (/^\/atcoder\/contests\/[^/]+\/analysis$/.test(route) && method === 'GET') {
+      result = atcoder.report(decodeURIComponent(route.split('/')[3]));
+      await runtime.flush();
+    } else if (/^\/atcoder\/contests\/[^/]+\/analysis\/refresh$/.test(route) && method === 'POST') {
+      if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步或分析完成');
+      result = await atcoder.refresh(decodeURIComponent(route.split('/')[3]));
+    } else if (/^\/atcoder\/contests\/[^/]+\/review$/.test(route) && method === 'PUT') {
+      if (!store.activeAtcoder()) throw new Error('请先绑定 AtCoder');
+      const review = contestReviewSchema.parse(body);
+      store.externalPut(
+        atcoderNamespace(store.activeAtcoder()),
+        'review:' + decodeURIComponent(route.split('/')[3]),
+        review,
+      );
+      result = review;
     } else if (route === '/xcpc/search' && method === 'GET')
       result = await hub.search(url.searchParams.get('name') ?? '');
     else if (route === '/xcpc/binding' && method === 'POST')
@@ -56,7 +105,10 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (route === '/xcpc/mode' && method === 'POST') {
       hub.setMode(z.object({ mode: z.enum(['official', 'all']) }).parse(body).mode);
       result = { mode: hub.mode() };
-    } else if (route === '/review/contests' && method === 'GET') result = hub.rows();
+    } else if (route === '/review/contests' && method === 'GET')
+      result = [...hub.rows(), ...atcoder.contests()].sort(
+        (a, b) => (b.startTimeSeconds ?? 0) - (a.startTimeSeconds ?? 0),
+      );
     else if (route === '/review/batch' && method === 'GET') result = hub.latestJob();
     else if (route === '/review/batch' && method === 'POST') result = hub.startBatch();
     else if (route === '/review/batch/stop' && method === 'POST') {
@@ -70,17 +122,47 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       result = hub.saveReview(decodeURIComponent(route.split('/')[3]), contestReviewSchema.parse(body));
     else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
     else if (route === '/training/day' && method === 'GET') {
-      result = store.trainingDay(profile());
+      result = store.combinedTrainingDay();
       await runtime.flush();
     } else if (route === '/training/recent' && method === 'POST') {
-      const h = profile();
+      const h = store.active();
       const { force } = z.object({ force: z.boolean().default(false) }).parse(body ?? {});
-      result = sync.running
-        ? { checkedAt: store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null, error: '完整同步正在进行' }
-        : await training.recent(h, force);
-    }
-    else if (route === '/sync' && method === 'POST') {
-      if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
+      result = !h
+        ? store.activeAtcoder()
+          ? (() => {
+              const p = atcoderProfile(store.activeAtcoder()),
+                last = store.latestJob(p);
+              if (
+                !atcoder.running &&
+                !sync.running &&
+                !analysis.running &&
+                !hub.isBusy() &&
+                (force || !last?.finishedAt || Date.now() - Date.parse(last.finishedAt) > 300000)
+              )
+                atcoder.start(store.activeAtcoder(), 'incremental');
+              return {
+                checkedAt:
+                  store.get<{ recentCheckedAt: string }>('training_meta', p, 'recent')?.recentCheckedAt ??
+                  null,
+                error: null,
+              };
+            })()
+          : { checkedAt: null, error: '尚未绑定 Codeforces' }
+        : sync.running
+          ? {
+              checkedAt:
+                store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')
+                  ?.recentCheckedAt ?? null,
+              error: '完整同步正在进行',
+            }
+          : await training.recent(h, force);
+      if (h && store.activeAtcoder() && !atcoder.running && !analysis.running && !hub.isBusy()) {
+        const last = store.latestJob(atcoderProfile(store.activeAtcoder()));
+        if (force || !last?.finishedAt || Date.now() - Date.parse(last.finishedAt) > 300000)
+          atcoder.start(store.activeAtcoder(), 'incremental');
+      }
+    } else if (route === '/sync' && method === 'POST') {
+      if (analysis.running || hub.isBusy() || atcoder.running) throw new Error('请等待比赛分析完成');
       const data = z
         .object({
           mode: z.enum(['full', 'incremental']).default('incremental'),
@@ -94,6 +176,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const q = z
         .object({
           q: z.string().optional(),
+          source: z.enum(['all', 'cf', 'atcoder']).default('all'),
           tag: z.string().optional(),
           reason: z.string().optional(),
           status: z.enum(['pending', 'reviewing', 'mastered']).optional(),
@@ -108,12 +191,13 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         })
         .parse(Object.fromEntries(url.searchParams));
       const rows = store
-        .problems(store.active())
+        .combinedProblems()
         .filter(
           (p) =>
             (q.ignored === 'yes' ? p.review.ignored : !p.review.ignored) &&
+            (q.source === 'all' || (p.source ?? 'cf') === q.source) &&
             (!q.q || `${p.name} ${p.contestId ?? ''}${p.index}`.toLowerCase().includes(q.q.toLowerCase())) &&
-            (!q.tag || p.tags.includes(q.tag)) &&
+            (!q.tag || (p.source === 'atcoder' ? p.review.categories : p.tags).includes(q.tag)) &&
             (!q.reason || p.review.reasons.includes(q.reason)) &&
             (!q.status || p.review.status === q.status) &&
             (!q.solved || p.solved === (q.solved === 'yes')) &&
@@ -137,9 +221,11 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         page: q.page,
       };
     } else if (route === '/tags' && method === 'GET') {
-      const rows = store.problems(store.active());
+      const rows = store.combinedProblems();
       result = {
-        tags: [...new Set(rows.flatMap((p) => p.tags))].sort(),
+        tags: [
+          ...new Set(rows.flatMap((p) => (p.source === 'atcoder' ? p.review.categories : p.tags))),
+        ].sort(),
         reasons: [...new Set(rows.flatMap((p) => p.review.reasons))].sort(),
       };
     } else if (route === '/problems' && method === 'POST') {
@@ -158,21 +244,28 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         .parse(body);
       result = { key: store.manualProblem(profile(), input) };
     } else if (/^\/problems\/[^/]+$/.test(route) && method === 'GET') {
-      result = store.detail(profile(), decodeURIComponent(route.split('/')[2]));
+      result = store.detail(
+        store.profileForKey(decodeURIComponent(route.split('/')[2])),
+        decodeURIComponent(route.split('/')[2]),
+      );
       if (!result) throw new Error('题目不存在');
     } else if (/^\/problems\/[^/]+\/review$/.test(route) && method === 'PUT') {
       const key = decodeURIComponent(route.split('/')[2]),
         data = z
           .object({ review: reviewSchema, action: z.enum(['save', 'complete', 'restart']).default('save') })
           .parse(body);
-      result = store.updateReview(profile(), key, data.review, data.action);
+      result = store.updateReview(store.profileForKey(key), key, data.review, data.action);
     } else if (/^\/problems\/[^/]+\/attempts$/.test(route) && method === 'POST')
-      result = store.attempt(profile(), decodeURIComponent(route.split('/')[2]), attemptSchema.parse(body));
+      result = store.attempt(
+        store.profileForKey(decodeURIComponent(route.split('/')[2])),
+        decodeURIComponent(route.split('/')[2]),
+        attemptSchema.parse(body),
+      );
     else if (route === '/contests' && method === 'GET') result = store.contests(store.active());
     else if (/^\/contests\/\d+\/analysis$/.test(route) && method === 'GET')
       result = analysis.get(profile(), z.coerce.number().int().positive().parse(route.split('/')[2]));
     else if (/^\/contests\/\d+\/analysis\/refresh$/.test(route) && method === 'POST') {
-      if (sync.running || hub.isBusy()) throw new Error('请等待当前同步完成');
+      if (sync.running || hub.isBusy() || atcoder.running) throw new Error('请等待当前同步完成');
       result = analysis.start(profile(), z.coerce.number().int().positive().parse(route.split('/')[2]));
     } else if (/^\/contests\/\d+\/review$/.test(route) && method === 'PUT') {
       const id = Number(route.split('/')[2]),
@@ -183,7 +276,12 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const review = contestReviewSchema.parse(body);
       store.put('contest_reviews', h, String(id), review);
       result = review;
-    } else if (route === '/statistics' && method === 'GET') result = store.statistics(store.active());
+    } else if (route === '/statistics' && method === 'GET')
+      result = store.combinedStatistics(
+        z
+          .object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') })
+          .parse(Object.fromEntries(url.searchParams)).source,
+      );
     else if (route === '/backup' && method === 'GET') {
       idle();
       result = store.backup();

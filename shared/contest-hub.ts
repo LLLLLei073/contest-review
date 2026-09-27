@@ -15,6 +15,7 @@ import {
   type XcpcReport,
 } from './xcpc.js';
 import type { ContestReview } from './domain.js';
+import { atcoderNamespace, type AtcoderService } from './atcoder.js';
 
 export class ContestHub {
   readonly xcpc: XcpcClient;
@@ -29,6 +30,7 @@ export class ContestHub {
     private analysis: AnalysisService,
     private persist: () => Promise<void> = async () => {},
     xcpc?: XcpcClient,
+    private atcoder?: AtcoderService,
   ) {
     this.xcpc = xcpc ?? new XcpcClient();
     for (const j of store.externalAll<BatchJob>('batch'))
@@ -202,11 +204,19 @@ export class ContestHub {
   stop() {
     this.stopping = true;
     this.sync.stop();
+    this.atcoder?.stop();
   }
   startBatch() {
-    if (this.running || this.sync.running || this.analysis.running || this.reportRunning)
+    if (
+      this.running ||
+      this.sync.running ||
+      this.analysis.running ||
+      this.reportRunning ||
+      this.atcoder?.running
+    )
       throw new Error('已有同步或分析任务正在运行');
-    if (!this.store.active() && !this.active()) throw new Error('请先绑定 Codeforces 或 XCPC 选手');
+    if (!this.store.active() && !this.active() && !this.store.activeAtcoder())
+      throw new Error('请先绑定比赛平台账号');
     this.stopping = false;
     const job: BatchJob = {
       id: crypto.randomUUID(),
@@ -264,6 +274,18 @@ export class ContestHub {
           job.errors.push('XCPC 同步：' + (e as Error).message);
         }
       }
+      if (this.store.activeAtcoder() && this.atcoder) {
+        job.phase = '同步 AtCoder 提交';
+        await save();
+        check();
+        this.atcoder.start(this.store.activeAtcoder(), 'incremental');
+        await this.atcoder.running;
+        const latest = this.store.latestJob('ac~' + this.store.activeAtcoder().toLowerCase());
+        if (latest?.status !== 'completed') {
+          job.failed++;
+          job.errors.push('AtCoder 同步：' + (latest?.message ?? '未知错误'));
+        }
+      }
       const cfPending = handle
         ? this.store
             .contests(handle)
@@ -278,7 +300,15 @@ export class ContestHub {
             .externalAllPrefix<XcpcHistory>('xcpc:' + key, 'history:')
             .filter((h) => !this.store.externalGet('xcpc:' + key, 'report:' + h.contestId))
         : [];
-      job.total = cfPending.length + xcpcPending.length;
+      const atcoderPending =
+        this.atcoder
+          ?.contests()
+          .filter(
+            (c) =>
+              c.types.includes('ATCODER_WINDOW') &&
+              !this.store.externalGet(atcoderNamespace(this.store.activeAtcoder()), 'report:' + c.id),
+          ) ?? [];
+      job.total = cfPending.length + xcpcPending.length + atcoderPending.length;
       await save();
       for (const contest of cfPending) {
         check();
@@ -305,6 +335,20 @@ export class ContestHub {
         } catch (e) {
           job.failed++;
           job.errors.push(`${contest.title}：${(e as Error).message}`);
+        }
+        job.processed++;
+        await save();
+      }
+      for (const contest of atcoderPending) {
+        check();
+        job.phase = `分析 AtCoder ${contest.name}`;
+        await save();
+        try {
+          this.atcoder!.report(String(contest.id));
+          job.succeeded++;
+        } catch (e) {
+          job.failed++;
+          job.errors.push(`${contest.name}：${(e as Error).message}`);
         }
         job.processed++;
         await save();

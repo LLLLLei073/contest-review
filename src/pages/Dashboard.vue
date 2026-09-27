@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowRight, CalendarDays, ExternalLink, RefreshCw } from 'lucide-vue-next';
 import { api, settings, job, fullDate, notify } from '../api';
 import type { TrainingDay, TrainingTask } from '../../shared/training';
@@ -17,18 +17,20 @@ const result = ref<'independent' | 'hint' | 'failed'>('independent');
 const date = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
 const reviewDone = computed(() => day.value?.review.filter((task) => task.completed).length ?? 0);
 const newDone = computed(() => day.value?.newProblems.filter((task) => task.completed).length ?? 0);
+let atcoderTimer: ReturnType<typeof setInterval> | undefined;
+let previousAtcoderStatus = '';
 
 async function load() {
-  if (!settings.value.activeHandle) {
+  if (!settings.value.activeHandle && !settings.value.activeAtcoder) {
     day.value = null;
     return;
   }
-  const handle = settings.value.activeHandle;
+  const handle = `${settings.value.activeHandle}:${settings.value.activeAtcoder}`;
   loading.value = true;
   error.value = '';
   try {
     const next = await api<TrainingDay>('/training/day');
-    if (settings.value.activeHandle === handle) day.value = next;
+    if (`${settings.value.activeHandle}:${settings.value.activeAtcoder}` === handle) day.value = next;
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -36,8 +38,9 @@ async function load() {
   }
 }
 async function checkRecent(force = false) {
-  if (!settings.value.activeHandle || job.value?.status === 'running') return;
-  const handle = settings.value.activeHandle;
+  if ((!settings.value.activeHandle && !settings.value.activeAtcoder) || job.value?.status === 'running')
+    return;
+  const handle = `${settings.value.activeHandle}:${settings.value.activeAtcoder}`;
   checking.value = true;
   recentError.value = '';
   try {
@@ -46,7 +49,7 @@ async function checkRecent(force = false) {
       { force },
       'POST',
     );
-    if (settings.value.activeHandle !== handle) return;
+    if (`${settings.value.activeHandle}:${settings.value.activeAtcoder}` !== handle) return;
     recentError.value = outcome.error ?? '';
     await load();
   } catch (e) {
@@ -81,9 +84,18 @@ async function saveAttempt(key: string) {
 }
 onMounted(() => {
   void load().then(() => checkRecent());
+  atcoderTimer = setInterval(async () => {
+    if (!settings.value.activeAtcoder) return;
+    try {
+      const current = await api<{ status: string } | null>('/atcoder/sync');
+      if (current?.status === 'completed' && previousAtcoderStatus === 'running') await load();
+      previousAtcoderStatus = current?.status ?? '';
+    } catch {}
+  }, 2500);
 });
+onUnmounted(() => clearInterval(atcoderTimer));
 watch(
-  () => settings.value.activeHandle,
+  () => `${settings.value.activeHandle}:${settings.value.activeAtcoder}`,
   () => {
     void load().then(() => checkRecent());
   },
@@ -106,7 +118,7 @@ watch(
     <span class="date-chip"><CalendarDays :size="16" />{{ date }}</span>
   </div>
   <div v-if="error" class="alert error" role="alert">{{ error }}<button @click="load">重试</button></div>
-  <div v-if="!settings.activeHandle" class="welcome-card">
+  <div v-if="!settings.activeHandle && !settings.activeAtcoder" class="welcome-card">
     <div class="welcome-art">
       <span>{</span><span class="art-path">WA <ArrowRight :size="22" /> AC</span><span>}</span>
     </div>
@@ -176,7 +188,10 @@ watch(
             <div class="daily-task-content">
               <strong>{{ task.name }}</strong>
               <div class="daily-meta">
-                {{ task.key.replace(':', '') }} · {{ task.rating ?? '暂无难度' }} ·
+                {{
+                  task.source === 'atcoder' ? 'AtCoder · ' + task.key.slice(8) : task.key.replace(':', '')
+                }}
+                · {{ task.rating ?? '暂无难度' }} ·
                 {{ task.tags.slice(0, 2).join(' / ') || '暂无标签' }}
               </div>
             </div>
@@ -256,8 +271,8 @@ watch(
         </div>
         <div v-if="loading && !day" class="quiet-empty">正在读取公开题库…</div>
         <div v-else-if="!day?.catalogCount" class="quiet-empty">
-          尚无完整公开题库。<RouterLink to="/settings">请先同步 Codeforces</RouterLink
-          >；已有数据仍可离线复习。
+          {{ settings.activeHandle ? '尚无完整公开题库。' : '新知题仅从 Codeforces 选择。'
+          }}<RouterLink to="/settings">请先绑定并同步 Codeforces</RouterLink>；已有数据仍可离线复习。
         </div>
         <div v-else-if="!day.newProblems.length" class="quiet-empty">
           暂无符合条件的新题；今天不会用旧题凑数。
@@ -292,7 +307,7 @@ watch(
       </section>
     </div>
     <p class="daily-footnote">
-      当天题单固定，不会在完成后补题。新知和复习的重做成功均以当天 CF AC
+      当天题单固定，不会在完成后补题。新知以 CF AC、复习以对应平台当天 AC
       确认；是否独立做对由你评价。<RouterLink to="/statistics"
         >查看全部训练数据 <ArrowRight :size="13"
       /></RouterLink>

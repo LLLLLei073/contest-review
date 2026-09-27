@@ -6,9 +6,10 @@ import type { BatchJob } from '../../shared/xcpc';
 import { api, notify, job, settings, loadSettings } from '../api';
 import ContestReport from '../components/ContestReport.vue';
 import XcpcReport from '../components/XcpcReport.vue';
+import AtcoderReport from '../components/AtcoderReport.vue';
 import { onBeforeRouteLeave } from 'vue-router';
 type ContestView = {
-  source: 'cf' | 'xcpc';
+  source: 'cf' | 'xcpc' | 'atcoder';
   key: string;
   id: number | string;
   name: string;
@@ -44,6 +45,7 @@ const filtered = computed(() =>
       (c.name + ' ' + c.id).toLowerCase().includes(query.value.toLowerCase()) &&
       (filter.value === 'all' ||
         (filter.value === 'xcpc' && c.source === 'xcpc') ||
+        (filter.value === 'atcoder' && c.source === 'atcoder') ||
         (filter.value === 'cf' && c.source === 'cf') ||
         (filter.value === 'practice'
           ? c.source === 'cf' &&
@@ -59,6 +61,7 @@ const typeLabels: Record<string, string> = {
   MANAGER: '管理者',
   XCPC_OFFICIAL: 'XCPC 正式',
   XCPC_STARRED: 'XCPC 打星',
+  ATCODER_WINDOW: '赛时提交记录',
 };
 const tierLabels: Record<string, string> = {
   final: '总决赛',
@@ -86,7 +89,9 @@ async function save() {
     const path =
       c.source === 'cf'
         ? `/contests/${c.id}/review`
-        : `/xcpc/contests/${encodeURIComponent(String(c.id))}/review`;
+        : c.source === 'atcoder'
+          ? `/atcoder/contests/${encodeURIComponent(String(c.id))}/review`
+          : `/xcpc/contests/${encodeURIComponent(String(c.id))}/review`;
     const result = await api<ContestReview>(path, draft.value, 'PUT');
     selected.value!.review = result;
     notify('比赛复盘已保存');
@@ -165,7 +170,9 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
       <button
         class="primary"
         :disabled="
-          batchBusy || batch?.status === 'running' || (!settings.activeHandle && !settings.xcpcPlayer)
+          batchBusy ||
+          batch?.status === 'running' ||
+          (!settings.activeHandle && !settings.xcpcPlayer && !settings.activeAtcoder)
         "
         @click="oneClick"
       >
@@ -206,6 +213,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
           <option value="all">全部关联比赛</option>
           <option value="cf">Codeforces</option>
           <option value="xcpc">XCPC Rating</option>
+          <option value="atcoder">AtCoder</option>
           <option value="CONTESTANT">正式参赛</option>
           <option value="VIRTUAL">虚拟参赛</option>
           <option value="practice">仅练习 / 无参赛记录</option>
@@ -224,7 +232,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         @click="choose(c)"
       >
         <div class="contest-meta">
-          <span>{{ c.source === 'cf' ? 'CF #' + c.id : 'XCPC' }}</span
+          <span>{{ c.source === 'cf' ? 'CF #' + c.id : c.source === 'atcoder' ? 'AtCoder' : 'XCPC' }}</span
           ><span>{{
             c.startTimeSeconds
               ? new Date(c.startTimeSeconds * 1000).toLocaleDateString('zh-CN')
@@ -239,7 +247,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         </div>
         <div class="contest-bottom">
           <span
-            >{{ c.source === 'cf' ? '赛时 AC' : '队伍解题' }} {{ c.inContestSolved ?? '—' }} ·
+            >{{ c.source === 'xcpc' ? '队伍解题' : '赛时 AC' }} {{ c.inContestSolved ?? '—' }} ·
             {{
               c.source === 'cf' && c.performanceRating !== null && c.performanceRating !== undefined
                 ? `预估 CF 表现分 ${c.performanceBound === 'upper' ? '≥' : c.performanceBound === 'lower' ? '≤' : ''}${c.performanceRating} · 综合复盘分 ${c.analysisScore === null ? '—' : `${c.analysisScore}/100`}`
@@ -257,7 +265,14 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         <div class="section-head">
           <div>
             <span class="eyebrow"
-              >{{ selected.source === 'cf' ? 'CODEFORCES' : 'XCPC RATING' }} / {{ selected.id }}</span
+              >{{
+                selected.source === 'cf'
+                  ? 'CODEFORCES'
+                  : selected.source === 'atcoder'
+                    ? 'ATCODER'
+                    : 'XCPC RATING'
+              }}
+              / {{ selected.id }}</span
             >
             <h2>{{ selected.name }}</h2>
           </div>
@@ -289,6 +304,11 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
             :contest-id="Number(selected.id)"
             @updated="load"
+          />
+          <AtcoderReport
+            v-else-if="selected.source === 'atcoder'"
+            :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
+            :contest-id="String(selected.id)"
           />
           <XcpcReport
             v-else

@@ -10,16 +10,31 @@ import { AnalysisService } from '../shared/analysis-service.js';
 import { ContestHub } from '../shared/contest-hub.js';
 import { TrainingService } from '../shared/training-service.js';
 import type { XcpcClient } from '../shared/xcpc.js';
+import {
+  AtcoderService,
+  AtcoderClient,
+  atcoderHandleSchema,
+  atcoderProfile,
+  atcoderNamespace,
+  type AtcoderClientLike,
+} from '../shared/atcoder.js';
 
 export async function buildApp(
   store: Store,
   cf: CFClient = new CodeforcesClient(),
-  options: { dev?: boolean; logger?: boolean; pageSize?: number; xcpc?: XcpcClient } = {},
+  options: {
+    dev?: boolean;
+    logger?: boolean;
+    pageSize?: number;
+    xcpc?: XcpcClient;
+    atcoder?: AtcoderClientLike;
+  } = {},
 ) {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 100 * 1024 * 1024 });
   const sync = new SyncService(store, cf, options.pageSize);
   const analysis = new AnalysisService(store, cf);
-  const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc);
+  const atcoder = new AtcoderService(store, options.atcoder ?? new AtcoderClient());
+  const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc, atcoder);
   const training = new TrainingService(store, cf);
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host || '';
@@ -53,12 +68,15 @@ export async function buildApp(
     return h;
   };
   const idle = () => {
-    if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步或比赛分析完成');
+    if (sync.running || analysis.running || hub.isBusy() || atcoder.running)
+      throw new Error('请等待当前同步或比赛分析完成');
   };
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/settings', async () => ({
     activeHandle: store.active(),
     handles: store.handles(),
+    activeAtcoder: store.activeAtcoder(),
+    atcoderHandles: store.atcoderHandles(),
     xcpcPlayer: hub.binding(),
     xcpcMode: hub.mode(),
   }));
@@ -72,7 +90,56 @@ export async function buildApp(
     hub.setMode(z.object({ mode: z.enum(['official', 'all']) }).parse(req.body).mode);
     return { mode: hub.mode() };
   });
-  app.get('/api/review/contests', async () => hub.rows());
+  app.get('/api/review/contests', async () =>
+    [...hub.rows(), ...atcoder.contests()].sort(
+      (a, b) => (b.startTimeSeconds ?? 0) - (a.startTimeSeconds ?? 0),
+    ),
+  );
+  app.get('/api/atcoder/binding', async () => ({
+    activeHandle: store.activeAtcoder(),
+    handles: store.atcoderHandles(),
+    verified: !!(
+      store.activeAtcoder() && store.all('submissions', atcoderProfile(store.activeAtcoder())).length
+    ),
+    job: store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null,
+  }));
+  app.post('/api/atcoder/binding', async (req) => {
+    idle();
+    const handle = atcoderHandleSchema.parse(z.object({ handle: z.string() }).parse(req.body).handle);
+    store.activateAtcoder(handle);
+    return {
+      activeHandle: store.activeAtcoder(),
+      handles: store.atcoderHandles(),
+      verified: store.all('submissions', atcoderProfile(handle)).length > 0,
+    };
+  });
+  app.get('/api/atcoder/sync', async () =>
+    store.activeAtcoder() ? store.latestJob(atcoderProfile(store.activeAtcoder())) : null,
+  );
+  app.post('/api/atcoder/sync', async (req) => {
+    if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步完成');
+    const { mode, resume } = z
+      .object({
+        mode: z.enum(['full', 'incremental']).default('incremental'),
+        resume: z.boolean().default(false),
+      })
+      .parse(req.body);
+    if (!store.activeAtcoder()) throw new Error('请先绑定 AtCoder');
+    return atcoder.start(store.activeAtcoder(), mode, resume);
+  });
+  app.get<{ Params: { id: string } }>('/api/atcoder/contests/:id/analysis', async (req) =>
+    atcoder.report(req.params.id),
+  );
+  app.post<{ Params: { id: string } }>('/api/atcoder/contests/:id/analysis/refresh', async (req) => {
+    if (sync.running || analysis.running || hub.isBusy()) throw new Error('请等待当前同步或分析完成');
+    return atcoder.refresh(req.params.id);
+  });
+  app.put<{ Params: { id: string } }>('/api/atcoder/contests/:id/review', async (req) => {
+    const review = contestReviewSchema.parse(req.body);
+    if (!store.activeAtcoder()) throw new Error('请先绑定 AtCoder');
+    store.externalPut(atcoderNamespace(store.activeAtcoder()), 'review:' + req.params.id, review);
+    return review;
+  });
   app.get('/api/review/batch', async () => hub.latestJob());
   app.post('/api/review/batch', async () => hub.startBatch());
   app.post('/api/review/batch/stop', async () => {
@@ -111,15 +178,47 @@ export async function buildApp(
     return { activeHandle: store.active(), handles: store.handles() };
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
-  app.get('/api/training/day', async () => store.trainingDay(profile()));
+  app.get('/api/training/day', async () => store.combinedTrainingDay());
   app.post('/api/training/recent', async (req) => {
-    const h = profile();
-    if (sync.running) return { checkedAt: store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null, error: '完整同步正在进行' };
+    const h = store.active();
     const { force } = z.object({ force: z.boolean().default(false) }).parse(req.body ?? {});
-    return training.recent(h, force);
+    if (!h) {
+      if (store.activeAtcoder()) {
+        const p = atcoderProfile(store.activeAtcoder()),
+          last = store.latestJob(p);
+        if (
+          !atcoder.running &&
+          !sync.running &&
+          !analysis.running &&
+          !hub.isBusy() &&
+          (force || !last?.finishedAt || Date.now() - Date.parse(last.finishedAt) > 300000)
+        )
+          atcoder.start(store.activeAtcoder(), 'incremental');
+        return {
+          checkedAt:
+            store.get<{ recentCheckedAt: string }>('training_meta', p, 'recent')?.recentCheckedAt ?? null,
+          error: null,
+        };
+      }
+      return { checkedAt: null, error: '尚未绑定 Codeforces' };
+    }
+    if (sync.running)
+      return {
+        checkedAt:
+          store.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ??
+          null,
+        error: '完整同步正在进行',
+      };
+    const result = await training.recent(h, force);
+    if (store.activeAtcoder() && !atcoder.running && !analysis.running && !hub.isBusy()) {
+      const last = store.latestJob(atcoderProfile(store.activeAtcoder()));
+      if (force || !last?.finishedAt || Date.now() - Date.parse(last.finishedAt) > 300000)
+        atcoder.start(store.activeAtcoder(), 'incremental');
+    }
+    return result;
   });
   app.post('/api/sync', async (req) => {
-    if (analysis.running || hub.isBusy()) throw new Error('请等待比赛分析完成');
+    if (analysis.running || hub.isBusy() || atcoder.running) throw new Error('请等待比赛分析完成');
     const { mode, resume } = z
       .object({
         mode: z.enum(['full', 'incremental']).default('incremental'),
@@ -132,6 +231,7 @@ export async function buildApp(
     const q = z
       .object({
         q: z.string().optional(),
+        source: z.enum(['all', 'cf', 'atcoder']).default('all'),
         tag: z.string().optional(),
         reason: z.string().optional(),
         status: z.enum(['pending', 'reviewing', 'mastered']).optional(),
@@ -145,12 +245,13 @@ export async function buildApp(
         size: z.coerce.number().int().min(1).max(100).default(30),
       })
       .parse(req.query);
-    let rows = store.problems(store.active());
+    let rows = store.combinedProblems();
     rows = rows.filter(
       (p) =>
         (q.ignored === 'yes' ? p.review.ignored : !p.review.ignored) &&
+        (q.source === 'all' || (p.source ?? 'cf') === q.source) &&
         (!q.q || `${p.name} ${p.contestId ?? ''}${p.index}`.toLowerCase().includes(q.q.toLowerCase())) &&
-        (!q.tag || p.tags.includes(q.tag)) &&
+        (!q.tag || (p.source === 'atcoder' ? p.review.categories : p.tags).includes(q.tag)) &&
         (!q.reason || p.review.reasons.includes(q.reason)) &&
         (!q.status || p.review.status === q.status) &&
         (!q.solved || p.solved === (q.solved === 'yes')) &&
@@ -171,9 +272,9 @@ export async function buildApp(
     return { items: rows.slice((q.page - 1) * q.size, q.page * q.size), total: rows.length, page: q.page };
   });
   app.get('/api/tags', async () => {
-    const rows = store.problems(store.active());
+    const rows = store.combinedProblems();
     return {
-      tags: [...new Set(rows.flatMap((p) => p.tags))].sort(),
+      tags: [...new Set(rows.flatMap((p) => (p.source === 'atcoder' ? p.review.categories : p.tags)))].sort(),
       reasons: [...new Set(rows.flatMap((p) => p.review.reasons))].sort(),
     };
   });
@@ -194,24 +295,24 @@ export async function buildApp(
     return { key: store.manualProblem(profile(), input) };
   });
   app.get<{ Params: { key: string } }>('/api/problems/:key', async (req, reply) => {
-    const data = store.detail(profile(), req.params.key);
+    const data = store.detail(store.profileForKey(req.params.key), req.params.key);
     return data || reply.code(404).send({ error: '题目不存在' });
   });
   app.put<{ Params: { key: string } }>('/api/problems/:key/review', async (req) => {
     const body = z
       .object({ review: reviewSchema, action: z.enum(['save', 'complete', 'restart']).default('save') })
       .parse(req.body);
-    return store.updateReview(profile(), req.params.key, body.review, body.action);
+    return store.updateReview(store.profileForKey(req.params.key), req.params.key, body.review, body.action);
   });
   app.post<{ Params: { key: string } }>('/api/problems/:key/attempts', async (req) =>
-    store.attempt(profile(), req.params.key, attemptSchema.parse(req.body)),
+    store.attempt(store.profileForKey(req.params.key), req.params.key, attemptSchema.parse(req.body)),
   );
   app.get('/api/contests', async () => store.contests(store.active()));
   app.get<{ Params: { id: string } }>('/api/contests/:id/analysis', async (req) =>
     analysis.get(profile(), z.coerce.number().int().positive().parse(req.params.id)),
   );
   app.post<{ Params: { id: string } }>('/api/contests/:id/analysis/refresh', async (req) => {
-    if (sync.running || hub.isBusy()) throw new Error('请等待当前同步完成');
+    if (sync.running || hub.isBusy() || atcoder.running) throw new Error('请等待当前同步完成');
     return analysis.start(profile(), z.coerce.number().int().positive().parse(req.params.id));
   });
   app.put<{ Params: { id: string } }>('/api/contests/:id/review', async (req) => {
@@ -224,7 +325,11 @@ export async function buildApp(
     store.put('contest_reviews', h, String(id), review);
     return review;
   });
-  app.get('/api/statistics', async () => store.statistics(store.active()));
+  app.get('/api/statistics', async (req) =>
+    store.combinedStatistics(
+      z.object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') }).parse(req.query).source,
+    ),
+  );
   app.get('/api/backup', async (req, reply) => {
     idle();
     return reply
@@ -248,5 +353,5 @@ export async function buildApp(
         : reply.sendFile('index.html'),
     );
   }
-  return { app, sync, analysis, hub };
+  return { app, sync, analysis, hub, atcoder };
 }

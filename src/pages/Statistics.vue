@@ -6,6 +6,7 @@ import type { Statistics } from '../../shared/domain';
 import { useSpringValues } from '../motion';
 const stats = ref<Statistics | null>(null),
   error = ref('');
+const source = ref<'all' | 'cf' | 'atcoder'>('all');
 const radarSpring = useSpringValues(Array(8).fill(0));
 let alive = true;
 const maximum = computed(() =>
@@ -19,16 +20,17 @@ const radarRing = (radius: number) => Array.from({ length: 8 }, (_, i) => radarP
 const radarShape = computed(
   () => stats.value?.mastery.map((_, i) => radarPoint(i, radarSpring.values.value[i] * 1.1)).join(' ') ?? '',
 );
-onMounted(async () => {
+async function load() {
   try {
-    const next = await api<Statistics>('/statistics');
+    const next = await api<Statistics>('/statistics?source=' + source.value);
     if (!alive) return;
     stats.value = next;
     radarSpring.setTarget(next.mastery.map((area) => area.score));
   } catch (e) {
     if (alive) error.value = (e as Error).message;
   }
-});
+}
+onMounted(load);
 onBeforeUnmount(() => {
   alive = false;
 });
@@ -43,6 +45,16 @@ onBeforeUnmount(() => {
     <span class="date-chip"><ChartNoAxesCombined :size="17" />按唯一题目统计</span>
   </div>
   <div v-if="error" class="alert error">{{ error }}</div>
+  <div class="contest-filter">
+    <label
+      >统计来源
+      <select v-model="source" @change="load">
+        <option value="all">两站合计</option>
+        <option value="cf">Codeforces</option>
+        <option value="atcoder">AtCoder</option>
+      </select></label
+    >
+  </div>
   <template v-if="stats"
     ><div class="metrics">
       <div class="metric">
@@ -77,7 +89,7 @@ onBeforeUnmount(() => {
         <div>
           <span class="eyebrow">LEARNING PROFILE</span>
           <h2>算法领域掌握度</h2>
-          <p>结合 CF 提交与独立重做；样本不足时向中性值收敛。</p>
+          <p>结合提交与独立重做；AtCoder 仅纳入手动标注领域的题，样本不足时向中性值收敛。</p>
         </div>
       </div>
       <div class="mastery-content">

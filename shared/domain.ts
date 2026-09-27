@@ -20,6 +20,11 @@ export const reviewSchema = z.object({
   code: z.string().max(300000).default(''),
   language: z.string().max(40).default('cpp'),
   reasons: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
+  categories: z
+    .array(
+      z.enum(['实现与模拟', '贪心与构造', '数学', '数据结构', '图与树', '动态规划', '字符串', '搜索与技巧']),
+    )
+    .default([]),
   status: z.enum(['pending', 'reviewing', 'mastered']).default('pending'),
   ignored: z.boolean().default(false),
   stage: z.number().int().min(0).max(5).default(0),
@@ -27,7 +32,15 @@ export const reviewSchema = z.object({
   firstRedoAt: z.string().datetime().nullable().default(null),
   firstReflectionAt: z.string().datetime().nullable().default(null),
   firstReflectionRequired: z.boolean().default(false),
-  awaitingEvaluation: z.object({ date: z.string(), submissionId: z.number().int().positive(), redoAt: z.string().datetime(), previousNextReview: z.string().datetime().nullable().default(null) }).nullable().default(null),
+  awaitingEvaluation: z
+    .object({
+      date: z.string(),
+      submissionId: z.number().int().positive(),
+      redoAt: z.string().datetime(),
+      previousNextReview: z.string().datetime().nullable().default(null),
+    })
+    .nullable()
+    .default(null),
   lastEvaluatedDay: z.string().nullable().default(null),
 });
 export type Review = z.infer<typeof reviewSchema>;
@@ -47,6 +60,7 @@ export const problemSchema = z.object({
   tags: z.array(z.string().max(100)).max(100),
   url: z.url().refine((v) => /^https?:\/\//.test(v)),
   manual: z.boolean().default(false),
+  source: z.enum(['cf', 'atcoder']).optional(),
 });
 export type Problem = z.infer<typeof problemSchema>;
 export type ProblemRow = Problem & {
@@ -57,6 +71,8 @@ export type ProblemRow = Problem & {
 };
 export interface CFSubmission {
   id: number;
+  source?: 'cf' | 'atcoder';
+  contestKey?: string;
   contestId?: number;
   creationTimeSeconds: number;
   relativeTimeSeconds?: number;
@@ -129,6 +145,8 @@ export interface SyncJob {
 export interface Settings {
   activeHandle: string;
   handles: string[];
+  activeAtcoder?: string;
+  atcoderHandles?: string[];
   xcpcPlayer?: { key: string; name: string; org: string; contests: number } | null;
   xcpcMode?: 'official' | 'all';
 }
@@ -143,7 +161,13 @@ export interface Statistics {
   tags: [string, number][];
   trend: { date: string; independent: number; hint: number; failed: number }[];
   mastery: MasteryArea[];
-  dailyTraining: { date: string; reviewAssigned: number; reviewCompleted: number; newAssigned: number; newCompleted: number }[];
+  dailyTraining: {
+    date: string;
+    reviewAssigned: number;
+    reviewCompleted: number;
+    newAssigned: number;
+    newCompleted: number;
+  }[];
 }
 export const failures = new Set([
   'WRONG_ANSWER',
@@ -155,6 +179,7 @@ export const failures = new Set([
   'CHALLENGED',
   'IDLENESS_LIMIT_EXCEEDED',
   'SECURITY_VIOLATED',
+  'OUTPUT_LIMIT_EXCEEDED',
 ]);
 export const verdictLabel: Record<string, string> = {
   OK: 'AC',
@@ -165,6 +190,7 @@ export const verdictLabel: Record<string, string> = {
   COMPILATION_ERROR: 'CE',
   PARTIAL: '部分得分',
   CHALLENGED: '被 Hack',
+  OUTPUT_LIMIT_EXCEEDED: 'OLE',
   TESTING: '评测中',
   SUBMITTED: '待评测',
 };
@@ -172,8 +198,9 @@ export function emptyReview(): Review {
   return reviewSchema.parse({});
 }
 export function hasReflection(review: Review): boolean {
-  return [review.wrongIdea, review.rootCause, review.solution, review.complexity, review.counterexample]
-    .some((value) => value.trim().length > 0);
+  return [review.wrongIdea, review.rootCause, review.solution, review.complexity, review.counterexample].some(
+    (value) => value.trim().length > 0,
+  );
 }
 export function nextReviewState(review: Review, result: AttemptInput['result'], now = new Date()): Review {
   const next = { ...review, status: 'reviewing' as Review['status'], ignored: false };
