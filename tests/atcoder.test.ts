@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Store } from '../server/store.js';
 import {
   AtcoderService,
+  AtcoderClient,
   atcoderProfile,
   atcoderNamespace,
   type AtcoderClientLike,
@@ -276,6 +277,32 @@ test('AtCoder official history is isolated by account and stale contest catalog 
   store.activateAtcoder('Alice');
   assert.equal(service.contests()[0].officialPlace, 10);
   store.close();
+});
+
+test('Pages AtCoder client prefers the same-origin catalog and falls back if its snapshot is missing', async () => {
+  const calls: string[] = [];
+  const client = new AtcoderClient(
+    async (url) => {
+      calls.push(String(url));
+      if (String(url).includes('/missing/')) return new Response('not found', { status: 404 });
+      return Response.json([{ id: 'abc001' }]);
+    },
+    0,
+    '/snapshot/',
+  );
+  assert.deepEqual(await client.resources('contests'), [{ id: 'abc001' }]);
+  assert.deepEqual(calls, ['/snapshot/contests.json']);
+  const fallback = new AtcoderClient(
+    async (url) => {
+      calls.push(String(url));
+      if (String(url).startsWith('/missing/')) return new Response('not found', { status: 404 });
+      return Response.json([{ id: 'abc001' }]);
+    },
+    0,
+    '/missing/',
+  );
+  assert.deepEqual(await fallback.resources('contests'), [{ id: 'abc001' }]);
+  assert.equal(calls.at(-1), 'https://kenkoooo.com/atcoder/resources/contests.json');
 });
 
 test('AtCoder interrupted paging preserves records and resumes; empty account remains unverified', async () => {

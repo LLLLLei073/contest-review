@@ -184,16 +184,17 @@ export class AtcoderClient implements AtcoderClientLike {
   constructor(
     private fetcher: typeof fetch = fetch,
     private interval = 1200,
+    private resourceMirror?: string,
   ) {}
   cancel() {
     this.controller.abort();
     this.controller = new AbortController();
   }
-  private request<T>(url: string): Promise<T> {
+  private request<T>(url: string, retries = 3): Promise<T> {
     const signal = this.controller.signal;
     const next = this.tail.then(async () => {
       let error: unknown;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < retries; i++) {
         signal.throwIfAborted();
         const wait = Math.max(0, this.last + this.interval - Date.now());
         if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
@@ -207,7 +208,7 @@ export class AtcoderClient implements AtcoderClientLike {
           return (await response.json()) as T;
         } catch (e) {
           error = e;
-          if (i < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** i));
+          if (i < retries - 1) await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** i));
         }
       }
       throw new Error('AtCoder Problems 暂不可用：' + String(error));
@@ -221,7 +222,10 @@ export class AtcoderClient implements AtcoderClientLike {
     );
   }
   resources<T>(name: 'problems' | 'contests' | 'problem-models') {
-    return this.request<T>(`https://kenkoooo.com/atcoder/resources/${name}.json`);
+    const upstream = () => this.request<T>(`https://kenkoooo.com/atcoder/resources/${name}.json`);
+    return this.resourceMirror
+      ? this.request<T>(`${this.resourceMirror}${name}.json`, 1).catch(upstream)
+      : upstream();
   }
   history(handle: string) {
     return this.request<AtcoderHistoryEntry[]>(

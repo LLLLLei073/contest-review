@@ -1,10 +1,14 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Route } from '@playwright/test';
+
+test.use({ serviceWorkers: 'block' });
 
 test('Pages AtCoder-only flow keeps review, categories, report and backup in browser', async ({ page }) => {
   const now = Math.floor(Date.now() / 1000);
   let includeAc = false;
-  await page.route('https://kenkoooo.com/atcoder/**', async (route) => {
+  let mirrorResources = 0;
+  const handleRoute = async (route: Route) => {
     const url = new URL(route.request().url());
+    if (url.pathname.includes('/atcoder-resources/')) mirrorResources++;
     let body: unknown;
     if (url.pathname.endsWith('/history/json'))
       body = [
@@ -74,13 +78,16 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
       headers: { 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify(body),
     });
-  });
+  };
+  await page.route('https://kenkoooo.com/atcoder/**', handleRoute);
+  await page.route('**/atcoder-resources/*.json', handleRoute);
   await page.goto('./#/settings');
   await page.getByLabel('AtCoder 用户名').fill('alice');
   await page.getByRole('button', { name: '绑定 AtCoder' }).click();
   await page.getByRole('button', { name: '首次同步', exact: true }).click();
   await expect(page.getByText('已从官方比赛历史验证该用户名')).toBeVisible({ timeout: 20000 });
   await expect(page.locator('.settings-card').first()).toContainText('同步完成', { timeout: 20000 });
+  expect(mirrorResources).toBe(3);
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
   await expect(page.getByText('Review A', { exact: true })).toBeVisible();
   await expect(page.getByText('新知题仅从 Codeforces 选择。')).toBeVisible();

@@ -101,7 +101,11 @@ export class BrowserRuntime {
     this.analysis = new AnalysisService(this.store, this.cf, () => this.flush());
     this.atcoder = new AtcoderService(
       this.store,
-      new AtcoderClient((url, options) => fetch(url, { ...options, credentials: 'omit' })),
+      new AtcoderClient(
+        (url, options) => fetch(url, { ...options, credentials: 'omit' }),
+        1200,
+        import.meta.env.MODE === 'pages' ? `${import.meta.env.BASE_URL}atcoder-resources/` : undefined,
+      ),
       () => this.flush(),
     );
     this.hub = new ContestHub(

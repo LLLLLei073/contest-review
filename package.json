@@ -15,7 +15,7 @@
     "check": "vue-tsc --noEmit",
     "check:cf": "tsx scripts/check-codeforces.ts",
     "format": "prettier --write src server shared scripts tests *.ts *.json index.html README.md",
-    "build:pages": "vue-tsc --noEmit && vite build --mode pages && node scripts/build-offline.mjs",
+    "build:pages": "vue-tsc --noEmit && vite build --mode pages && node scripts/build-atcoder-resources.mjs && node scripts/build-offline.mjs",
     "preview:pages": "vite preview --mode pages --host 127.0.0.1 --port 4173",
     "test:pages": "playwright test --config playwright.pages.config.ts"
   },

@@ -58,7 +58,7 @@ npm start
 
 AtCoder 可在「设置与数据」独立绑定用户名，再首次同步公开提交及官方比赛历史。既无公开提交、也无官方比赛记录的用户名会显示「尚无法验证」。两站错题共用今日最多五题的复习栏；新知五题仍只从未提交过的 Codeforces 题目中选。AtCoder 题目可在复盘详情手动勾选八个算法领域；未标注的题计入提交与复习总量，但不计入雷达图。训练统计可按两站合计或单站筛选。AtCoder 难度来自 AtCoder Problems 的估计值，不与 CF Rating 换算。
 
-AtCoder 比赛合并官方参赛历史与提交记录。官方记录确认的场次展示排名、Performance、Rating 变化；即使没有赛时提交也会列出。其余场次按比赛时间窗口分析赛时 AC、失败、分题时间线及建议；仅有提交不能证明正式或虚拟参赛。官方成绩与本站提交分析分开显示，不生成 AtCoder 综合分。比赛、题目、难度目录各自缓存；某项获取失败会保留旧数据并提示补齐，报告刷新可强制重新获取。来源为 [AtCoder Problems 非官方 API](https://github.com/kenkoooo/AtCoderProblems/blob/main/doc/api.md)及其[官方历史代理](https://github.com/kenkoooo/AtCoderProblems/blob/main/atcoder-problems-frontend/src/api/APIClient.ts)，可能延迟或改变；失败时已保存数据仍可离线查看。
+AtCoder 比赛合并官方参赛历史与提交记录。官方记录确认的场次展示排名、Performance、Rating 变化；即使没有赛时提交也会列出。其余场次按比赛时间窗口分析赛时 AC、失败、分题时间线及建议；仅有提交不能证明正式或虚拟参赛。官方成绩与本站提交分析分开显示，不生成 AtCoder 综合分。比赛、题目、难度目录各自缓存；某项获取失败会保留旧数据并提示补齐，报告刷新可强制重新获取。Pages 版优先读取随网站发布、每六小时更新的同源目录快照，以避开上游缓存偶发缺少跨域响应头的问题；快照不可用时仍尝试原接口。来源为 [AtCoder Problems 非官方 API](https://github.com/kenkoooo/AtCoderProblems/blob/main/doc/api.md)及其[官方历史代理](https://github.com/kenkoooo/AtCoderProblems/blob/main/atcoder-problems-frontend/src/api/APIClient.ts)，可能延迟或改变；失败时已保存数据仍可离线查看。
 
 在「比赛复盘」选择比赛，系统自动生成本站预估 CF 表现分、百分制综合复盘分、四项评分依据、分题提交时间线和行动建议。正式评级赛用赛前 Rating、预期名次和实际名次反推表现分；虚拟赛、非评级赛或名次对照不足时，可用题目难度生成明确标注的低置信度估算。排名、难度、提交稳定性、推进节奏仍分别占百分制复盘分的 35%、30%、20%、15%；数据不足时明确标注暂估或不评分。赛后 AC 不计入赛时成绩。原有人工内容保留在「补充笔记」。详见 [评分口径与验证说明](docs/contest-analysis.md)。
 
