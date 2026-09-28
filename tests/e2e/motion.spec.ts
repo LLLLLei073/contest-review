@@ -5,6 +5,55 @@ test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.project.name === 'pages') await mockCodeforces(page);
 });
 
+test('opening plays once per session, supports skip and reduced motion', async ({ page }, testInfo) => {
+  const url = testInfo.project.name === 'pages' ? './#/' : '/';
+  await page.goto(url);
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  const skip = page.getByRole('button', { name: '跳过动画' });
+  await expect(intro).toBeVisible();
+  await expect(page.locator('.app-shell')).toHaveAttribute('inert', '');
+  await expect(skip).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(skip).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(intro).toHaveCount(0);
+  await expect(page.locator('.brand')).toBeFocused();
+  await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('link', { name: '错题库' }).click();
+  await expect(intro).toHaveCount(0);
+  await page.reload();
+  await expect(intro).toHaveCount(0);
+
+  await page.evaluate(() => sessionStorage.removeItem('contest-review:intro-seen:v1'));
+  await page.reload();
+  await expect(intro).toBeVisible();
+  await skip.click();
+  await expect(intro).toHaveCount(0);
+
+  await page.evaluate(() => sessionStorage.removeItem('contest-review:intro-seen:v1'));
+  await page.reload();
+  await expect(intro).toBeVisible();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(intro).toHaveCount(0);
+
+  await page.evaluate(() => sessionStorage.removeItem('contest-review:intro-seen:v1'));
+  await page.reload();
+  await expect(intro).toHaveCount(0);
+  await expect(page.locator('.page-head h1')).toBeVisible();
+  expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+});
+
+test('opening completes automatically without mobile overflow', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  await expect(intro).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(intro).toHaveCount(0, { timeout: 3000 });
+  await expect(page.locator('.sidebar nav a.active')).toBeFocused();
+  await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
+});
+
 test('navigation spring, chart endpoint and reduced-motion fallback', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));

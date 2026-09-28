@@ -15,7 +15,35 @@ import {
 } from 'lucide-vue-next';
 import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
 import { useSpringValues } from './motion';
+import OpeningIntro from './OpeningIntro.vue';
 const route = useRoute();
+const introStorageKey = 'contest-review:intro-seen:v1';
+function shouldShowIntro() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  try {
+    if (sessionStorage.getItem(introStorageKey)) return false;
+    sessionStorage.setItem(introStorageKey, '1');
+  } catch {
+    // Storage may be unavailable; the opening still remains optional and skippable.
+  }
+  return true;
+}
+const introActive = ref(shouldShowIntro());
+let introFocusFrame = 0;
+let appUnmounted = false;
+async function finishIntro() {
+  if (!introActive.value) return;
+  introActive.value = false;
+  await nextTick();
+  if (appUnmounted) return;
+  introFocusFrame = requestAnimationFrame(() => {
+    const brand = document.querySelector<HTMLElement>('.brand');
+    const focusTarget = brand?.getClientRects().length
+      ? brand
+      : document.querySelector<HTMLElement>('.sidebar nav a.active');
+    focusTarget?.focus({ preventScroll: true });
+  });
+}
 const navElement = ref<HTMLElement | null>(null);
 const navVisible = ref(false);
 const navSpring = useSpringValues([0, 0, 0, 0]);
@@ -69,13 +97,15 @@ watch(
   },
 );
 onUnmounted(() => {
+  appUnmounted = true;
+  cancelAnimationFrame(introFocusFrame);
   clearInterval(poll);
   navObserver?.disconnect();
   window.removeEventListener('resize', onResize);
 });
 </script>
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :inert="introActive">
     <aside class="sidebar">
       <RouterLink to="/" class="brand"
         ><span class="brand-mark"><BookOpen :size="23" /></span
@@ -186,4 +216,5 @@ onUnmounted(() => {
         }}<button class="icon-button" aria-label="关闭通知" @click="toast = ''"><X :size="15" /></button></div
     ></Transition>
   </div>
+  <OpeningIntro v-if="introActive" @finish="finishIntro" />
 </template>
