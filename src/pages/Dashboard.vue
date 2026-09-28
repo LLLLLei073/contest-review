@@ -23,10 +23,13 @@ const reviewDone = computed(() => day.value?.review.filter((task) => task.comple
 const newDone = computed(() => day.value?.newProblems.filter((task) => task.completed).length ?? 0);
 let atcoderTimer: ReturnType<typeof setInterval> | undefined;
 let previousAtcoderStatus = '';
+let loadSerial = 0;
 
 async function load() {
+  const serial = ++loadSerial;
   if (!settings.value.activeHandle && !settings.value.activeAtcoder) {
     day.value = null;
+    loading.value = false;
     return;
   }
   const handle = `${settings.value.activeHandle}:${settings.value.activeAtcoder}`;
@@ -34,7 +37,10 @@ async function load() {
   error.value = '';
   try {
     const next = await api<TrainingDay>('/training/day');
-    if (`${settings.value.activeHandle}:${settings.value.activeAtcoder}` === handle) {
+    if (
+      serial === loadSerial &&
+      `${settings.value.activeHandle}:${settings.value.activeAtcoder}` === handle
+    ) {
       day.value = next;
       if (next.weeklyGoal && !goalEditing.value) {
         goalMode.value = next.weeklyGoal.mode;
@@ -42,9 +48,9 @@ async function load() {
       } else if (!next.weeklyGoal && !goalEditing.value) goalCategories.value = [];
     }
   } catch (e) {
-    error.value = (e as Error).message;
+    if (serial === loadSerial) error.value = (e as Error).message;
   } finally {
-    loading.value = false;
+    if (serial === loadSerial) loading.value = false;
   }
 }
 async function checkRecent(force = false) {
@@ -69,10 +75,12 @@ async function checkRecent(force = false) {
   }
 }
 function setGoalMode(mode: 'focus' | 'balanced') {
+  goalEditing.value = true;
   goalMode.value = mode;
   if (mode === 'focus') goalCategories.value = goalCategories.value.slice(0, 1);
 }
 function toggleGoalCategory(category: CategoryName) {
+  goalEditing.value = true;
   if (goalMode.value === 'focus') goalCategories.value = [category];
   else
     goalCategories.value = goalCategories.value.includes(category)
@@ -131,6 +139,8 @@ onUnmounted(() => clearInterval(atcoderTimer));
 watch(
   () => `${settings.value.activeHandle}:${settings.value.activeAtcoder}`,
   () => {
+    goalEditing.value = false;
+    goalCategories.value = [];
     void load().then(() => checkRecent());
   },
 );
