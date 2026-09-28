@@ -150,6 +150,7 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await expect(page.getByRole('link', { name: '2100D My unsolved problem', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '账号连接' }).click();
   await page.getByRole('button', { name: 'isolation_reference', exact: true }).click();
   await expect(page.locator('.profile-chip')).toContainText('isolation_reference');
   await page.getByRole('link', { name: '错题库', exact: true }).click();
