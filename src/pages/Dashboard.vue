@@ -174,71 +174,75 @@ watch(
     </div>
   </div>
   <template v-else>
-    <section v-if="settings.activeHandle" class="panel weekly-goal">
-      <div class="section-head">
-        <div>
-          <span class="eyebrow">WEEKLY FOCUS</span>
-          <h2>本周训练目标</h2>
-          <p v-if="day?.weeklyGoal">
-            {{ day.weeklyGoal.mode === 'focus' ? '专注' : '均衡' }} ·
-            {{ day.weeklyGoal.categories.join('、') }}。每天至少 2 道相关新题。
-          </p>
-          <p v-else>请选择本周方向，再生成今天的新知题单。复习题照常可做。</p>
+    <div class="daily-tools">
+      <section v-if="settings.activeHandle" class="panel weekly-goal">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">WEEKLY FOCUS</span>
+            <h2>本周训练目标</h2>
+            <p v-if="day?.weeklyGoal">
+              {{ day.weeklyGoal.mode === 'focus' ? '专注' : '均衡' }} ·
+              {{ day.weeklyGoal.categories.join('、') }}。每天至少 2 道相关新题。
+            </p>
+            <p v-else>请选择本周方向，再生成今天的新知题单。复习题照常可做。</p>
+          </div>
+          <button class="small-button" @click="goalEditing = !goalEditing">
+            {{ day?.weeklyGoal ? '调整目标' : '选择目标' }}
+          </button>
         </div>
-        <button class="small-button" @click="goalEditing = !goalEditing">
-          {{ day?.weeklyGoal ? '调整目标' : '选择目标' }}
-        </button>
+        <div v-if="goalEditing || !day?.weeklyGoal" class="weekly-goal-picker">
+          <div class="button-row">
+            <button :class="{ primary: goalMode === 'focus' }" @click="setGoalMode('focus')">
+              专注一个领域
+            </button>
+            <button :class="{ primary: goalMode === 'balanced' }" @click="setGoalMode('balanced')">
+              均衡多个领域
+            </button>
+          </div>
+          <div class="reason-picker">
+            <label
+              v-for="category in categoryNames"
+              :key="category"
+              :class="{ picked: goalCategories.includes(category) }"
+            >
+              <input
+                type="checkbox"
+                :checked="goalCategories.includes(category)"
+                @change="toggleGoalCategory(category)"
+              />{{ category }}</label
+            >
+          </div>
+          <button
+            class="primary"
+            :disabled="
+              busy || (goalMode === 'focus' ? goalCategories.length !== 1 : goalCategories.length < 2)
+            "
+            @click="saveGoal"
+          >
+            保存本周目标
+          </button>
+          <p v-if="day?.weeklyGoal" class="small subtle">今天已生成的题单保持不变；调整从次日生效。</p>
+        </div>
+      </section>
+      <div v-if="job?.status === 'running'" class="alert">
+        <RefreshCw :size="16" class="spin" />{{ job.message }} · 已读取 {{ job.processed }} 条
       </div>
-      <div v-if="goalEditing || !day?.weeklyGoal" class="weekly-goal-picker">
-        <div class="button-row">
-          <button :class="{ primary: goalMode === 'focus' }" @click="setGoalMode('focus')">
-            专注一个领域
-          </button>
-          <button :class="{ primary: goalMode === 'balanced' }" @click="setGoalMode('balanced')">
-            均衡多个领域
-          </button>
-        </div>
-        <div class="reason-picker">
-          <label
-            v-for="category in categoryNames"
-            :key="category"
-            :class="{ picked: goalCategories.includes(category) }"
-          >
-            <input
-              type="checkbox"
-              :checked="goalCategories.includes(category)"
-              @change="toggleGoalCategory(category)"
-            />{{ category }}</label
-          >
-        </div>
+      <div class="training-sync">
+        <span>{{
+          checking
+            ? '正在检查近期提交…'
+            : day?.recentCheckedAt
+              ? `提交检查：${fullDate(day.recentCheckedAt)}`
+              : '近期提交尚未检查'
+        }}</span>
         <button
-          class="primary"
-          :disabled="busy || (goalMode === 'focus' ? goalCategories.length !== 1 : goalCategories.length < 2)"
-          @click="saveGoal"
+          class="small-button"
+          :disabled="checking || job?.status === 'running'"
+          @click="checkRecent(true)"
         >
-          保存本周目标
+          <RefreshCw :size="14" :class="{ spin: checking }" />检查提交
         </button>
-        <p v-if="day?.weeklyGoal" class="small subtle">今天已生成的题单保持不变；调整从次日生效。</p>
       </div>
-    </section>
-    <div v-if="job?.status === 'running'" class="alert">
-      <RefreshCw :size="16" class="spin" />{{ job.message }} · 已读取 {{ job.processed }} 条
-    </div>
-    <div class="training-sync">
-      <span>{{
-        checking
-          ? '正在检查近期提交…'
-          : day?.recentCheckedAt
-            ? `提交检查：${fullDate(day.recentCheckedAt)}`
-            : '近期提交尚未检查'
-      }}</span>
-      <button
-        class="small-button"
-        :disabled="checking || job?.status === 'running'"
-        @click="checkRecent(true)"
-      >
-        <RefreshCw :size="14" :class="{ spin: checking }" />检查提交
-      </button>
     </div>
     <div v-if="recentError" class="alert">近期提交检查失败，继续使用已保存数据：{{ recentError }}</div>
     <div class="daily-columns">
@@ -376,9 +380,10 @@ watch(
                 {{ task.key.replace(':', '') }} · {{ task.rating ?? '暂无难度' }} ·
                 {{ task.tags.slice(0, 2).join(' / ') || '暂无标签' }}
               </div>
-              <p v-if="task.recommendationReason" class="small subtle">
-                推荐原因：{{ task.recommendationReason }}
-              </p>
+              <details v-if="task.recommendationReason" class="recommendation-detail small subtle">
+                <summary>推荐原因</summary>
+                <p>{{ task.recommendationReason }}</p>
+              </details>
             </div>
             <Transition name="task-state" mode="out-in"
               ><span

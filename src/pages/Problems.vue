@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Search, Plus, ArrowLeft, ArrowRight, X, Filter } from 'lucide-vue-next';
 import { api, notify, settings, job } from '../api';
@@ -30,6 +30,10 @@ const items = ref<ProblemRow[]>([]),
   showAdd = ref(false),
   saving = ref(false);
 const manual = ref({ contestId: '', index: '', name: '', rating: '', tags: '' });
+const advancedCount = computed(
+  () =>
+    [filters.value.tag, filters.value.reason, filters.value.min, filters.value.max].filter(Boolean).length,
+);
 let request = 0,
   timer: ReturnType<typeof setTimeout>;
 async function load() {
@@ -133,7 +137,7 @@ async function add() {
         </button>
       </div>
     </div>
-    <div class="filters">
+    <div class="filters filters-primary">
       <Filter :size="16" class="subtle" /><select v-model="filters.source" aria-label="题目来源">
         <option value="all">两站全部</option>
         <option value="cf">Codeforces</option>
@@ -146,24 +150,8 @@ async function add() {
       ><select v-model="filters.solved" aria-label="AC 状态">
         <option value="">全部 AC 状态</option>
         <option value="yes">已 AC</option>
-        <option value="no">未 AC</option></select
-      ><select v-model="filters.tag" aria-label="算法标签">
-        <option value="">全部算法</option>
-        <option v-for="t in tags" :key="t">{{ t }}</option></select
-      ><select v-model="filters.reason" aria-label="错因">
-        <option value="">全部错因</option>
-        <option v-for="r in reasons" :key="r">{{ r }}</option>
+        <option value="no">未 AC</option>
       </select>
-      <div class="rating-range">
-        <input
-          v-model="filters.min"
-          type="number"
-          aria-label="最低难度"
-          placeholder="最低难度"
-          min="0"
-        /><span>—</span
-        ><input v-model="filters.max" type="number" aria-label="最高难度" placeholder="最高难度" min="0" />
-      </div>
       <button
         v-if="filters.due || filters.contestId"
         class="text-link"
@@ -175,6 +163,30 @@ async function add() {
         清除{{ filters.due ? '到期' : '比赛' }}筛选 <X :size="14" />
       </button>
     </div>
+    <details class="advanced-filters" :open="Boolean(advancedCount)">
+      <summary>
+        更多筛选<span v-if="advancedCount"> · 已启用 {{ advancedCount }} 项</span>
+      </summary>
+      <div class="filters">
+        <select v-model="filters.tag" aria-label="算法标签">
+          <option value="">全部算法</option>
+          <option v-for="t in tags" :key="t">{{ t }}</option></select
+        ><select v-model="filters.reason" aria-label="错因">
+          <option value="">全部错因</option>
+          <option v-for="r in reasons" :key="r">{{ r }}</option>
+        </select>
+        <div class="rating-range">
+          <input
+            v-model="filters.min"
+            type="number"
+            aria-label="最低难度"
+            placeholder="最低难度"
+            min="0"
+          /><span>—</span
+          ><input v-model="filters.max" type="number" aria-label="最高难度" placeholder="最高难度" min="0" />
+        </div>
+      </div>
+    </details>
     <div v-if="loading" class="loading-line" aria-label="加载中"></div>
     <ProblemTable v-if="items.length" :items="items" />
     <div v-else class="empty-state">

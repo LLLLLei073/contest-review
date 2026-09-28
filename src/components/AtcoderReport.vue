@@ -131,53 +131,55 @@ watch(
         <p class="small subtle">提交来源：AtCoder Problems · {{ fullDate(report.fetchedAt) }}</p>
       </div>
       <p v-if="!report.windowAvailable" class="alert">比赛时间资料待补齐，暂不将提交划分为赛时或赛后。</p>
-      <h3>赛时分题时间线</h3>
-      <p class="small subtle">时间按提交记录展示；提交间隔不等于思考时长。</p>
-      <p v-if="!report.inContest.length" class="quiet-empty">
-        {{ report.official ? '官方参赛记录已确认；没有已同步的赛时提交。' : '没有已同步的赛时提交。' }}
-      </p>
-      <article
-        v-for="(row, index) in problemRows"
-        :key="row.key"
-        class="timeline-problem"
-        :style="{ '--motion-index': Math.min(index, 5) }"
-      >
-        <div class="report-toolbar">
-          <a
-            :href="`https://atcoder.jp/contests/${contestId}/tasks/${row.key.slice(8)}`"
-            target="_blank"
-            rel="noopener noreferrer"
-            ><strong>{{ row.key.slice(8) }}</strong> <ArrowUpRight :size="13"
-          /></a>
-          <span class="small subtle">失败 {{ row.failures }} 次</span>
-        </div>
-        <p class="small subtle">
-          首次提交 {{ fullDate(new Date(row.first * 1000).toISOString()) }} · 首次 AC
-          {{ row.firstAc === null ? '—' : fullDate(new Date(row.firstAc * 1000).toISOString()) }}
+      <details class="report-deep-dive">
+        <summary>赛时分题时间线 · {{ problemRows.length }} 题</summary>
+        <p class="small subtle">时间按提交记录展示；提交间隔不等于思考时长。</p>
+        <p v-if="!report.inContest.length" class="quiet-empty">
+          {{ report.official ? '官方参赛记录已确认；没有已同步的赛时提交。' : '没有已同步的赛时提交。' }}
         </p>
-        <ol class="submission-timeline">
-          <li v-for="item in row.items" :key="item.id">
+        <article
+          v-for="(row, index) in problemRows"
+          :key="row.key"
+          class="timeline-problem"
+          :style="{ '--motion-index': Math.min(index, 5) }"
+        >
+          <div class="report-toolbar">
             <a
-              :href="item.url"
+              :href="`https://atcoder.jp/contests/${contestId}/tasks/${row.key.slice(8)}`"
               target="_blank"
               rel="noopener noreferrer"
-              :class="{
-                accepted: item.verdict === 'OK',
-                failed: [
-                  'WRONG_ANSWER',
-                  'TIME_LIMIT_EXCEEDED',
-                  'MEMORY_LIMIT_EXCEEDED',
-                  'RUNTIME_ERROR',
-                  'COMPILATION_ERROR',
-                  'OUTPUT_LIMIT_EXCEEDED',
-                ].includes(item.verdict),
-              }"
-              >{{ fullDate(new Date(item.time * 1000).toISOString()) }} · {{ item.verdict }}
-              <small>#{{ item.id }}</small></a
-            >
-          </li>
-        </ol>
-      </article>
+              ><strong>{{ row.key.slice(8) }}</strong> <ArrowUpRight :size="13"
+            /></a>
+            <span class="small subtle">失败 {{ row.failures }} 次</span>
+          </div>
+          <p class="small subtle">
+            首次提交 {{ fullDate(new Date(row.first * 1000).toISOString()) }} · 首次 AC
+            {{ row.firstAc === null ? '—' : fullDate(new Date(row.firstAc * 1000).toISOString()) }}
+          </p>
+          <ol class="submission-timeline">
+            <li v-for="item in row.items" :key="item.id">
+              <a
+                :href="item.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                :class="{
+                  accepted: item.verdict === 'OK',
+                  failed: [
+                    'WRONG_ANSWER',
+                    'TIME_LIMIT_EXCEEDED',
+                    'MEMORY_LIMIT_EXCEEDED',
+                    'RUNTIME_ERROR',
+                    'COMPILATION_ERROR',
+                    'OUTPUT_LIMIT_EXCEEDED',
+                  ].includes(item.verdict),
+                }"
+                >{{ fullDate(new Date(item.time * 1000).toISOString()) }} · {{ item.verdict }}
+                <small>#{{ item.id }}</small></a
+              >
+            </li>
+          </ol>
+        </article>
+      </details>
       <h3>下一场的行动建议</h3>
       <p v-if="!report.advice.length" class="subtle">目前没有足够证据触发具体建议。</p>
       <article v-for="(item, i) in report.advice" :key="i" class="advice-card">

@@ -14,6 +14,8 @@ import { api, settings, loadSettings, loadJob, job, notify, fullDate, browserMod
 import type { XcpcCandidate } from '../../shared/xcpc';
 import type { SyncJob } from '../../shared/domain';
 const handle = ref(''),
+  settingsSection = ref<'accounts' | 'sync' | 'backup'>('accounts'),
+  accountPlatform = ref<'cf' | 'atcoder' | 'xcpc'>('cf'),
   busy = ref(false),
   error = ref(''),
   restoreFile = ref<File | null>(null),
@@ -184,9 +186,30 @@ async function restore() {
     在线版的数据保存在当前浏览器中，不会上传到
     GitHub。清除网站数据或更换浏览器前，请导出备份；导入历史时请保持页面打开。
   </div>
+  <nav class="content-switcher" aria-label="设置分类">
+    <button :class="{ active: settingsSection === 'accounts' }" @click="settingsSection = 'accounts'">
+      账号连接
+    </button>
+    <button :class="{ active: settingsSection === 'sync' }" @click="settingsSection = 'sync'">
+      同步状态
+    </button>
+    <button :class="{ active: settingsSection === 'backup' }" @click="settingsSection = 'backup'">
+      备份与恢复
+    </button>
+  </nav>
+  <nav v-show="settingsSection === 'accounts'" class="content-switcher sub-switcher" aria-label="账号平台">
+    <button :class="{ active: accountPlatform === 'cf' }" @click="accountPlatform = 'cf'">Codeforces</button>
+    <button :class="{ active: accountPlatform === 'atcoder' }" @click="accountPlatform = 'atcoder'">
+      AtCoder
+    </button>
+    <button :class="{ active: accountPlatform === 'xcpc' }" @click="accountPlatform = 'xcpc'">XCPC</button>
+  </nav>
   <div class="settings-layout">
     <div>
-      <section class="panel settings-card">
+      <section
+        v-show="settingsSection === 'accounts' && accountPlatform === 'atcoder'"
+        class="panel settings-card"
+      >
         <div class="section-head">
           <div class="section-title">
             <span class="section-icon"><Link2 :size="20" /></span>
@@ -267,7 +290,10 @@ async function restore() {
         </div>
         <p class="small subtle">请求间隔至少一秒。来源可能延迟或中断；失败时保留已导入数据，离线仍可复盘。</p>
       </section>
-      <section class="panel settings-card">
+      <section
+        v-show="settingsSection === 'accounts' && accountPlatform === 'cf'"
+        class="panel settings-card"
+      >
         <div class="section-head">
           <div class="section-title">
             <span class="section-icon"><Link2 :size="20" /></span>
@@ -304,7 +330,10 @@ async function restore() {
         </div>
         <p class="small subtle">切换用户名会使用独立的数据分区；已有笔记和复习进度仍然保留。</p>
       </section>
-      <section class="panel settings-card">
+      <section
+        v-show="settingsSection === 'accounts' && accountPlatform === 'xcpc'"
+        class="panel settings-card"
+      >
         <div class="section-head">
           <div class="section-title">
             <span class="section-icon"><Link2 :size="20" /></span>
@@ -353,7 +382,7 @@ async function restore() {
           >打开 XCPC Rating 原站</a
         >
       </section>
-      <section class="panel settings-card">
+      <section v-show="settingsSection === 'sync'" class="panel settings-card">
         <div class="section-head">
           <div class="section-title">
             <span class="section-icon"><RefreshCw :size="20" /></span>
@@ -406,7 +435,7 @@ async function restore() {
           按至少两秒的间隔请求。历史较多时需要等待；已读取数据会分页保存。全量核对用于更新较早的判题变化。
         </p>
       </section>
-      <section class="panel settings-card">
+      <section v-show="settingsSection === 'backup'" class="panel settings-card">
         <div class="section-head">
           <div class="section-title">
             <span class="section-icon"><Database :size="20" /></span>

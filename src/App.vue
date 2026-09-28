@@ -39,8 +39,8 @@ const navigation = [
   { to: '/', label: '今日题单', icon: LayoutDashboard },
   { to: '/problems', label: '错题库', icon: Library },
   { to: '/contests', label: '比赛复盘', icon: Flag },
-  { to: '/simulation', label: 'CF 模拟赛', icon: Flag },
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
+  { to: '/settings', label: '设置与数据', icon: Settings2 },
 ];
 const initError = ref('');
 let poll: ReturnType<typeof setInterval>;
@@ -97,7 +97,14 @@ onUnmounted(() => {
           v-for="n in navigation"
           :key="n.to"
           :to="n.to"
-          :class="{ active: n.to === '/' ? $route.path === '/' : $route.path.startsWith(n.to) }"
+          :class="{
+            active:
+              n.to === '/'
+                ? $route.path === '/'
+                : n.to === '/contests'
+                  ? ['/contests', '/simulation'].includes($route.path)
+                  : $route.path.startsWith(n.to),
+          }"
           ><component :is="n.icon" :size="19" /><span>{{ n.label }}</span
           ><span v-if="n.to === '/'" class="nav-dot"></span
         ></RouterLink>
@@ -109,9 +116,6 @@ onUnmounted(() => {
         <span class="small subtle">记录 · 反思 · 再解</span>
       </div>
       <div class="sidebar-bottom">
-        <RouterLink to="/settings" :class="{ active: $route.path === '/settings' }"
-          ><Settings2 :size="18" /> 设置与数据</RouterLink
-        >
         <div class="local-status">
           <span></span>{{ browserMode ? '浏览器存储 · 定期导出备份' : '本地存储 · 数据由你掌握' }}
         </div>

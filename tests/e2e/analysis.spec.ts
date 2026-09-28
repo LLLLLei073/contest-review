@@ -40,6 +40,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(isPages ? './#/settings' : '/settings');
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   await page.getByLabel('选择备份文件').setInputFiles({
     name: 'v1.json',
     mimeType: 'application/json',
@@ -57,8 +58,10 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   await expect(page.locator('.score-value')).toContainText('1400');
   await expect(page.locator('.score-secondary')).toContainText('62 / 100');
   await expect(page.locator('.score-part').first()).toContainText('20 人');
+  await page.locator('.report-deep-dive').first().locator('summary').click();
   await expect(page.locator('.timeline-problem').nth(1)).toContainText('未尝试');
   await expect(page.locator('.advice-card').first()).toContainText('3 次失败');
+  await page.getByRole('button', { name: '补充笔记' }).click();
   await page.getByLabel('关键失误', { exact: true }).fill('自动分析后的补充笔记');
   await page.getByRole('button', { name: '保存比赛复盘' }).click();
   await expect(page.getByText('比赛复盘已保存', { exact: true })).toBeVisible();
@@ -69,8 +72,10 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
     .first()
     .click();
   await expect(page.locator('.score-value')).toContainText('1400');
+  await page.getByRole('button', { name: '补充笔记' }).click();
   await expect(page.getByLabel('关键失误', { exact: true })).toHaveValue('自动分析后的补充笔记');
   if (isPages) {
+    await page.getByRole('button', { name: '成绩与建议' }).click();
     await page.evaluate(async () => {
       await navigator.serviceWorker.ready;
     });
@@ -94,6 +99,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('analysis-mobile.png'), fullPage: true });
   await page.locator('.profile-chip').click();
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出备份', exact: true }).click();
   const path = (await (await downloaded).path())!;

@@ -13,6 +13,9 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByLabel('Codeforces Handle').fill('review_tester');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.getByText('已绑定', { exact: true })).toBeVisible();
+  await expect(page.locator('.profile-chip')).toContainText('review_tester');
+  await expect(page.getByRole('button', { name: '绑定用户名' })).toBeEnabled();
+  await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
@@ -56,6 +59,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await expect(page.getByText('先证明，再实现。')).toBeVisible();
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page.getByRole('button', { name: /Codeforces Round 980/ }).click();
+  await page.getByRole('button', { name: '补充笔记' }).click();
   await page.getByLabel('关键失误', { exact: true }).fill('没有先想清楚边界。');
   await page.getByLabel('下一场的改进').fill('留十分钟检查边界。');
   await page.getByRole('button', { name: '保存比赛复盘' }).click();
@@ -63,9 +67,11 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('link', { name: '训练统计', exact: true }).click();
   await expect(page.getByRole('heading', { name: '算法领域掌握度' })).toBeVisible();
   await expect(page.locator('.mastery-row')).toHaveCount(8);
+  await page.getByRole('button', { name: '练习趋势' }).click();
   await expect(page.getByRole('heading', { name: '最近 14 天的重做记录' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('statistics.png'), fullPage: true });
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出备份' }).click();
   const download = await downloadPromise;
@@ -99,8 +105,11 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
   await page.getByLabel('Codeforces Handle').fill('isolation_reference');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.locator('.profile-chip')).toContainText('isolation_reference');
+  await expect(page.getByRole('button', { name: '绑定用户名' })).toBeEnabled();
+  await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
+  await page.getByRole('button', { name: '账号连接' }).click();
   await page.getByLabel('Codeforces Handle').fill('secondary');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.locator('.profile-chip')).toContainText('secondary');
@@ -122,12 +131,14 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
   await page.getByRole('link', { name: '2100D My unsolved problem', exact: true }).click();
   await page.getByRole('button', { name: '恢复此题' }).click();
   await page.getByRole('link', { name: '返回错题库' }).click();
+  await page.locator('.advanced-filters summary').click();
   await page.getByLabel('算法标签', { exact: true }).selectOption('dp');
   await page.getByLabel('最低难度').fill('1900');
   await expect(page.getByText('这里还没有匹配的题目')).toBeVisible();
   await page.getByLabel('最低难度').fill('1700');
   await expect(page.getByRole('link', { name: '2100D My unsolved problem', exact: true })).toBeVisible();
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   await page.getByLabel('选择备份文件').setInputFiles({
     name: 'broken.json',
     mimeType: 'application/json',

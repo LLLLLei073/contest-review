@@ -40,6 +40,9 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
   await page.locator('.profile-chip').click();
   await page.getByLabel('Codeforces Handle').fill(`motion_tester_${testInfo.repeatEachIndex}`);
   await page.getByRole('button', { name: '绑定用户名' }).click();
+  await expect(page.locator('.profile-chip')).toContainText(`motion_tester_${testInfo.repeatEachIndex}`);
+  await expect(page.getByRole('button', { name: '绑定用户名' })).toBeEnabled();
+  await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
   await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();

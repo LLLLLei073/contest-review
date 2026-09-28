@@ -9,6 +9,10 @@ import { useSpringValues } from '../motion';
 const stats = ref<Statistics | null>(null),
   error = ref('');
 const source = ref<'all' | 'cf' | 'atcoder'>('all');
+const activeSection = ref<'overview' | 'activity' | 'upsolve' | 'health'>('overview');
+function showSection(id: string) {
+  activeSection.value = id as typeof activeSection.value;
+}
 const weekly = ref<{
   goal: WeeklyGoal | null;
   assigned: number;
@@ -72,7 +76,7 @@ onBeforeUnmount(() => {
     <span class="date-chip"><ChartNoAxesCombined :size="17" />按唯一题目统计</span>
   </div>
   <div v-if="error" class="alert error">{{ error }}</div>
-  <div class="contest-filter">
+  <div class="contest-filter statistics-source">
     <label
       >统计来源
       <select v-model="source" @change="load">
@@ -82,8 +86,28 @@ onBeforeUnmount(() => {
       </select></label
     >
   </div>
-  <template v-if="stats"
-    ><section v-if="weekly" class="panel training-extra-panel">
+  <nav class="content-switcher" aria-label="训练统计内容">
+    <button
+      v-for="item in [
+        { id: 'overview', label: '训练概览' },
+        { id: 'activity', label: '练习趋势' },
+        { id: 'upsolve', label: `赛后补题 ${upsolve.length}` },
+        { id: 'health', label: '数据健康' },
+      ]"
+      :key="item.id"
+      :class="{ active: activeSection === item.id }"
+      :aria-current="activeSection === item.id ? 'page' : undefined"
+      @click="showSection(item.id)"
+    >
+      {{ item.label }}
+    </button>
+  </nav>
+  <div v-if="stats" class="statistics-content">
+    <section
+      v-if="weekly"
+      v-show="activeSection === 'overview'"
+      class="panel training-extra-panel statistics-weekly"
+    >
       <div class="section-head">
         <div>
           <span class="eyebrow">WEEKLY FOCUS</span>
@@ -101,7 +125,7 @@ onBeforeUnmount(() => {
         >
       </div>
     </section>
-    <section class="panel training-extra-panel">
+    <section v-show="activeSection === 'upsolve'" class="panel training-extra-panel">
       <div class="section-head">
         <div>
           <span class="eyebrow">UPSOLVE</span>
@@ -125,7 +149,7 @@ onBeforeUnmount(() => {
         </div>
       </article>
     </section>
-    <section class="panel training-extra-panel">
+    <section v-show="activeSection === 'activity'" class="panel training-extra-panel statistics-reasons">
       <div class="section-head">
         <div>
           <span class="eyebrow">ROOT CAUSE</span>
@@ -139,7 +163,7 @@ onBeforeUnmount(() => {
         ><span>{{ week.reasons.map((r) => `${r.name} ${r.count}/${week.samples}`).join(' · ') }}</span>
       </div>
     </section>
-    <section v-if="health" class="panel training-extra-panel">
+    <section v-if="health" v-show="activeSection === 'health'" class="panel training-extra-panel">
       <div class="section-head">
         <div>
           <span class="eyebrow">DATA HEALTH</span>
@@ -167,7 +191,7 @@ onBeforeUnmount(() => {
       </div>
       <RouterLink to="/settings" class="small-button">同步与导出备份</RouterLink>
     </section>
-    <div class="metrics">
+    <div v-show="activeSection === 'overview'" class="metrics statistics-metrics">
       <div class="metric">
         <span>累计错题</span><strong>{{ stats.total }}<small>题</small></strong>
         <p>不含已忽略题目</p>
@@ -185,7 +209,7 @@ onBeforeUnmount(() => {
         <p>包括成功与失败的全部提交</p>
       </div>
     </div>
-    <div class="training-summary">
+    <div v-show="activeSection === 'overview'" class="training-summary statistics-summary">
       <span
         >到期重做 <strong>{{ stats.due }}</strong> 题</span
       ><span
@@ -195,7 +219,7 @@ onBeforeUnmount(() => {
         {{ stats.dailyTraining.at(-1)?.newAssigned ?? 0 }}</span
       >
     </div>
-    <section class="panel mastery-panel">
+    <section v-show="activeSection === 'overview'" class="panel mastery-panel statistics-mastery">
       <div class="section-head">
         <div>
           <span class="eyebrow">LEARNING PROFILE</span>
@@ -246,13 +270,16 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <p class="chart-caption mastery-caption">
-        每道有明确结果的题按唯一题目计数，可计入多个算法领域。已掌握 100、最近独立做对 85、借助提示
-        45、仍未做出 15；未重做时 CF AC 70、明确失败 20。领域得分 = (题目得分之和 + 3 × 50) ÷ (样本数 +
-        3)，四舍五入；0 样本为 50，表示数据不足，不代表已经掌握。新知题按 1 ÷ (掌握度 + 10) 分配领域配额。
-      </p>
+      <details class="chart-caption mastery-caption">
+        <summary>查看掌握度计算口径</summary>
+        <p>
+          每道有明确结果的题按唯一题目计数，可计入多个算法领域。已掌握 100、最近独立做对 85、借助提示
+          45、仍未做出 15；未重做时 CF AC 70、明确失败 20。领域得分 = (题目得分之和 + 3 × 50) ÷ (样本数 +
+          3)，四舍五入；0 样本为 50，表示数据不足，不代表已经掌握。新知题按 1 ÷ (掌握度 + 10) 分配领域配额。
+        </p>
+      </details>
     </section>
-    <section class="panel daily-history">
+    <section v-show="activeSection === 'activity'" class="panel daily-history statistics-history">
       <div class="section-head">
         <div>
           <span class="eyebrow">DAILY PRACTICE</span>
@@ -275,7 +302,7 @@ onBeforeUnmount(() => {
       </div>
       <p class="chart-caption">复习完成按笔记完成或重做记录计算；新知完成按题单当日的 CF AC 计算。</p>
     </section>
-    <section class="panel trend-panel">
+    <section v-show="activeSection === 'activity'" class="panel trend-panel statistics-trend">
       <div class="section-head">
         <div>
           <span class="eyebrow">CONSISTENCY MATTERS</span>
@@ -304,7 +331,7 @@ onBeforeUnmount(() => {
       </div>
       <p class="chart-caption">每次重做计为一条记录，按本地日期归集。没有记录的日期显示为零。</p>
     </section>
-    <div class="two-columns">
+    <div v-show="activeSection === 'activity'" class="two-columns statistics-distribution">
       <section
         v-for="group in [
           { title: '常见错因', sub: '从错误中找到模式', rows: stats.reasons },
@@ -334,6 +361,6 @@ onBeforeUnmount(() => {
         </div>
         <p class="chart-caption">一道题可含多个分类，因此各项之和可能大于题目总数。</p>
       </section>
-    </div></template
-  >
+    </div>
+  </div>
 </template>

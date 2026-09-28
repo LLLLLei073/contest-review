@@ -182,51 +182,53 @@ onBeforeUnmount(() => {
           部分得分保留展示，难度项仅计完整 AC。
         </p>
       </div>
-      <h3>分题提交时间线</h3>
-      <p class="small subtle">时间为开赛后分钟:秒；提交间隔不等于思考时长。未提交题仅供补题参考。</p>
-      <article
-        v-for="(p, index) in current.timeline"
-        :key="`${current.session.key}:${p.index}`"
-        class="timeline-problem"
-        :style="{ '--motion-index': Math.min(index, 5) }"
-      >
-        <div class="report-toolbar">
-          <a
-            :href="`https://codeforces.com/contest/${contestId}/problem/${p.index}`"
-            target="_blank"
-            rel="noopener noreferrer"
-            ><strong>{{ p.index }} · {{ p.name }}</strong> <ArrowUpRight :size="13" /></a
-          ><span class="small subtle">{{ p.rating ?? '难度未知' }}</span>
-        </div>
-        <p class="small subtle">
-          {{
-            p.events.length
-              ? `首次提交 ${time(p.first)} · 首次 AC ${time(p.ac)} · 计分失败 ${p.failures} 次`
-              : '未尝试'
-          }}
-        </p>
-        <ol class="submission-timeline">
-          <li v-for="event in p.events" :key="event.id">
+      <details class="report-deep-dive">
+        <summary>分题提交时间线 · {{ current.timeline.length }} 题</summary>
+        <p class="small subtle">时间为开赛后分钟:秒；提交间隔不等于思考时长。未提交题仅供补题参考。</p>
+        <article
+          v-for="(p, index) in current.timeline"
+          :key="`${current.session.key}:${p.index}`"
+          class="timeline-problem"
+          :style="{ '--motion-index': Math.min(index, 5) }"
+        >
+          <div class="report-toolbar">
             <a
-              :href="event.url"
+              :href="`https://codeforces.com/contest/${contestId}/problem/${p.index}`"
               target="_blank"
               rel="noopener noreferrer"
-              :class="{
-                accepted: event.verdict === 'OK',
-                failed: [
-                  'WRONG_ANSWER',
-                  'TIME_LIMIT_EXCEEDED',
-                  'RUNTIME_ERROR',
-                  'COMPILATION_ERROR',
-                  'MEMORY_LIMIT_EXCEEDED',
-                ].includes(event.verdict),
-              }"
-              >{{ time(event.seconds) }} · {{ verdictLabel[event.verdict] ?? event.verdict }}
-              <small>#{{ event.id }}</small></a
-            >
-          </li>
-        </ol>
-      </article>
+              ><strong>{{ p.index }} · {{ p.name }}</strong> <ArrowUpRight :size="13" /></a
+            ><span class="small subtle">{{ p.rating ?? '难度未知' }}</span>
+          </div>
+          <p class="small subtle">
+            {{
+              p.events.length
+                ? `首次提交 ${time(p.first)} · 首次 AC ${time(p.ac)} · 计分失败 ${p.failures} 次`
+                : '未尝试'
+            }}
+          </p>
+          <ol class="submission-timeline">
+            <li v-for="event in p.events" :key="event.id">
+              <a
+                :href="event.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                :class="{
+                  accepted: event.verdict === 'OK',
+                  failed: [
+                    'WRONG_ANSWER',
+                    'TIME_LIMIT_EXCEEDED',
+                    'RUNTIME_ERROR',
+                    'COMPILATION_ERROR',
+                    'MEMORY_LIMIT_EXCEEDED',
+                  ].includes(event.verdict),
+                }"
+                >{{ time(event.seconds) }} · {{ verdictLabel[event.verdict] ?? event.verdict }}
+                <small>#{{ event.id }}</small></a
+              >
+            </li>
+          </ol>
+        </article>
+      </details>
       <h3>下一场的行动建议</h3>
       <p v-if="!current.advice.length" class="subtle">目前没有足够证据触发具体建议。</p>
       <article v-for="(advice, i) in current.advice" :key="advice.id" class="advice-card">

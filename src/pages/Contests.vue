@@ -43,6 +43,7 @@ const rows = ref<ContestView[]>([]),
   typeFilter = ref(routeValue('type') || 'all'),
   page = ref(Math.max(1, Number(routeValue('page')) || 1)),
   mobileShowingReport = ref(Boolean(routeValue('contest'))),
+  reportView = ref<'analysis' | 'notes'>('analysis'),
   batch = ref<BatchJob | null>(null),
   batchBusy = ref(false);
 let batchTimer: ReturnType<typeof setInterval> | undefined;
@@ -149,6 +150,7 @@ function choose(c: ContestView): boolean {
   if (dirty.value && !confirm('比赛复盘尚未保存，确定切换吗？')) return false;
   selected.value = c;
   draft.value = { ...c.review };
+  reportView.value = 'analysis';
   mobileShowingReport.value = true;
   syncLocation();
   return true;
@@ -268,6 +270,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
       <p>不只看最后的排名，也看每一个决策。</p>
     </div>
     <div class="button-row">
+      <RouterLink to="/simulation" class="button">CF 模拟赛</RouterLink>
       <button
         class="primary"
         :disabled="
@@ -449,48 +452,58 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             未 AC 题加入补题清单
           </button>
         </div>
+        <nav class="content-switcher report-switcher" aria-label="比赛报告内容">
+          <button :class="{ active: reportView === 'analysis' }" @click="reportView = 'analysis'">
+            成绩与建议
+          </button>
+          <button :class="{ active: reportView === 'notes' }" @click="reportView = 'notes'">
+            补充笔记<span v-if="dirty"> · 未保存</span>
+          </button>
+        </nav>
         <div class="editor-body">
-          <div
-            v-if="
-              selected.source === 'cf' &&
-              selected.types.length &&
-              !selected.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
-            "
-            class="alert"
-          >
-            这场比赛只有练习记录，不计为正式或虚拟参赛。
+          <div v-show="reportView === 'analysis'">
+            <div
+              v-if="
+                selected.source === 'cf' &&
+                selected.types.length &&
+                !selected.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
+              "
+              class="alert"
+            >
+              这场比赛只有练习记录，不计为正式或虚拟参赛。
+            </div>
+            <p v-if="selected.rating" class="subtle">
+              评级变化：{{ selected.rating.oldRating }} → {{ selected.rating.newRating }} · 评级结算排名 #{{
+                selected.rating.rank
+              }}
+            </p>
+            <RouterLink
+              v-if="selected.source === 'cf'"
+              class="text-link"
+              :to="'/problems?contestId=' + selected.id"
+              >查看这场比赛的错题 <ArrowUpRight :size="15"
+            /></RouterLink>
+            <ContestReport
+              v-if="selected.source === 'cf'"
+              :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
+              :contest-id="Number(selected.id)"
+              @updated="load"
+            />
+            <AtcoderReport
+              v-else-if="selected.source === 'atcoder'"
+              :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
+              :contest-id="String(selected.id)"
+              @updated="load"
+            />
+            <XcpcReport
+              v-else
+              :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
+              :slug="String(selected.id)"
+              @updated="load"
+            />
           </div>
-          <p v-if="selected.rating" class="subtle">
-            评级变化：{{ selected.rating.oldRating }} → {{ selected.rating.newRating }} · 评级结算排名 #{{
-              selected.rating.rank
-            }}
-          </p>
-          <RouterLink
-            v-if="selected.source === 'cf'"
-            class="text-link"
-            :to="'/problems?contestId=' + selected.id"
-            >查看这场比赛的错题 <ArrowUpRight :size="15"
-          /></RouterLink>
-          <ContestReport
-            v-if="selected.source === 'cf'"
-            :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
-            :contest-id="Number(selected.id)"
-            @updated="load"
-          />
-          <AtcoderReport
-            v-else-if="selected.source === 'atcoder'"
-            :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
-            :contest-id="String(selected.id)"
-            @updated="load"
-          />
-          <XcpcReport
-            v-else
-            :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
-            :slug="String(selected.id)"
-            @updated="load"
-          />
-          <details class="manual-contest-notes" open>
-            <summary>补充笔记 · 保留我的复盘</summary>
+          <section v-show="reportView === 'notes'" class="manual-contest-notes">
+            <h3>补充笔记 · 保留我的复盘</h3>
             <form @submit.prevent="save">
               <label
                 >时间分配<textarea
@@ -516,7 +529,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
                 ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
               </div>
             </form>
-          </details>
+          </section>
         </div>
       </section>
       <section v-else class="panel contest-placeholder">

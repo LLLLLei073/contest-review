@@ -71,6 +71,7 @@ test('large contest list keeps filters, page and report selection; navigation pr
   await expect(page.locator('.contest-editor h2')).toHaveText(contests[20].name);
   await expect(page.getByText('第 2 / 3 页')).toBeVisible();
 
+  await page.getByRole('button', { name: '补充笔记' }).click();
   await page.getByLabel('关键失误', { exact: true }).fill('未保存');
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: '下一场' }).click();

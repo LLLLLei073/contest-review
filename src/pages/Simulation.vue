@@ -28,6 +28,7 @@ const contests = ref<CFContest[]>([]),
   sessions = ref<Report[]>([]),
   selected = ref<Report | null>(null);
 const query = ref(''),
+  view = ref<'choose' | 'session' | 'history'>('choose'),
   error = ref(''),
   busy = ref(false),
   now = ref(Date.now());
@@ -62,6 +63,7 @@ async function load() {
     contests.value = nextContests;
     sessions.value = nextSessions;
     selected.value = nextSessions.find((s) => s.id === selected.value?.id) ?? nextSessions[0] ?? null;
+    if (selected.value && !ended.value) view.value = 'session';
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -71,6 +73,7 @@ async function start(contestId: number) {
   error.value = '';
   try {
     selected.value = await api<Report>('/training/simulations', { contestId });
+    view.value = 'session';
     await load();
     notify('模拟赛已开始，计时在离开页面后继续');
   } catch (e) {
@@ -139,7 +142,16 @@ onUnmounted(() => clearInterval(timer));
   <div v-if="error" class="alert error" role="alert">{{ error }}</div>
   <div v-if="!settings.activeHandle" class="panel quiet-empty">请先在设置中绑定 Codeforces 用户名。</div>
   <template v-else>
-    <section class="panel training-extra-panel">
+    <nav class="content-switcher" aria-label="模拟赛内容">
+      <button :class="{ active: view === 'session' }" :disabled="!selected" @click="view = 'session'">
+        {{ selected && !ended ? '进行中' : '本场记录' }}
+      </button>
+      <button :class="{ active: view === 'choose' }" @click="view = 'choose'">选择比赛</button>
+      <button :class="{ active: view === 'history' }" :disabled="!sessions.length" @click="view = 'history'">
+        历史场次 {{ sessions.length }}
+      </button>
+    </nav>
+    <section v-show="view === 'choose'" class="panel training-extra-panel">
       <div class="section-head">
         <div>
           <h2>选择已结束比赛</h2>
@@ -163,7 +175,7 @@ onUnmounted(() => clearInterval(timer));
         </button>
       </div>
     </section>
-    <section v-if="selected" class="panel training-extra-panel">
+    <section v-if="selected" v-show="view === 'session'" class="panel training-extra-panel">
       <div class="section-head">
         <div>
           <span class="eyebrow">{{ ended ? 'SIMULATION REPORT' : 'IN PROGRESS' }}</span>
@@ -203,30 +215,37 @@ onUnmounted(() => clearInterval(timer));
           </button>
         </div>
       </article>
-      <h3>提交时间线</h3>
-      <div v-if="!selected.events.length" class="quiet-empty">暂无记录。同步 CF 提交或手动记录赛中结果。</div>
-      <div
-        v-for="(event, i) in selected.events"
-        :key="`${event.source}:${event.at}:${i}`"
-        class="upsolve-row"
-      >
-        <span
-          >{{ event.minute }} 分钟 · {{ event.problemKey }} · {{ event.verdict }} ·
-          {{ event.source === 'cf' ? 'CF 提交' : '手动记录' }}</span
+      <details class="report-deep-dive">
+        <summary>提交时间线 · {{ selected.events.length }} 条记录</summary>
+        <div v-if="!selected.events.length" class="quiet-empty">
+          暂无记录。同步 CF 提交或手动记录赛中结果。
+        </div>
+        <div
+          v-for="(event, i) in selected.events"
+          :key="`${event.source}:${event.at}:${i}`"
+          class="upsolve-row"
         >
-        <a v-if="event.submissionUrl" :href="event.submissionUrl" target="_blank" rel="noreferrer"
-          >查看提交</a
-        >
-      </div>
+          <span
+            >{{ event.minute }} 分钟 · {{ event.problemKey }} · {{ event.verdict }} ·
+            {{ event.source === 'cf' ? 'CF 提交' : '手动记录' }}</span
+          >
+          <a v-if="event.submissionUrl" :href="event.submissionUrl" target="_blank" rel="noreferrer"
+            >查看提交</a
+          >
+        </div>
+      </details>
     </section>
-    <section v-if="sessions.length > 1" class="panel training-extra-panel">
+    <section v-if="sessions.length" v-show="view === 'history'" class="panel training-extra-panel">
       <h2>历史模拟赛</h2>
       <div class="simulation-contests">
         <button
           v-for="session in sessions"
           :key="session.id"
           class="small-button"
-          @click="selected = session"
+          @click="
+            selected = session;
+            view = 'session';
+          "
         >
           {{ session.contestName }} · {{ new Date(session.startedAt).toLocaleDateString('zh-CN') }} · AC
           {{ session.solved }}
