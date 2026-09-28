@@ -29,6 +29,7 @@ test('Pages confirms same-day AC before reflection and waits for subjective eval
     });
   });
   await page.goto('./#/settings');
+  await page.getByRole('button', { name: '跳过动画' }).click();
   await page.getByLabel('Codeforces Handle').fill('redo_tester');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.locator('.profile-chip')).toContainText('redo_tester');

@@ -102,6 +102,7 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
   page,
 }, testInfo) => {
   await page.goto(testInfo.project.name === 'pages' ? './#/settings' : '/settings');
+  await page.getByRole('button', { name: '跳过动画' }).click();
   await page.getByLabel('Codeforces Handle').fill('isolation_reference');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.locator('.profile-chip')).toContainText('isolation_reference');

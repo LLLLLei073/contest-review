@@ -37,6 +37,8 @@ async function finishIntro() {
   await nextTick();
   if (appUnmounted) return;
   introFocusFrame = requestAnimationFrame(() => {
+    if (document.activeElement !== document.body && document.activeElement !== document.documentElement)
+      return;
     const brand = document.querySelector<HTMLElement>('.brand');
     const focusTarget = brand?.getClientRects().length
       ? brand

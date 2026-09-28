@@ -54,6 +54,27 @@ test('opening completes automatically without mobile overflow', async ({ page },
   await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
 });
 
+test('opening completion does not steal focus from a newly available form', async ({ page }, testInfo) => {
+  await page.goto(testInfo.project.name === 'pages' ? './#/settings' : '/settings');
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  await expect(intro).toBeVisible();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const shell = document.querySelector('.app-shell')!;
+        const observer = new MutationObserver(() => {
+          if (shell.hasAttribute('inert')) return;
+          observer.disconnect();
+          document.querySelector<HTMLInputElement>('input[placeholder="例如 tourist"]')?.focus();
+          resolve();
+        });
+        observer.observe(shell, { attributes: true, attributeFilter: ['inert'] });
+      }),
+  );
+  await expect(intro).toHaveCount(0);
+  await expect(page.getByLabel('Codeforces Handle')).toBeFocused();
+});
+
 test('navigation spring, chart endpoint and reduced-motion fallback', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
