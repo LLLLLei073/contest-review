@@ -67,7 +67,7 @@ function setup() {
   return { store, client, service };
 }
 
-test('AtCoder pagination, repeat import, rejudge, account isolation and backup v6', async () => {
+test('AtCoder pagination, repeat import, rejudge, account isolation and backup v7', async () => {
   const { store, client, service } = setup();
   client.items = Array.from({ length: 501 }, (_, i) =>
     submission(i + 1, 'abc001_1', i === 0 ? 'WA' : 'AC', sec - 500 + i),
@@ -86,7 +86,7 @@ test('AtCoder pagination, repeat import, rejudge, account isolation and backup v
   assert.equal(store.all('submissions', profile).length, 501);
   assert.equal(store.review(profile, 'atcoder:abc001_1').rootCause, '边界漏判');
   const backup = store.backup();
-  assert.equal(backup.version, 6);
+  assert.equal(backup.version, 7);
   store.activateAtcoder('Bob');
   assert.equal(store.problems(atcoderProfile('Bob')).length, 0);
   store.restore(backup);

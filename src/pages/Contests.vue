@@ -187,6 +187,21 @@ async function save() {
     busy.value = false;
   }
 }
+async function addUpsolve() {
+  if (!selected.value || selected.value.source === 'xcpc') return;
+  busy.value = true;
+  try {
+    const items = await api<{ key: string }[]>('/training/upsolve/contest', {
+      source: selected.value.source,
+      contestId: String(selected.value.id),
+    });
+    notify(items.length ? `已将 ${items.length} 道未 AC 题加入补题清单` : '本场题目已全部 AC');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
 async function loadBatch() {
   try {
     const next = await api<BatchJob | null>('/review/batch');
@@ -430,6 +445,9 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             >
             <h2 tabindex="-1">{{ selected.name }}</h2>
           </div>
+          <button v-if="selected.source !== 'xcpc'" class="small-button" :disabled="busy" @click="addUpsolve">
+            未 AC 题加入补题清单
+          </button>
         </div>
         <div class="editor-body">
           <div

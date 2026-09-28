@@ -39,6 +39,7 @@ const navigation = [
   { to: '/', label: '今日题单', icon: LayoutDashboard },
   { to: '/problems', label: '错题库', icon: Library },
   { to: '/contests', label: '比赛复盘', icon: Flag },
+  { to: '/simulation', label: 'CF 模拟赛', icon: Flag },
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
 ];
 const initError = ref('');
@@ -125,11 +126,13 @@ onUnmounted(() => {
               ? '错题复盘'
               : $route.path === '/contests'
                 ? '比赛复盘'
-                : $route.path === '/statistics'
-                  ? '训练统计'
-                  : $route.path === '/settings'
-                    ? '设置与数据'
-                    : '今日题单'
+                : $route.path === '/simulation'
+                  ? 'CF 模拟赛'
+                  : $route.path === '/statistics'
+                    ? '训练统计'
+                    : $route.path === '/settings'
+                      ? '设置与数据'
+                      : '今日题单'
           }}</b>
         </div>
         <RouterLink to="/settings" class="profile-chip"

@@ -1,4 +1,14 @@
 import { z } from 'zod';
+import { chooseWeeklyProblems, weekStart, weeklyGoalSchema, type WeeklyGoal } from './weekly.js';
+import {
+  upsolveSchema,
+  reasonSnapshotSchema,
+  simulationSchema,
+  simulationEvents,
+  type UpsolveItem,
+  type ReasonSnapshot,
+  type Simulation,
+} from './training-extras.js';
 import {
   catalogSchema,
   dailyPlanSchema,
@@ -6,6 +16,7 @@ import {
   masteryAreas,
   chooseNewProblems,
   targetDifficulty,
+  categories,
   type Catalog,
   type DailyPlan,
   type TrainingDay,
@@ -153,7 +164,15 @@ const handleSchema = z
 const profileSchema = z.union([handleSchema, z.string().regex(/^ac~[a-z0-9_]{1,64}$/)]);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
-  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]),
+  version: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5),
+    z.literal(6),
+    z.literal(7),
+  ]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
   profiles: z.array(profileSchema).max(1000),
@@ -206,7 +225,7 @@ export class CoreStore {
     const version = Number(
       (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
     );
-    if (version > 5) throw new Error('数据库来自更新版本，请升级程序');
+    if (version > 6) throw new Error('数据库来自更新版本，请升级程序');
     if (version === 0)
       this.transaction(() => {
         this.db.exec(
@@ -239,6 +258,7 @@ export class CoreStore {
         this.db.exec('PRAGMA user_version=4');
       });
     if (version <= 4) this.db.exec('PRAGMA user_version=5');
+    if (version <= 5) this.db.exec('PRAGMA user_version=6');
     for (const h of [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)])
       for (const job of this.all<SyncJob>('jobs', h))
         if (job.status === 'running')
@@ -392,6 +412,16 @@ export class CoreStore {
     if (old.firstReflectionRequired && old.firstRedoAt && !old.firstReflectionAt && hasReflection(next))
       next.firstReflectionAt = new Date().toISOString();
     this.put('reviews', h, key, next);
+    if (next.reasons.length && JSON.stringify(old.reasons) !== JSON.stringify(next.reasons)) {
+      const savedAt = new Date().toISOString();
+      const snapshot = reasonSnapshotSchema.parse({
+        id: crypto.randomUUID(),
+        problemKey: key,
+        savedAt,
+        reasons: next.reasons,
+      });
+      this.externalPut(`reason:${h}`, snapshot.id, snapshot);
+    }
     return next;
   }
   updateReview(h: string, key: string, review: Review, action: 'save' | 'complete' | 'restart') {
@@ -578,6 +608,313 @@ export class CoreStore {
   private combinedNamespace() {
     return `daily:${this.active() || '-'}:${this.activeAtcoder().toLowerCase() || '-'}`;
   }
+  private weeklyNamespace() {
+    return `weekly:${this.active() || '-'}:${this.activeAtcoder().toLowerCase() || '-'}`;
+  }
+  weeklyGoal(now = new Date()): WeeklyGoal | null {
+    return this.externalGet<WeeklyGoal>(this.weeklyNamespace(), weekStart(now)) ?? null;
+  }
+  saveWeeklyGoal(input: unknown, now = new Date()): WeeklyGoal {
+    const week = weekStart(now);
+    const goal = weeklyGoalSchema.parse({ ...(input as object), week, updatedAt: now.toISOString() });
+    this.externalPut(this.weeklyNamespace(), week, goal);
+    return goal;
+  }
+  weeklyProgress(now = new Date()) {
+    const goal = this.weeklyGoal(now),
+      cf = this.active();
+    if (!goal || !cf) return { goal, assigned: 0, completed: 0, coverage: {} as Record<string, number> };
+    const plans = this.all<DailyPlan>('daily_plans', cf).filter(
+      (p) => p.date >= goal.week && p.date <= localDay(now),
+    );
+    const catalog = this.get<Catalog>('catalog_cache', cf, 'current');
+    const byKey = new Map(catalog?.problems.map((p) => [p.key, p]));
+    const submissions = this.all<CFSubmission>('submissions', cf);
+    const coverage: Record<string, number> = {};
+    let assigned = 0,
+      completed = 0;
+    for (const plan of plans)
+      for (const key of plan.newKeys) {
+        const p = byKey.get(key);
+        if (!p || !categories(p.tags).some((c) => goal.categories.includes(c))) continue;
+        assigned++;
+        for (const c of categories(p.tags).filter((c) => goal.categories.includes(c)))
+          coverage[c] = (coverage[c] ?? 0) + 1;
+        if (
+          submissions.some(
+            (s) =>
+              problemKey(s) === key &&
+              s.verdict === 'OK' &&
+              localDay(new Date(s.creationTimeSeconds * 1000)) === plan.date,
+          )
+        )
+          completed++;
+      }
+    return { goal, assigned, completed, coverage };
+  }
+  upsolveItems(): UpsolveItem[] {
+    const profiles = [this.active(), this.activeAtcoder() && atcoderProfile(this.activeAtcoder())].filter(
+      Boolean,
+    );
+    return profiles
+      .flatMap((profile) => {
+        const submissions = this.all<CFSubmission>('submissions', profile);
+        return this.externalAll<z.infer<typeof upsolveSchema>>(`upsolve:${profile}`).map((item) => ({
+          ...item,
+          completed: submissions.some((s) => problemKey(s) === item.key && s.verdict === 'OK'),
+          attempted: submissions.some((s) => problemKey(s) === item.key),
+        }));
+      })
+      .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+  }
+  addUpsolve(input: unknown): UpsolveItem {
+    const item = upsolveSchema.parse({ ...(input as object), addedAt: new Date().toISOString() });
+    const profile =
+      item.source === 'cf' ? this.active() : this.activeAtcoder() && atcoderProfile(this.activeAtcoder());
+    if (!profile) throw new Error('请先绑定对应平台账号');
+    if (
+      (item.source === 'cf' &&
+        (!/^\d+:[A-Za-z0-9]+$/.test(item.key) || !item.url.startsWith('https://codeforces.com/'))) ||
+      (item.source === 'atcoder' &&
+        (!item.key.startsWith('atcoder:') || !item.url.startsWith('https://atcoder.jp/')))
+    )
+      throw new Error('补题来源与题号不一致');
+    const previous = this.externalGet<z.infer<typeof upsolveSchema>>(`upsolve:${profile}`, item.key);
+    this.externalPut(`upsolve:${profile}`, item.key, previous ?? item);
+    return this.upsolveItems().find((p) => p.source === item.source && p.key === item.key)!;
+  }
+  addContestUpsolve(source: 'cf' | 'atcoder', contestId: string): UpsolveItem[] {
+    if (source === 'cf') {
+      const profile = this.active();
+      if (!profile || !/^\d+$/.test(contestId)) throw new Error('请先绑定 Codeforces 并选择有效比赛');
+      const contest =
+        (this.externalGet<CFContest[]>(`cf-contests:${profile}`, 'current') ?? []).find(
+          (c) => c.id === Number(contestId),
+        ) ?? this.contests(profile).find((c) => c.id === Number(contestId));
+      const catalog = this.get<Catalog>('catalog_cache', profile, 'current');
+      if (!contest || !catalog) throw new Error('请先同步比赛题目目录');
+      const solved = new Set(
+        this.all<CFSubmission>('submissions', profile)
+          .filter((s) => s.verdict === 'OK')
+          .map(problemKey),
+      );
+      return catalog.problems
+        .filter((p) => p.contestId === Number(contestId) && !solved.has(p.key))
+        .map((p) =>
+          this.addUpsolve({
+            key: p.key,
+            source,
+            contestKey: contestId,
+            contestName: contest.name,
+            name: p.name,
+            url: p.url,
+            rating: p.rating,
+          }),
+        );
+    }
+    const handle = this.activeAtcoder();
+    if (!handle) throw new Error('请先绑定 AtCoder');
+    const profile = atcoderProfile(handle);
+    const catalog = this.externalGet<z.infer<typeof atcoderCatalogSchema>>('atcoder-meta', 'catalog');
+    const contest = catalog?.contests.find((c) => c.id === contestId);
+    if (!catalog || !contest) throw new Error('请先同步 AtCoder 比赛题目目录');
+    const solved = new Set(
+      this.all<CFSubmission>('submissions', profile)
+        .filter((s) => s.verdict === 'OK')
+        .map(problemKey),
+    );
+    return catalog.problems
+      .filter((p) => p.contest_id === contestId && !solved.has(atcoderKey(p.id)))
+      .map((p) =>
+        this.addUpsolve({
+          key: atcoderKey(p.id),
+          source,
+          contestKey: contestId,
+          contestName: contest.title,
+          name: p.name,
+          url: `https://atcoder.jp/contests/${contestId}/tasks/${p.id}`,
+          rating: catalog.models[p.id]?.difficulty ?? null,
+        }),
+      );
+  }
+  removeUpsolve(source: 'cf' | 'atcoder', key: string) {
+    const profile =
+      source === 'cf' ? this.active() : this.activeAtcoder() && atcoderProfile(this.activeAtcoder());
+    if (!profile) throw new Error('请先绑定对应平台账号');
+    this.db.prepare('DELETE FROM external WHERE namespace=? AND key=?').run(`upsolve:${profile}`, key);
+  }
+  reasonTrend(source: 'all' | 'cf' | 'atcoder' = 'all') {
+    const profiles = [
+      ...(source !== 'atcoder' && this.active() ? [this.active()] : []),
+      ...(source !== 'cf' && this.activeAtcoder() ? [atcoderProfile(this.activeAtcoder())] : []),
+    ];
+    const latest = new Map<string, ReasonSnapshot>();
+    for (const profile of profiles)
+      for (const item of this.externalAll<ReasonSnapshot>(`reason:${profile}`)) {
+        const week = weekStart(new Date(item.savedAt));
+        const key = `${week}:${profile}:${item.problemKey}`;
+        if (!latest.has(key) || latest.get(key)!.savedAt < item.savedAt) latest.set(key, item);
+      }
+    const byWeek = new Map<string, Map<string, Set<string>>>();
+    for (const [key, item] of latest) {
+      const week = weekStart(new Date(item.savedAt));
+      const reasons = byWeek.get(week) ?? new Map<string, Set<string>>();
+      byWeek.set(week, reasons);
+      for (const reason of item.reasons) {
+        const keys = reasons.get(reason) ?? new Set<string>();
+        keys.add(key);
+        reasons.set(reason, keys);
+      }
+    }
+    return [...byWeek]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, reasons]) => ({
+        week,
+        samples: [...latest.keys()].filter((key) => key.startsWith(`${week}:`)).length,
+        reasons: [...reasons]
+          .map(([name, keys]) => ({ name, count: keys.size }))
+          .sort((a, b) => b.count - a.count),
+      }));
+  }
+  dataHealth() {
+    const cf = this.active(),
+      ac = this.activeAtcoder();
+    const catalog = cf ? this.get<Catalog>('catalog_cache', cf, 'current') : undefined;
+    const acCatalog = this.externalGet<z.infer<typeof atcoderCatalogSchema>>('atcoder-meta', 'catalog');
+    const submissions = [
+      ...(cf ? this.all<CFSubmission>('submissions', cf) : []),
+      ...(ac ? this.all<CFSubmission>('submissions', atcoderProfile(ac)) : []),
+    ];
+    return {
+      cf: {
+        handle: cf,
+        sync: cf ? (this.latestJob(cf)?.finishedAt ?? null) : null,
+        catalog: catalog?.fetchedAt ?? null,
+        problems: catalog?.problems.length ?? 0,
+        rated: catalog?.problems.filter((p) => p.rating !== null).length ?? 0,
+      },
+      atcoder: {
+        handle: ac,
+        sync: ac ? (this.latestJob(atcoderProfile(ac))?.finishedAt ?? null) : null,
+        catalog: acCatalog?.fetchedAt ?? null,
+        problems: acCatalog?.problems.length ?? 0,
+        rated:
+          acCatalog?.problems.filter((p) => typeof acCatalog.models[p.id]?.difficulty === 'number').length ??
+          0,
+      },
+      pendingVerdicts: submissions.filter((s) => !s.verdict || ['TESTING', 'SUBMITTED'].includes(s.verdict))
+        .length,
+      lastBackup: this.setting('last-backup') || null,
+    };
+  }
+  markBackupExported() {
+    this.setSetting('last-backup', new Date().toISOString());
+  }
+  simulationContests(now = new Date()) {
+    const h = this.active();
+    if (!h) return [];
+    const catalog = this.get<Catalog>('catalog_cache', h, 'current');
+    const problems = catalog?.problems ?? [];
+    return (this.externalGet<CFContest[]>(`cf-contests:${h}`, 'current') ?? [])
+      .filter(
+        (c) =>
+          c.phase === 'FINISHED' &&
+          !!c.startTimeSeconds &&
+          !!c.durationSeconds &&
+          (c.startTimeSeconds! + c.durationSeconds!) * 1000 < now.getTime() &&
+          problems.some((p) => p.contestId === c.id),
+      )
+      .sort((a, b) => (b.startTimeSeconds ?? 0) - (a.startTimeSeconds ?? 0));
+  }
+  simulations() {
+    const h = this.active();
+    if (!h) return [];
+    return this.externalAll<Simulation>(`simulation:${h}`)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .map((session) => this.simulationReport(session));
+  }
+  simulationReport(session: Simulation) {
+    const h = this.active();
+    if (!h) throw new Error('请先绑定 Codeforces');
+    const catalog = this.get<Catalog>('catalog_cache', h, 'current');
+    const problems = catalog?.problems.filter((p) => p.contestId === session.contestId) ?? [];
+    const submissions = this.all<CFSubmission>('submissions', h);
+    const events = simulationEvents(session, submissions);
+    return {
+      ...session,
+      problems: problems.map((p) => ({
+        key: p.key,
+        name: p.name,
+        index: p.index,
+        url: p.url,
+        rating: p.rating,
+        tags: p.tags,
+        seenBefore: submissions.some(
+          (s) => problemKey(s) === p.key && s.creationTimeSeconds * 1000 < Date.parse(session.startedAt),
+        ),
+      })),
+      events,
+      solved: new Set(events.filter((e) => e.verdict === 'OK').map((e) => e.problemKey)).size,
+      ended:
+        !!session.finishedAt || Date.now() >= Date.parse(session.startedAt) + session.durationSeconds * 1000,
+    };
+  }
+  startSimulation(contestId: number): ReturnType<CoreStore['simulationReport']> {
+    const h = this.active();
+    if (!h) throw new Error('请先绑定 Codeforces');
+    const contest = this.simulationContests().find((c) => c.id === contestId);
+    if (!contest?.durationSeconds) throw new Error('比赛资料不完整或尚未结束');
+    if (this.simulations().some((s) => !s.ended)) throw new Error('请先结束正在进行的模拟赛');
+    const session = simulationSchema.parse({
+      id: crypto.randomUUID(),
+      contestId,
+      contestName: contest.name,
+      startedAt: new Date().toISOString(),
+      durationSeconds: contest.durationSeconds,
+      finishedAt: null,
+      manual: [],
+    });
+    this.externalPut(`simulation:${h}`, session.id, session);
+    return this.simulationReport(session);
+  }
+  updateSimulation(id: string, action: 'finish' | 'record', input?: unknown) {
+    const h = this.active();
+    if (!h) throw new Error('请先绑定 Codeforces');
+    const current = this.externalGet<Simulation>(`simulation:${h}`, id);
+    if (!current) throw new Error('模拟赛不存在');
+    const report = this.simulationReport(current);
+    if (report.ended) throw new Error('模拟赛已结束');
+    const next: Simulation = structuredClone(current);
+    if (action === 'finish') next.finishedAt = new Date().toISOString();
+    else {
+      const record = z.object({ problemKey: z.string(), verdict: z.enum(['OK', 'FAILED']) }).parse(input);
+      if (!report.problems.some((p) => p.key === record.problemKey)) throw new Error('题目不属于本场比赛');
+      next.manual.push({ ...record, at: new Date().toISOString() });
+    }
+    this.externalPut(`simulation:${h}`, id, simulationSchema.parse(next));
+    return this.simulationReport(next);
+  }
+  private priorNewKeys(profile: string, date: string): Set<string> {
+    return new Set(
+      this.all<DailyPlan>('daily_plans', profile)
+        .filter((plan) => plan.date < date)
+        .flatMap((plan) => plan.newKeys),
+    );
+  }
+  private weeklyCoverage(profile: string, date: string): Record<string, number> {
+    const counts: Record<string, number> = {};
+    const catalog = this.get<Catalog>('catalog_cache', profile, 'current');
+    const byKey = new Map(catalog?.problems.map((p) => [p.key, p]));
+    for (const plan of this.all<DailyPlan>('daily_plans', profile)) {
+      if (plan.date < weekStart(new Date(`${date}T12:00:00`)) || plan.date >= date) continue;
+      for (const key of plan.newKeys) {
+        const problem = byKey.get(key);
+        if (!problem) continue;
+        for (const category of categories(problem.tags)) counts[category] = (counts[category] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
   private combinedPlan(date: string): DailyPlan | undefined {
     return this.activeAtcoder() ? this.externalGet<DailyPlan>(this.combinedNamespace(), date) : undefined;
   }
@@ -590,7 +927,8 @@ export class CoreStore {
     const cfPlan = cf ? this.get<DailyPlan>('daily_plans', cf, date) : undefined;
     const inherited = cf ? this.externalGet<DailyPlan>(`daily:-:${ac.toLowerCase()}`, date) : undefined;
     let plan = this.combinedPlan(date);
-    if (!plan) {
+    const weeklyGoal = this.weeklyGoal(now);
+    if (!plan || (!plan.catalogReady && !!weeklyGoal && !plan.newKeys.length)) {
       const rows = [...(cf ? this.problems(cf) : []), ...this.problems(acProfile)].filter(
         (p) => !p.review.ignored,
       );
@@ -637,28 +975,40 @@ export class CoreStore {
       const cfCatalog = cf ? this.get<Catalog>('catalog_cache', cf, 'current') : undefined;
       const cfKnown = cf ? this.all<Problem>('problems', cf) : [];
       const cfSubmissions = cf ? this.all<CFSubmission>('submissions', cf) : [];
-      const newKeys =
-        cfPlan?.newKeys ??
-        inherited?.newKeys ??
-        (cf
-          ? chooseNewProblems(
+      const picked =
+        cf && weeklyGoal
+          ? chooseWeeklyProblems(
               cfCatalog?.problems ?? [],
-              new Set([...cfKnown.map((p) => p.key), ...review.map((p) => p.key)]),
+              new Set([
+                ...cfKnown.map((p) => p.key),
+                ...review.map((p) => p.key),
+                ...this.priorNewKeys(cf, date),
+              ]),
               this.combinedStatistics('all', now).mastery,
               targetDifficulty(cfKnown, cfSubmissions, problemKey),
               date,
+              weeklyGoal,
+              this.weeklyCoverage(cf, date),
             )
-          : []);
+          : { keys: [], reasons: {}, shortage: null };
+      const newKeys =
+        cfPlan?.catalogReady || cfPlan?.newKeys.length
+          ? cfPlan.newKeys
+          : inherited
+            ? inherited.newKeys
+            : picked.keys;
       plan = dailyPlanSchema.parse({
         date,
         review,
         newKeys,
-        catalogReady: !!cfPlan?.catalogReady,
+        newReasons: cfPlan?.newReasons ?? picked.reasons,
+        newShortage: cfPlan?.newShortage ?? picked.shortage,
+        catalogReady: !!cfCatalog && !!weeklyGoal,
         createdAt: now.toISOString(),
       });
       this.externalPut(this.combinedNamespace(), date, plan);
     }
-    if (cf && !cfPlan)
+    if (cf && (!cfPlan || (!cfPlan.catalogReady && plan.catalogReady)))
       this.put(
         'daily_plans',
         cf,
@@ -667,7 +1017,9 @@ export class CoreStore {
           date,
           review: plan.review.filter((p) => !p.key.startsWith('atcoder:')),
           newKeys: plan.newKeys,
-          catalogReady: true,
+          newReasons: plan.newReasons,
+          newShortage: plan.newShortage,
+          catalogReady: plan.catalogReady,
           createdAt: plan.createdAt,
         }),
       );
@@ -684,11 +1036,15 @@ export class CoreStore {
       recentCheckedAt: [cfDay?.recentCheckedAt, acDay.recentCheckedAt].filter(Boolean).sort().at(0) ?? null,
       catalogCount: cfDay?.catalogCount ?? 0,
       mastery: this.combinedStatistics('all', now).mastery,
+      weeklyGoal,
+      newShortage: plan.newShortage ?? null,
     };
   }
   enrich(h: string, contests: CFContest[], ratings: CFRating[], problems: CFSubmission['problem'][]) {
     const relevant = new Set(this.all<Problem>('problems', h).map((p) => p.contestId));
     this.transaction(() => {
+      if (contests.length)
+        this.externalPut(`cf-contests:${h}`, 'current', z.array(contestSchema).parse(contests));
       for (const c of contests)
         if (relevant.has(c.id) || ratings.some((r) => r.contestId === c.id))
           this.put('contests', h, String(c.id), {
@@ -745,7 +1101,8 @@ export class CoreStore {
     const reviews = new Map(rows.map((p) => [p.key, p.review]));
     const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey);
     let plan = this.get<DailyPlan>('daily_plans', h, date);
-    if (!plan || (!plan.catalogReady && catalog)) {
+    const weeklyGoal = h === this.active() ? this.weeklyGoal(now) : null;
+    if (!plan || (!plan.catalogReady && catalog && !!weeklyGoal && !plan.newKeys.length)) {
       const eligible = rows.filter((p) => !p.review.ignored);
       const carry = eligible
         .filter(
@@ -785,18 +1142,29 @@ export class CoreStore {
             .map((p) => ({ key: p.key, kind: 'due' as const })),
           ...pending.map((p) => ({ key: p.key, kind: 'pending' as const })),
         ].slice(0, 5);
-      const blocked = new Set([...known.map((p) => p.key), ...review.map((p) => p.key)]);
+      const blocked = new Set([
+        ...known.map((p) => p.key),
+        ...review.map((p) => p.key),
+        ...this.priorNewKeys(h, date),
+      ]);
+      const picked = weeklyGoal
+        ? chooseWeeklyProblems(
+            catalog?.problems ?? [],
+            blocked,
+            mastery,
+            targetDifficulty(known, submissions, problemKey),
+            date,
+            weeklyGoal,
+            this.weeklyCoverage(h, date),
+          )
+        : { keys: [] as string[], reasons: {} as Record<string, string>, shortage: null };
       plan = dailyPlanSchema.parse({
         date,
         review,
-        newKeys: chooseNewProblems(
-          catalog?.problems ?? [],
-          blocked,
-          mastery,
-          targetDifficulty(known, submissions, problemKey),
-          date,
-        ),
-        catalogReady: !!catalog,
+        newKeys: picked.keys,
+        newReasons: picked.reasons,
+        newShortage: picked.shortage,
+        catalogReady: !!catalog && !!weeklyGoal,
         createdAt: plan?.createdAt ?? now.toISOString(),
       });
       if (
@@ -874,6 +1242,7 @@ export class CoreStore {
           completed: acceptedToday.has(key),
           attempted: submittedToday.has(key),
           nextReview: null,
+          recommendationReason: plan.newReasons?.[key],
         },
       ];
     });
@@ -886,6 +1255,8 @@ export class CoreStore {
         this.get<{ recentCheckedAt: string | null }>('training_meta', h, 'recent')?.recentCheckedAt ?? null,
       catalogCount: catalog?.problems.length ?? 0,
       mastery,
+      weeklyGoal,
+      newShortage: plan.newShortage ?? null,
     };
   }
   markRecentChecked(h: string, now = new Date()) {
@@ -1201,7 +1572,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 6,
+      version: 7,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
@@ -1276,10 +1647,44 @@ export class CoreStore {
       const id = `${row.namespace}\0${row.key}`;
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
+      if (row.namespace.startsWith('weekly:')) {
+        const parts = row.namespace.split(':');
+        if (
+          parts.length !== 3 ||
+          (parts[1] !== '-' && !data.profiles.includes(parts[1])) ||
+          (parts[2] !== '-' && !data.profiles.includes(`ac~${parts[2]}`))
+        )
+          throw new Error('备份每周目标账号不一致');
+      }
+      if (
+        ['upsolve:', 'reason:', 'simulation:', 'cf-contests:'].some((prefix) =>
+          row.namespace.startsWith(prefix),
+        )
+      ) {
+        const profile = row.namespace.slice(row.namespace.indexOf(':') + 1);
+        if (!data.profiles.includes(profile)) throw new Error('备份训练数据账号不一致');
+      }
       if (row.namespace === 'atcoder-meta' && row.key === 'catalog')
         row.value = atcoderCatalogSchema.parse(row.value);
       else if (row.namespace.startsWith('daily:')) row.value = dailyPlanSchema.parse(row.value);
-      else if (row.namespace.startsWith('atcoder:') && row.key === 'history')
+      else if (row.namespace.startsWith('weekly:')) {
+        row.value = weeklyGoalSchema.parse(row.value);
+        if ((row.value as WeeklyGoal).week !== row.key) throw new Error('备份每周目标日期不一致');
+      } else if (row.namespace.startsWith('upsolve:')) {
+        row.value = upsolveSchema.parse(row.value);
+        if ((row.value as z.infer<typeof upsolveSchema>).key !== row.key)
+          throw new Error('备份补题编号不一致');
+      } else if (row.namespace.startsWith('reason:')) {
+        row.value = reasonSnapshotSchema.parse(row.value);
+        const item = row.value as ReasonSnapshot;
+        if (item.id !== row.key) throw new Error('备份错因快照编号不一致');
+      } else if (row.namespace.startsWith('simulation:')) {
+        row.value = simulationSchema.parse(row.value);
+        if ((row.value as Simulation).id !== row.key) throw new Error('备份模拟赛编号不一致');
+      } else if (row.namespace.startsWith('cf-contests:')) {
+        row.value = z.array(contestSchema).parse(row.value);
+        if (row.key !== 'current') throw new Error('备份 CF 比赛目录编号不一致');
+      } else if (row.namespace.startsWith('atcoder:') && row.key === 'history')
         row.value = atcoderHistorySchema.parse(row.value);
       else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('report:'))
         row.value = atcoderReportSchema.parse(row.value);
@@ -1360,6 +1765,7 @@ export class CoreStore {
       const keys = [...plan.review.map((item) => item.key), ...plan.newKeys];
       if (
         new Set(keys).size !== keys.length ||
+        Object.keys(plan.newReasons ?? {}).some((key) => !plan.newKeys.includes(key)) ||
         plan.review.some((item) => !known.get('problems')!.has(`${row.profile}\0${item.key}`)) ||
         plan.newKeys.some(
           (key) =>
@@ -1374,6 +1780,7 @@ export class CoreStore {
       const keys = [...plan.review.map((i) => i.key), ...plan.newKeys];
       if (
         new Set(keys).size !== keys.length ||
+        Object.keys(plan.newReasons ?? {}).some((key) => !plan.newKeys.includes(key)) ||
         plan.review.some((i) => !data.profiles.some((h) => known.get('problems')!.has(`${h}\0${i.key}`))) ||
         plan.newKeys.some(
           (k) =>

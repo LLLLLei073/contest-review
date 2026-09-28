@@ -12,18 +12,26 @@ now.setHours(12, 0, 0, 0);
 const tomorrow = new Date(now);
 tomorrow.setDate(tomorrow.getDate() + 1);
 const make = (id: number, index: string, verdict = 'WRONG_ANSWER', time = now): CFSubmission => ({
-  id, contestId: 2000, creationTimeSeconds: Math.floor(time.getTime() / 1000),
+  id,
+  contestId: 2000,
+  creationTimeSeconds: Math.floor(time.getTime() / 1000),
   problem: { contestId: 2000, index, name: 'Problem ' + index, rating: 1000, tags: ['math'] },
-  verdict, programmingLanguage: 'GNU C++20', author: { participantType: 'PRACTICE' },
+  verdict,
+  programmingLanguage: 'GNU C++20',
+  author: { participantType: 'PRACTICE' },
 });
 const catalog = (): CFSubmission['problem'][] =>
   Array.from({ length: 20 }, (_, i) => ({
-    contestId: 2001 + i, index: 'A', name: 'New ' + i, rating: 800 + i * 100,
+    contestId: 2001 + i,
+    index: 'A',
+    name: 'New ' + i,
+    rating: 800 + i * 100,
     tags: [i % 2 ? 'math' : 'dp'],
   }));
 function store() {
   const s = new Store(':memory:');
   s.activate('tester');
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, now);
   return s;
 }
 
@@ -32,21 +40,36 @@ test('daily lanes select overdue first, then pending; shortage stays below five 
   for (let i = 0; i < 4; i++) {
     const key = `2000:${String.fromCharCode(65 + i)}`;
     s.ingest('tester', [make(i + 1, key.split(':')[1])]);
-    if (i < 2) s.saveReview('tester', key, {
-      ...emptyReview(), status: 'reviewing', nextReview: new Date(now.getTime() - (i + 1) * 86400000).toISOString(),
-    });
+    if (i < 2)
+      s.saveReview('tester', key, {
+        ...emptyReview(),
+        status: 'reviewing',
+        nextReview: new Date(now.getTime() - (i + 1) * 86400000).toISOString(),
+      });
   }
   s.enrich('tester', [], [], catalog());
   const first = s.trainingDay('tester', now);
-  assert.deepEqual(first.review.map((p) => [p.key, p.kind]), [
-    ['2000:B', 'due'], ['2000:A', 'due'], ['2000:C', 'pending'], ['2000:D', 'pending'],
-  ]);
+  assert.deepEqual(
+    first.review.map((p) => [p.key, p.kind]),
+    [
+      ['2000:B', 'due'],
+      ['2000:A', 'due'],
+      ['2000:C', 'pending'],
+      ['2000:D', 'pending'],
+    ],
+  );
   assert.equal(first.newProblems.length, 5);
   assert.equal(new Set([...first.review, ...first.newProblems].map((p) => p.key)).size, 9);
   s.ingest('tester', [make(100, 'E')]);
   const again = s.trainingDay('tester', now);
-  assert.deepEqual(again.review.map((p) => p.key), first.review.map((p) => p.key));
-  assert.deepEqual(again.newProblems.map((p) => p.key), first.newProblems.map((p) => p.key));
+  assert.deepEqual(
+    again.review.map((p) => p.key),
+    first.review.map((p) => p.key),
+  );
+  assert.deepEqual(
+    again.newProblems.map((p) => p.key),
+    first.newProblems.map((p) => p.key),
+  );
   s.close();
 });
 
@@ -60,13 +83,30 @@ test('new lane is never-submitted, fixed all day and responds to AC, pending and
   const [ac, pending, fail] = first.newProblems;
   const makeFor = (id: number, key: string, verdict: string, time = now): CFSubmission => {
     const [contestId, index] = key.split(':');
-    return { ...make(id, index, verdict, time), contestId: Number(contestId),
-      problem: { contestId: Number(contestId), index, name: 'New task', tags: ['dp'], rating: 1000 } };
+    return {
+      ...make(id, index, verdict, time),
+      contestId: Number(contestId),
+      problem: { contestId: Number(contestId), index, name: 'New task', tags: ['dp'], rating: 1000 },
+    };
   };
-  s.ingest('tester', [makeFor(101, ac.key, 'OK'), makeFor(102, pending.key, 'TESTING'), makeFor(103, fail.key, 'WRONG_ANSWER')]);
+  s.ingest('tester', [
+    makeFor(101, ac.key, 'OK'),
+    makeFor(102, pending.key, 'TESTING'),
+    makeFor(103, fail.key, 'WRONG_ANSWER'),
+  ]);
   const second = s.trainingDay('tester', now);
-  assert.deepEqual(second.newProblems.map((p) => p.key), first.newProblems.map((p) => p.key));
-  assert.deepEqual(second.newProblems.slice(0, 3).map((p) => [p.completed, p.attempted]), [[true, true], [false, true], [false, true]]);
+  assert.deepEqual(
+    second.newProblems.map((p) => p.key),
+    first.newProblems.map((p) => p.key),
+  );
+  assert.deepEqual(
+    second.newProblems.slice(0, 3).map((p) => [p.completed, p.attempted]),
+    [
+      [true, true],
+      [false, true],
+      [false, true],
+    ],
+  );
   s.ingest('tester', [makeFor(102, pending.key, 'OK')]);
   assert.equal(s.trainingDay('tester', now).newProblems[1].completed, true);
   const next = s.trainingDay('tester', tomorrow);
@@ -96,7 +136,10 @@ test('same-day AC confirms redo, reflection then evaluation advance separately',
   assert.equal(s.review('tester', '2000:A').stage, 1);
   assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.completed, true);
   assert.throws(() => s.attempt('tester', '2000:A', { result: 'independent', minutes: 1, note: '' }, now));
-  assert.deepEqual(first.review.map((p) => p.key), s.trainingDay('tester', now).review.map((p) => p.key));
+  assert.deepEqual(
+    first.review.map((p) => p.key),
+    s.trainingDay('tester', now).review.map((p) => p.key),
+  );
   s.close();
 });
 
@@ -132,7 +175,10 @@ test('late subjective evaluation schedules from AC day, so overdue remains overd
   s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), wrongIdea: '漏看条件' });
   assert.equal(s.trainingDay('tester', late).review[0].phase, 'evaluation');
   s.attempt('tester', '2000:A', { result: 'independent', minutes: 20, note: '' }, late);
-  assert.equal(localDay(new Date(s.review('tester', '2000:A').nextReview!)), localDay(new Date(now.getTime() + 3 * 86400000)));
+  assert.equal(
+    localDay(new Date(s.review('tester', '2000:A').nextReview!)),
+    localDay(new Date(now.getTime() + 3 * 86400000)),
+  );
   assert.equal(s.trainingDay('tester', late).review[0].completed, true);
   s.close();
 });
@@ -140,23 +186,47 @@ test('late subjective evaluation schedules from AC day, so overdue remains overd
 test('mastery uses unique problems, transparent shrinkage and inverse allocation', () => {
   const s = store();
   s.ingest('tester', [make(1, 'A'), make(2, 'A', 'OK'), make(3, 'B')]);
-  const areas = masteryAreas(s.all('problems', 'tester'), s.all('submissions', 'tester'), [], new Map(s.problems('tester').map((p) => [p.key, p.review])), problemKey);
+  const areas = masteryAreas(
+    s.all('problems', 'tester'),
+    s.all('submissions', 'tester'),
+    [],
+    new Map(s.problems('tester').map((p) => [p.key, p.review])),
+    problemKey,
+  );
   assert.equal(areas.find((a) => a.name === '数学')?.samples, 2);
   assert.equal(areas.find((a) => a.name === '数学')?.score, 48);
   assert.equal(areas.find((a) => a.name === '图与树')?.score, 50);
   const pool: Catalog['problems'] = categoryNames.flatMap((name, i) =>
-    Array.from({ length: 5 }, (_, j) => ({ key: `${3000 + i * 5 + j}:A`, contestId: 3000 + i * 5 + j,
-      index: 'A', name: name, rating: 1000, tags: [({
-        '实现与模拟': 'implementation', '贪心与构造': 'greedy', '数学': 'math',
-        '数据结构': 'data structures', '图与树': 'graphs', '动态规划': 'dp',
-        '字符串': 'strings', '搜索与技巧': 'dfs and similar',
-      } as Record<string, string>)[name]], url: 'https://codeforces.com/problemset' })),
+    Array.from({ length: 5 }, (_, j) => ({
+      key: `${3000 + i * 5 + j}:A`,
+      contestId: 3000 + i * 5 + j,
+      index: 'A',
+      name: name,
+      rating: 1000,
+      tags: [
+        (
+          {
+            实现与模拟: 'implementation',
+            贪心与构造: 'greedy',
+            数学: 'math',
+            数据结构: 'data structures',
+            图与树: 'graphs',
+            动态规划: 'dp',
+            字符串: 'strings',
+            搜索与技巧: 'dfs and similar',
+          } as Record<string, string>
+        )[name],
+      ],
+      url: 'https://codeforces.com/problemset',
+    })),
   );
   const skewed = categoryNames.map((name) => ({ name, score: name === '数学' ? 0 : 100, samples: 20 }));
   const chosen = chooseNewProblems(pool, new Set(), skewed, 1000, '2026-09-26');
   assert.equal(chosen.length, 5);
   assert.equal(new Set(chosen).size, 5);
-  assert.ok(chosen.filter((key) => Number(key.split(':')[0]) >= 3010 && Number(key.split(':')[0]) < 3015).length >= 2);
+  assert.ok(
+    chosen.filter((key) => Number(key.split(':')[0]) >= 3010 && Number(key.split(':')[0]) < 3015).length >= 2,
+  );
   s.close();
 });
 
@@ -165,9 +235,12 @@ test('catalog and daily plan survive backup; legacy v3 has no catalog and needs 
   s.enrich('tester', [], [], catalog());
   const original = s.trainingDay('tester', now);
   const backup = s.backup();
-  assert.equal(backup.version, 6);
+  assert.equal(backup.version, 7);
   s.restore(backup);
-  assert.deepEqual(s.trainingDay('tester', now).newProblems.map((p) => p.key), original.newProblems.map((p) => p.key));
+  assert.deepEqual(
+    s.trainingDay('tester', now).newProblems.map((p) => p.key),
+    original.newProblems.map((p) => p.key),
+  );
   const legacy = structuredClone(backup);
   legacy.version = 3;
   delete legacy.tables.catalog_cache;
@@ -193,20 +266,26 @@ test('daily plans and catalog remain isolated when switching handles', () => {
   assert.equal(empty.catalogCount, 0);
   assert.equal(empty.newProblems.length, 0);
   s.enrich('other', [], [], catalog().slice(0, 2));
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, now);
   assert.equal(s.trainingDay('other', now).newProblems.length, 2);
-  assert.deepEqual(s.trainingDay('tester', now).newProblems.map((p) => p.key), first.newProblems.map((p) => p.key));
+  assert.deepEqual(
+    s.trainingDay('tester', now).newProblems.map((p) => p.key),
+    first.newProblems.map((p) => p.key),
+  );
   s.close();
 });
 
 test('recent check preserves cache on failure and deduplicates concurrent refreshes', async () => {
   const s = store();
   let calls = 0;
-  const service = new TrainingService(s, { call: async <T>() => {
-    calls++;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    if (calls === 2) throw new Error('offline');
-    return [make(9, 'A', 'OK')] as T;
-  } });
+  const service = new TrainingService(s, {
+    call: async <T>() => {
+      calls++;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (calls === 2) throw new Error('offline');
+      return [make(9, 'A', 'OK')] as T;
+    },
+  });
   const [a, b] = await Promise.all([service.recent('tester'), service.recent('tester')]);
   assert.deepEqual(a, b);
   assert.equal(calls, 1);
@@ -221,12 +300,21 @@ test('recent check preserves cache on failure and deduplicates concurrent refres
 test('local training endpoints return saved plan and recent-check status', async () => {
   const s = store();
   s.enrich('tester', [], [], catalog());
-  const { app } = await buildApp(s, { call: async <T>(method: string) =>
-    (method === 'user.status' ? [make(900, 'Z', 'OK')] : []) as T });
-  const day = await app.inject({ method: 'GET', url: '/api/training/day', headers: { host: '127.0.0.1:3210' } });
+  const { app } = await buildApp(s, {
+    call: async <T>(method: string) => (method === 'user.status' ? [make(900, 'Z', 'OK')] : []) as T,
+  });
+  const day = await app.inject({
+    method: 'GET',
+    url: '/api/training/day',
+    headers: { host: '127.0.0.1:3210' },
+  });
   assert.equal(day.statusCode, 200);
   assert.equal(day.json().newProblems.length, 5);
-  const check = await app.inject({ method: 'POST', url: '/api/training/recent', headers: { host: '127.0.0.1:3210', 'x-review-app': '1' } });
+  const check = await app.inject({
+    method: 'POST',
+    url: '/api/training/recent',
+    headers: { host: '127.0.0.1:3210', 'x-review-app': '1' },
+  });
   assert.equal(check.statusCode, 200);
   assert.equal(check.json().error, null);
   assert.ok(check.json().checkedAt);

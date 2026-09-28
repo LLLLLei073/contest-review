@@ -14,6 +14,7 @@ import {
 } from '../../shared/domain';
 import Markdown from '../components/Markdown.vue';
 import { categoryNames } from '../../shared/training';
+import { reviewQualityHints } from '../../shared/training-extras';
 const route = useRoute(),
   key = String(route.params.key);
 const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[] } | null>(null),
@@ -41,6 +42,7 @@ const fields = [
   { key: 'counterexample', label: '关键反例与边界', hint: '留下一个最小反例，提醒未来的自己。' },
 ] as const;
 const dirty = computed(() => JSON.stringify(draft.value) !== snapshot.value);
+const qualityHints = computed(() => reviewQualityHints(draft.value));
 const nextDate = computed({
   get: () => (draft.value.nextReview ? localDate(draft.value.nextReview) : ''),
   set: (v) => (draft.value.nextReview = v ? new Date(v + 'T09:00:00').toISOString() : null),
@@ -243,6 +245,10 @@ onBeforeRouteLeave(async () => {
             }}</span
             ><button :disabled="busy" @click="save()"><Save :size="15" />保存笔记</button>
           </div>
+          <details v-if="qualityHints.length" class="review-quality small">
+            <summary>复盘质量提示（可跳过）</summary>
+            <p v-for="hint in qualityHints" :key="hint">{{ hint }}</p>
+          </details>
         </div>
         <div v-if="tab === 'submissions'" class="editor-body">
           <p class="subtle small">AC 表示通过评测；是否真正掌握，由你的独立重做记录决定。</p>

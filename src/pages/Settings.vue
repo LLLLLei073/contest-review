@@ -137,6 +137,7 @@ async function download(previous = false) {
     a.download = `contest-review-${previous ? 'before-restore-' : ''}${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (!previous) await api('/training/backup-exported', {});
     notify('备份已导出');
   } catch (e) {
     error.value = (e as Error).message;

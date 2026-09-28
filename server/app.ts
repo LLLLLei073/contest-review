@@ -187,6 +187,49 @@ export async function buildApp(
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
   app.get('/api/training/day', async () => store.combinedTrainingDay());
+  app.get('/api/training/weekly', async () => store.weeklyProgress());
+  app.put('/api/training/weekly', async (req) => store.saveWeeklyGoal(req.body));
+  app.get('/api/training/upsolve', async () => store.upsolveItems());
+  app.post('/api/training/upsolve', async (req) => store.addUpsolve(req.body));
+  app.post('/api/training/upsolve/contest', async (req) => {
+    const { source, contestId } = z
+      .object({ source: z.enum(['cf', 'atcoder']), contestId: z.string().min(1) })
+      .parse(req.body);
+    return store.addContestUpsolve(source, contestId);
+  });
+  app.delete<{ Params: { source: 'cf' | 'atcoder'; key: string } }>(
+    '/api/training/upsolve/:source/:key',
+    async (req) => {
+      const source = z.enum(['cf', 'atcoder']).parse(req.params.source);
+      store.removeUpsolve(source, req.params.key);
+      return { ok: true };
+    },
+  );
+  app.get('/api/training/reason-trend', async (req) =>
+    store.reasonTrend(
+      z.object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') }).parse(req.query).source,
+    ),
+  );
+  app.get('/api/training/health', async () => store.dataHealth());
+  app.post('/api/training/backup-exported', async () => {
+    store.markBackupExported();
+    return { ok: true };
+  });
+  app.get('/api/training/simulations/contests', async () => store.simulationContests());
+  app.get('/api/training/simulations', async () => store.simulations());
+  app.post('/api/training/simulations', async (req) =>
+    store.startSimulation(z.object({ contestId: z.number().int().positive() }).parse(req.body).contestId),
+  );
+  app.post<{ Params: { id: string } }>('/api/training/simulations/:id', async (req) => {
+    const data = z
+      .object({
+        action: z.enum(['finish', 'record']),
+        problemKey: z.string().optional(),
+        verdict: z.enum(['OK', 'FAILED']).optional(),
+      })
+      .parse(req.body);
+    return store.updateSimulation(req.params.id, data.action, data);
+  });
   app.post('/api/training/recent', async (req) => {
     const h = store.active();
     const { force } = z.object({ force: z.boolean().default(false) }).parse(req.body ?? {});

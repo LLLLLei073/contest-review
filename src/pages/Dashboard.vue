@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowRight, CalendarDays, ExternalLink, RefreshCw } from 'lucide-vue-next';
 import { api, settings, job, fullDate, notify } from '../api';
 import type { TrainingDay, TrainingTask } from '../../shared/training';
+import { categoryNames, type CategoryName } from '../../shared/training';
 
 const day = ref<TrainingDay | null>(null);
 const error = ref('');
@@ -14,6 +15,9 @@ const activeKey = ref('');
 const minutes = ref(0);
 const note = ref('');
 const result = ref<'independent' | 'hint' | 'failed'>('independent');
+const goalMode = ref<'focus' | 'balanced'>('focus');
+const goalCategories = ref<CategoryName[]>([]);
+const goalEditing = ref(false);
 const date = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
 const reviewDone = computed(() => day.value?.review.filter((task) => task.completed).length ?? 0);
 const newDone = computed(() => day.value?.newProblems.filter((task) => task.completed).length ?? 0);
@@ -30,7 +34,13 @@ async function load() {
   error.value = '';
   try {
     const next = await api<TrainingDay>('/training/day');
-    if (`${settings.value.activeHandle}:${settings.value.activeAtcoder}` === handle) day.value = next;
+    if (`${settings.value.activeHandle}:${settings.value.activeAtcoder}` === handle) {
+      day.value = next;
+      if (next.weeklyGoal && !goalEditing.value) {
+        goalMode.value = next.weeklyGoal.mode;
+        goalCategories.value = next.weeklyGoal.categories as CategoryName[];
+      } else if (!next.weeklyGoal && !goalEditing.value) goalCategories.value = [];
+    }
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -56,6 +66,30 @@ async function checkRecent(force = false) {
     recentError.value = (e as Error).message;
   } finally {
     checking.value = false;
+  }
+}
+function setGoalMode(mode: 'focus' | 'balanced') {
+  goalMode.value = mode;
+  if (mode === 'focus') goalCategories.value = goalCategories.value.slice(0, 1);
+}
+function toggleGoalCategory(category: CategoryName) {
+  if (goalMode.value === 'focus') goalCategories.value = [category];
+  else
+    goalCategories.value = goalCategories.value.includes(category)
+      ? goalCategories.value.filter((item) => item !== category)
+      : [...goalCategories.value, category];
+}
+async function saveGoal() {
+  busy.value = true;
+  try {
+    await api('/training/weekly', { mode: goalMode.value, categories: goalCategories.value }, 'PUT');
+    goalEditing.value = false;
+    await load();
+    notify('本周训练目标已保存');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
   }
 }
 function openAttempt(task: TrainingTask) {
@@ -130,6 +164,53 @@ watch(
     </div>
   </div>
   <template v-else>
+    <section v-if="settings.activeHandle" class="panel weekly-goal">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">WEEKLY FOCUS</span>
+          <h2>本周训练目标</h2>
+          <p v-if="day?.weeklyGoal">
+            {{ day.weeklyGoal.mode === 'focus' ? '专注' : '均衡' }} ·
+            {{ day.weeklyGoal.categories.join('、') }}。每天至少 2 道相关新题。
+          </p>
+          <p v-else>请选择本周方向，再生成今天的新知题单。复习题照常可做。</p>
+        </div>
+        <button class="small-button" @click="goalEditing = !goalEditing">
+          {{ day?.weeklyGoal ? '调整目标' : '选择目标' }}
+        </button>
+      </div>
+      <div v-if="goalEditing || !day?.weeklyGoal" class="weekly-goal-picker">
+        <div class="button-row">
+          <button :class="{ primary: goalMode === 'focus' }" @click="setGoalMode('focus')">
+            专注一个领域
+          </button>
+          <button :class="{ primary: goalMode === 'balanced' }" @click="setGoalMode('balanced')">
+            均衡多个领域
+          </button>
+        </div>
+        <div class="reason-picker">
+          <label
+            v-for="category in categoryNames"
+            :key="category"
+            :class="{ picked: goalCategories.includes(category) }"
+          >
+            <input
+              type="checkbox"
+              :checked="goalCategories.includes(category)"
+              @change="toggleGoalCategory(category)"
+            />{{ category }}</label
+          >
+        </div>
+        <button
+          class="primary"
+          :disabled="busy || (goalMode === 'focus' ? goalCategories.length !== 1 : goalCategories.length < 2)"
+          @click="saveGoal"
+        >
+          保存本周目标
+        </button>
+        <p v-if="day?.weeklyGoal" class="small subtle">今天已生成的题单保持不变；调整从次日生效。</p>
+      </div>
+    </section>
     <div v-if="job?.status === 'running'" class="alert">
       <RefreshCw :size="16" class="spin" />{{ job.message }} · 已读取 {{ job.processed }} 条
     </div>
@@ -188,9 +269,7 @@ watch(
             <div class="daily-task-content">
               <strong>{{ task.name }}</strong>
               <div class="daily-meta">
-                {{
-                  task.source === 'atcoder' ? 'AtCoder · ' + task.key.slice(8) : task.key.replace(':', '')
-                }}
+                {{ task.source === 'atcoder' ? 'AtCoder · ' + task.key.slice(8) : task.key.replace(':', '') }}
                 · {{ task.rating ?? '暂无难度' }} ·
                 {{ task.tags.slice(0, 2).join(' / ') || '暂无标签' }}
               </div>
@@ -254,7 +333,7 @@ watch(
             <h2>
               新知 <span class="count">{{ newDone }}/{{ day?.newProblems.length ?? 0 }}</span>
             </h2>
-            <p>每天 5 道从未提交过的 CF 题，按薄弱领域分配。</p>
+            <p>每天最多 5 道从未提交过的 CF 题，优先安排本周目标领域。</p>
           </div>
           <div
             class="daily-progress"
@@ -274,8 +353,9 @@ watch(
           {{ settings.activeHandle ? '尚无完整公开题库。' : '新知题仅从 Codeforces 选择。'
           }}<RouterLink to="/settings">请先绑定并同步 Codeforces</RouterLink>；已有数据仍可离线复习。
         </div>
+        <div v-else-if="!day.weeklyGoal" class="quiet-empty">选择本周目标后生成今天的新知题单。</div>
         <div v-else-if="!day.newProblems.length" class="quiet-empty">
-          暂无符合条件的新题；今天不会用旧题凑数。
+          {{ day.newShortage || '暂无符合条件的新题；今天不会用旧题凑数。' }}
         </div>
         <article v-for="(task, index) in day?.newProblems ?? []" :key="task.key" class="daily-task">
           <div class="daily-task-main">
@@ -286,6 +366,9 @@ watch(
                 {{ task.key.replace(':', '') }} · {{ task.rating ?? '暂无难度' }} ·
                 {{ task.tags.slice(0, 2).join(' / ') || '暂无标签' }}
               </div>
+              <p v-if="task.recommendationReason" class="small subtle">
+                推荐原因：{{ task.recommendationReason }}
+              </p>
             </div>
             <Transition name="task-state" mode="out-in"
               ><span
@@ -302,7 +385,7 @@ watch(
           </div>
         </article>
         <p v-if="day && day.catalogCount && day.newProblems.length < 5" class="daily-footnote">
-          符合条件的候选不足 5 道，今天安排了 {{ day.newProblems.length }} 道。
+          {{ day.newShortage || `符合条件的候选不足 5 道，今天安排了 ${day.newProblems.length} 道。` }}
         </p>
       </section>
     </div>

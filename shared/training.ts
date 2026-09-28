@@ -30,6 +30,7 @@ export interface TrainingTask {
   completed: boolean;
   attempted: boolean;
   nextReview: string | null;
+  recommendationReason?: string;
 }
 export interface TrainingDay {
   date: string;
@@ -39,6 +40,8 @@ export interface TrainingDay {
   recentCheckedAt: string | null;
   catalogCount: number;
   mastery: MasteryArea[];
+  weeklyGoal?: { week: string; mode: 'focus' | 'balanced'; categories: string[] } | null;
+  newShortage?: string | null;
 }
 export const catalogSchema = z.object({
   fetchedAt: z.string().datetime(),
@@ -67,6 +70,8 @@ export const dailyPlanSchema = z.object({
     )
     .max(5),
   newKeys: z.array(z.string()).max(5),
+  newReasons: z.record(z.string(), z.string().max(500)).optional(),
+  newShortage: z.string().max(500).nullable().optional(),
   catalogReady: z.boolean().default(false),
   createdAt: z.string().datetime(),
 });

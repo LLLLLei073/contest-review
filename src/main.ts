@@ -12,6 +12,7 @@ const router = createRouter({
     { path: '/problems', component: () => import('./pages/Problems.vue') },
     { path: '/problems/:key', component: () => import('./pages/ProblemDetail.vue') },
     { path: '/contests', component: () => import('./pages/Contests.vue') },
+    { path: '/simulation', component: () => import('./pages/Simulation.vue') },
     { path: '/statistics', component: () => import('./pages/Statistics.vue') },
     { path: '/settings', component: () => import('./pages/Settings.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },

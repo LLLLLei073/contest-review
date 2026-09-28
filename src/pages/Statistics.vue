@@ -1,12 +1,28 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue';
 import { ChartNoAxesCombined } from 'lucide-vue-next';
-import { api } from '../api';
+import { api, fullDate, notify } from '../api';
 import type { Statistics } from '../../shared/domain';
+import type { UpsolveItem } from '../../shared/training-extras';
+import type { WeeklyGoal } from '../../shared/weekly';
 import { useSpringValues } from '../motion';
 const stats = ref<Statistics | null>(null),
   error = ref('');
 const source = ref<'all' | 'cf' | 'atcoder'>('all');
+const weekly = ref<{
+  goal: WeeklyGoal | null;
+  assigned: number;
+  completed: number;
+  coverage: Record<string, number>;
+} | null>(null);
+const upsolve = ref<UpsolveItem[]>([]);
+const reasonTrend = ref<{ week: string; samples: number; reasons: { name: string; count: number }[] }[]>([]);
+const health = ref<{
+  cf: { handle: string; sync: string | null; catalog: string | null; problems: number; rated: number };
+  atcoder: { handle: string; sync: string | null; catalog: string | null; problems: number; rated: number };
+  pendingVerdicts: number;
+  lastBackup: string | null;
+} | null>(null);
 const radarSpring = useSpringValues(Array(8).fill(0));
 let alive = true;
 const maximum = computed(() =>
@@ -26,9 +42,20 @@ async function load() {
     if (!alive) return;
     stats.value = next;
     radarSpring.setTarget(next.mastery.map((area) => area.score));
+    [weekly.value, upsolve.value, reasonTrend.value, health.value] = await Promise.all([
+      api<NonNullable<typeof weekly.value>>('/training/weekly'),
+      api<UpsolveItem[]>('/training/upsolve'),
+      api<typeof reasonTrend.value>('/training/reason-trend?source=' + source.value),
+      api<NonNullable<typeof health.value>>('/training/health'),
+    ]);
   } catch (e) {
     if (alive) error.value = (e as Error).message;
   }
+}
+async function removeUpsolve(item: UpsolveItem) {
+  await api(`/training/upsolve/${item.source}/${encodeURIComponent(item.key)}`, {}, 'DELETE');
+  upsolve.value = await api('/training/upsolve');
+  notify('已从补题清单移除');
 }
 onMounted(load);
 onBeforeUnmount(() => {
@@ -56,7 +83,91 @@ onBeforeUnmount(() => {
     >
   </div>
   <template v-if="stats"
-    ><div class="metrics">
+    ><section v-if="weekly" class="panel training-extra-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">WEEKLY FOCUS</span>
+          <h2>本周目标</h2>
+        </div>
+      </div>
+      <p v-if="weekly.goal">
+        {{ weekly.goal.mode === 'focus' ? '专注' : '均衡' }}：{{ weekly.goal.categories.join('、') }} · 已安排
+        {{ weekly.assigned }} 道相关新题，今日 AC {{ weekly.completed }} 道。
+      </p>
+      <p v-else>本周尚未选择目标。<RouterLink to="/">前往今日题单选择</RouterLink></p>
+      <div v-if="weekly.goal" class="tag-line">
+        <span v-for="category in weekly.goal.categories" :key="category"
+          >{{ category }} {{ weekly.coverage[category] ?? 0 }} 题</span
+        >
+      </div>
+    </section>
+    <section class="panel training-extra-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">UPSOLVE</span>
+          <h2>赛后补题清单</h2>
+          <p>从比赛报告添加；完成状态按对应账号同步到的 AC 判断，不占固定题单名额。</p>
+        </div>
+      </div>
+      <div v-if="!upsolve.length" class="quiet-empty">还没有补题。打开比赛报告，把未 AC 的题目加入这里。</div>
+      <article v-for="item in upsolve" :key="item.source + item.key" class="upsolve-row">
+        <div>
+          <strong>{{ item.name }}</strong>
+          <p class="small subtle">
+            {{ item.source === 'cf' ? 'CF' : 'AtCoder' }} · {{ item.contestName }} ·
+            {{ item.rating ?? '暂无难度' }} ·
+            {{ item.completed ? '已 AC' : item.attempted ? '已尝试' : '未尝试' }}
+          </p>
+        </div>
+        <div class="button-row">
+          <a class="small-button" :href="item.url" target="_blank" rel="noreferrer">打开原题</a
+          ><button class="small-button" @click="removeUpsolve(item)">移除</button>
+        </div>
+      </article>
+    </section>
+    <section class="panel training-extra-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">ROOT CAUSE</span>
+          <h2>错因改进趋势</h2>
+          <p>按保存复盘时的错因快照归集；旧复盘只计入上方当前分布。</p>
+        </div>
+      </div>
+      <div v-if="!reasonTrend.length" class="quiet-empty">新保存的错因将在这里形成每周记录。</div>
+      <div v-for="week in reasonTrend" :key="week.week" class="upsolve-row">
+        <strong>{{ week.week }} 起 · {{ week.samples }} 题</strong
+        ><span>{{ week.reasons.map((r) => `${r.name} ${r.count}/${week.samples}`).join(' · ') }}</span>
+      </div>
+    </section>
+    <section v-if="health" class="panel training-extra-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">DATA HEALTH</span>
+          <h2>数据健康</h2>
+        </div>
+      </div>
+      <div class="health-grid">
+        <p>
+          CF 提交：{{ health.cf.sync ? fullDate(health.cf.sync) : '尚未同步' }}<br />题目目录
+          {{ health.cf.problems }} 题，含难度 {{ health.cf.rated }} 题<br />目录更新：{{
+            health.cf.catalog ? fullDate(health.cf.catalog) : '暂无数据'
+          }}
+        </p>
+        <p>
+          AtCoder 提交：{{ health.atcoder.sync ? fullDate(health.atcoder.sync) : '尚未同步' }}<br />题目目录
+          {{ health.atcoder.problems }} 题，含估计难度 {{ health.atcoder.rated }} 题<br />目录更新：{{
+            health.atcoder.catalog ? fullDate(health.atcoder.catalog) : '暂无数据'
+          }}
+        </p>
+        <p>
+          待判提交：{{ health.pendingVerdicts }} 条<br />上次备份导出：{{
+            health.lastBackup ? fullDate(health.lastBackup) : '尚无记录'
+          }}
+        </p>
+      </div>
+      <RouterLink to="/settings" class="small-button">同步与导出备份</RouterLink>
+    </section>
+    <div class="metrics">
       <div class="metric">
         <span>累计错题</span><strong>{{ stats.total }}<small>题</small></strong>
         <p>不含已忽略题目</p>

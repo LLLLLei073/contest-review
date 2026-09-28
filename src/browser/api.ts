@@ -132,6 +132,44 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (route === '/training/day' && method === 'GET') {
       result = store.combinedTrainingDay();
       await runtime.flush();
+    } else if (route === '/training/weekly' && method === 'GET') result = store.weeklyProgress();
+    else if (route === '/training/weekly' && method === 'PUT') result = store.saveWeeklyGoal(body);
+    else if (route === '/training/upsolve' && method === 'GET') result = store.upsolveItems();
+    else if (route === '/training/upsolve' && method === 'POST') result = store.addUpsolve(body);
+    else if (route === '/training/upsolve/contest' && method === 'POST') {
+      const { source, contestId } = z
+        .object({ source: z.enum(['cf', 'atcoder']), contestId: z.string().min(1) })
+        .parse(body);
+      result = store.addContestUpsolve(source, contestId);
+    } else if (/^\/training\/upsolve\/(cf|atcoder)\/[^/]+$/.test(route) && method === 'DELETE') {
+      store.removeUpsolve(route.split('/')[3] as 'cf' | 'atcoder', decodeURIComponent(route.split('/')[4]));
+      result = { ok: true };
+    } else if (route === '/training/reason-trend' && method === 'GET')
+      result = store.reasonTrend(
+        z
+          .object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') })
+          .parse(Object.fromEntries(url.searchParams)).source,
+      );
+    else if (route === '/training/health' && method === 'GET') result = store.dataHealth();
+    else if (route === '/training/backup-exported' && method === 'POST') {
+      store.markBackupExported();
+      result = { ok: true };
+    } else if (route === '/training/simulations/contests' && method === 'GET')
+      result = store.simulationContests();
+    else if (route === '/training/simulations' && method === 'GET') result = store.simulations();
+    else if (route === '/training/simulations' && method === 'POST')
+      result = store.startSimulation(
+        z.object({ contestId: z.number().int().positive() }).parse(body).contestId,
+      );
+    else if (/^\/training\/simulations\/[^/]+$/.test(route) && method === 'POST') {
+      const data = z
+        .object({
+          action: z.enum(['finish', 'record']),
+          problemKey: z.string().optional(),
+          verdict: z.enum(['OK', 'FAILED']).optional(),
+        })
+        .parse(body);
+      result = store.updateSimulation(decodeURIComponent(route.split('/')[3]), data.action, data);
     } else if (route === '/training/recent' && method === 'POST') {
       const h = store.active();
       const { force } = z.object({ force: z.boolean().default(false) }).parse(body ?? {});
