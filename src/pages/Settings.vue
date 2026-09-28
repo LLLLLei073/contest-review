@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   Download,
   Upload,
@@ -13,9 +13,15 @@ import {
 import { api, settings, loadSettings, loadJob, job, notify, fullDate, browserMode } from '../api';
 import type { XcpcCandidate } from '../../shared/xcpc';
 import type { SyncJob } from '../../shared/domain';
+const savedSection = sessionStorage.getItem('contest-review:settings-section');
+const savedPlatform = sessionStorage.getItem('contest-review:account-platform');
 const handle = ref(''),
-  settingsSection = ref<'accounts' | 'sync' | 'backup'>('accounts'),
-  accountPlatform = ref<'cf' | 'atcoder' | 'xcpc'>('cf'),
+  settingsSection = ref<'accounts' | 'sync' | 'backup'>(
+    savedSection === 'sync' || savedSection === 'backup' ? savedSection : 'accounts',
+  ),
+  accountPlatform = ref<'cf' | 'atcoder' | 'xcpc'>(
+    savedPlatform === 'atcoder' || savedPlatform === 'xcpc' ? savedPlatform : 'cf',
+  ),
   busy = ref(false),
   error = ref(''),
   restoreFile = ref<File | null>(null),
@@ -29,6 +35,8 @@ const atcoderHandle = ref(''),
   atcoderVerified = ref(false),
   atcoderVerifiedBy = ref('submissions');
 let atcoderTimer: ReturnType<typeof setInterval> | undefined;
+watch(settingsSection, (value) => sessionStorage.setItem('contest-review:settings-section', value));
+watch(accountPlatform, (value) => sessionStorage.setItem('contest-review:account-platform', value));
 async function loadAtcoder() {
   const data = await api<{ job: SyncJob | null; verified: boolean; verifiedBy: string }>('/atcoder/binding');
   atcoderJob.value = data.job;

@@ -20,6 +20,7 @@ test('legacy backups, IndexedDB persistence, offline reload and tab ownership', 
       backendRequests.push(r.url());
   });
   await page.goto('./#/settings');
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   await page.getByLabel('选择备份文件').setInputFiles({
     name: 'local-v1.json',
     mimeType: 'application/json',
@@ -53,6 +54,7 @@ test('legacy backups, IndexedDB persistence, offline reload and tab ownership', 
   await page.getByRole('button', { name: '保存笔记', exact: true }).click();
   await expect(page.getByText('复盘已保存', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   const dl = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出备份', exact: true }).click();
   const download = await dl;

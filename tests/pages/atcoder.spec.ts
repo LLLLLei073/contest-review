@@ -82,6 +82,7 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await page.route('https://kenkoooo.com/atcoder/**', handleRoute);
   await page.route('**/atcoder-resources/*.json', handleRoute);
   await page.goto('./#/settings');
+  await page.getByRole('button', { name: 'AtCoder', exact: true }).click();
   await page.getByLabel('AtCoder 用户名').fill('alice');
   await page.getByRole('button', { name: '绑定 AtCoder' }).click();
   await page.getByRole('button', { name: '首次同步', exact: true }).click();
@@ -100,6 +101,8 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await expect(page.locator('.mastery-radar')).toBeVisible();
   includeAc = true;
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '账号连接' }).click();
+  await page.getByRole('button', { name: 'AtCoder', exact: true }).click();
   await page.getByRole('button', { name: '增量同步' }).click();
   await expect(page.locator('.settings-card').first()).toContainText('正在同步', { timeout: 10000 });
   await expect(page.locator('.settings-card').first()).toContainText('同步完成', { timeout: 20000 });
@@ -113,6 +116,9 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await expect(page.locator('.report-context')).toContainText('官方排名 #123');
   await expect(page.getByText('赛时分题时间线')).toBeVisible();
   await page.getByRole('button', { name: /Zero Submission Fixture/ }).click();
+  await expect(page.locator('.contest-editor h2')).toHaveText('Zero Submission Fixture');
+  await expect(page.locator('.report-score .score-value')).toHaveText('—');
+  await page.locator('.report-deep-dive summary').click();
   await expect(page.getByText('官方参赛记录已确认；没有已同步的赛时提交。')).toBeVisible();
   await expect(page.locator('.report-score .score-value')).toHaveText('—');
   await expect(page.locator('.report-score')).toContainText('非评级场次，官方历史未提供 Performance');
@@ -133,6 +139,7 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '备份与恢复' }).first().click();
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出备份' }).click();
   const backup = JSON.parse(
