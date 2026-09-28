@@ -3,7 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowRight, CalendarDays, ExternalLink, RefreshCw } from 'lucide-vue-next';
 import { api, settings, job, fullDate, notify } from '../api';
 import type { TrainingDay, TrainingTask } from '../../shared/training';
-import { categoryNames, type CategoryName } from '../../shared/training';
+import type { CategoryName } from '../../shared/training';
+import WeeklyGoalScene from '../components/WeeklyGoalScene.vue';
 
 const day = ref<TrainingDay | null>(null);
 const error = ref('');
@@ -18,19 +19,24 @@ const result = ref<'independent' | 'hint' | 'failed'>('independent');
 const goalMode = ref<'focus' | 'balanced'>('focus');
 const goalCategories = ref<CategoryName[]>([]);
 const goalEditing = ref(false);
+const goalError = ref('');
+const goalSaving = ref(false);
+const goalReveal = ref(false);
 const date = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
 const reviewDone = computed(() => day.value?.review.filter((task) => task.completed).length ?? 0);
 const newDone = computed(() => day.value?.newProblems.filter((task) => task.completed).length ?? 0);
 let atcoderTimer: ReturnType<typeof setInterval> | undefined;
 let previousAtcoderStatus = '';
 let loadSerial = 0;
+let goalSerial = 0;
+let revealTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function load() {
   const serial = ++loadSerial;
   if (!settings.value.activeHandle && !settings.value.activeAtcoder) {
     day.value = null;
     loading.value = false;
-    return;
+    return false;
   }
   const handle = `${settings.value.activeHandle}:${settings.value.activeAtcoder}`;
   loading.value = true;
@@ -46,9 +52,12 @@ async function load() {
         goalMode.value = next.weeklyGoal.mode;
         goalCategories.value = next.weeklyGoal.categories as CategoryName[];
       } else if (!next.weeklyGoal && !goalEditing.value) goalCategories.value = [];
+      return true;
     }
+    return false;
   } catch (e) {
     if (serial === loadSerial) error.value = (e as Error).message;
+    return false;
   } finally {
     if (serial === loadSerial) loading.value = false;
   }
@@ -74,30 +83,40 @@ async function checkRecent(force = false) {
     checking.value = false;
   }
 }
-function setGoalMode(mode: 'focus' | 'balanced') {
+function openGoal() {
+  goalMode.value = day.value?.weeklyGoal?.mode ?? 'focus';
+  goalCategories.value = (day.value?.weeklyGoal?.categories ?? []) as CategoryName[];
+  goalError.value = '';
   goalEditing.value = true;
-  goalMode.value = mode;
-  if (mode === 'focus') goalCategories.value = goalCategories.value.slice(0, 1);
 }
-function toggleGoalCategory(category: CategoryName) {
-  goalEditing.value = true;
-  if (goalMode.value === 'focus') goalCategories.value = [category];
-  else
-    goalCategories.value = goalCategories.value.includes(category)
-      ? goalCategories.value.filter((item) => item !== category)
-      : [...goalCategories.value, category];
+function closeGoal() {
+  if (!goalSaving.value) goalEditing.value = false;
 }
-async function saveGoal() {
-  busy.value = true;
+async function saveGoal(value: { mode: 'focus' | 'balanced'; categories: CategoryName[] }) {
+  if (goalSaving.value) return;
+  const serial = ++goalSerial;
+  const handle = `${settings.value.activeHandle}:${settings.value.activeAtcoder}`;
+  goalSaving.value = true;
+  goalError.value = '';
   try {
-    await api('/training/weekly', { mode: goalMode.value, categories: goalCategories.value }, 'PUT');
+    await api('/training/weekly', value, 'PUT');
+    if (serial !== goalSerial || `${settings.value.activeHandle}:${settings.value.activeAtcoder}` !== handle)
+      return;
+    const refreshed = await load();
+    if (!refreshed) throw new Error('目标已保存，但题单读取失败。请重试以刷新今日安排。');
+    if (serial !== goalSerial || `${settings.value.activeHandle}:${settings.value.activeAtcoder}` !== handle)
+      return;
+    goalMode.value = value.mode;
+    goalCategories.value = value.categories;
     goalEditing.value = false;
-    await load();
+    goalReveal.value = true;
+    clearTimeout(revealTimer);
+    revealTimer = setTimeout(() => (goalReveal.value = false), 520);
     notify('本周训练目标已保存');
   } catch (e) {
-    error.value = (e as Error).message;
+    if (serial === goalSerial) goalError.value = (e as Error).message;
   } finally {
-    busy.value = false;
+    if (serial === goalSerial) goalSaving.value = false;
   }
 }
 function openAttempt(task: TrainingTask) {
@@ -135,11 +154,20 @@ onMounted(() => {
     } catch {}
   }, 2500);
 });
-onUnmounted(() => clearInterval(atcoderTimer));
+onUnmounted(() => {
+  goalSerial++;
+  clearTimeout(revealTimer);
+  clearInterval(atcoderTimer);
+});
 watch(
   () => `${settings.value.activeHandle}:${settings.value.activeAtcoder}`,
   () => {
+    goalSerial++;
+    goalSaving.value = false;
     goalEditing.value = false;
+    goalReveal.value = false;
+    clearTimeout(revealTimer);
+    goalError.value = '';
     goalCategories.value = [];
     void load().then(() => checkRecent());
   },
@@ -186,42 +214,9 @@ watch(
             </p>
             <p v-else>请选择本周方向，再生成今天的新知题单。复习题照常可做。</p>
           </div>
-          <button class="small-button" @click="goalEditing = !goalEditing">
+          <button class="small-button" @click="openGoal">
             {{ day?.weeklyGoal ? '调整目标' : '选择目标' }}
           </button>
-        </div>
-        <div v-if="goalEditing || !day?.weeklyGoal" class="weekly-goal-picker">
-          <div class="button-row">
-            <button :class="{ primary: goalMode === 'focus' }" @click="setGoalMode('focus')">
-              专注一个领域
-            </button>
-            <button :class="{ primary: goalMode === 'balanced' }" @click="setGoalMode('balanced')">
-              均衡多个领域
-            </button>
-          </div>
-          <div class="reason-picker">
-            <label
-              v-for="category in categoryNames"
-              :key="category"
-              :class="{ picked: goalCategories.includes(category) }"
-            >
-              <input
-                type="checkbox"
-                :checked="goalCategories.includes(category)"
-                @change="toggleGoalCategory(category)"
-              />{{ category }}</label
-            >
-          </div>
-          <button
-            class="primary"
-            :disabled="
-              busy || (goalMode === 'focus' ? goalCategories.length !== 1 : goalCategories.length < 2)
-            "
-            @click="saveGoal"
-          >
-            保存本周目标
-          </button>
-          <p v-if="day?.weeklyGoal" class="small subtle">今天已生成的题单保持不变；调整从次日生效。</p>
         </div>
       </section>
       <div v-if="job?.status === 'running'" class="alert">
@@ -245,7 +240,7 @@ watch(
       </div>
     </div>
     <div v-if="recentError" class="alert">近期提交检查失败，继续使用已保存数据：{{ recentError }}</div>
-    <div class="daily-columns">
+    <div class="daily-columns" :class="{ 'goal-day-reveal': goalReveal }">
       <section class="panel daily-panel">
         <div class="section-head">
           <div>
@@ -411,4 +406,18 @@ watch(
       /></RouterLink>
     </p>
   </template>
+  <Teleport to="body">
+    <Transition name="goal-scene">
+      <WeeklyGoalScene
+        v-if="goalEditing"
+        :mode="goalMode"
+        :categories="goalCategories"
+        :saving="goalSaving"
+        :error="goalError"
+        :existing="!!day?.weeklyGoal"
+        @cancel="closeGoal"
+        @confirm="saveGoal"
+      />
+    </Transition>
+  </Teleport>
 </template>

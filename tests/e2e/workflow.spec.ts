@@ -19,8 +19,9 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
-  await page.getByLabel('数学', { exact: true }).check();
-  await page.getByRole('button', { name: '保存本周目标' }).click();
+  await page.getByRole('button', { name: '选择目标' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /数学/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '确定' }).click();
   await expect(page.getByText('Two Screens', { exact: true }).first()).toBeVisible();
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await expect(page.getByRole('link', { name: '2000C Two Screens', exact: true })).toBeVisible();
