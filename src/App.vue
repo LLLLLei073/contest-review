@@ -16,6 +16,7 @@ import {
 import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
 import { useSpringValues } from './motion';
 import OpeningIntro from './OpeningIntro.vue';
+import { beginPageScene, cancelPageScene, pageScene, releasePageSceneMotion } from './pageScene';
 const route = useRoute();
 const introStorageKey = 'contest-review:intro-seen:v1';
 function shouldShowIntro() {
@@ -31,6 +32,8 @@ function shouldShowIntro() {
 const introActive = ref(shouldShowIntro());
 let introFocusFrame = 0;
 let appUnmounted = false;
+let accountTransitionsReady = false;
+let pageFocusFrame = 0;
 async function finishIntro() {
   if (!introActive.value) return;
   introActive.value = false;
@@ -88,9 +91,42 @@ onMounted(async () => {
   } catch (e) {
     initError.value = (e as Error).message;
   }
+  accountTransitionsReady = true;
+  document.addEventListener('visibilitychange', releasePageSceneMotion);
+  reducedMotion.addEventListener('change', releasePageSceneMotion);
   poll = setInterval(() => loadJob().catch(() => {}), 2500);
 });
 const onResize = () => measureNav(true);
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+watch(
+  () =>
+    `${settings.value.activeHandle}|${settings.value.activeAtcoder}|${settings.value.xcpcPlayer?.key ?? ''}`,
+  () => {
+    if (accountTransitionsReady) beginPageScene(route.fullPath);
+  },
+  { flush: 'sync' },
+);
+watch(
+  () => pageScene.active,
+  async (active, previous) => {
+    if (active) {
+      await nextTick();
+      if (!introActive.value && pageScene.active)
+        document.querySelector<HTMLElement>('.page-scene')?.focus({ preventScroll: true });
+      return;
+    }
+    if (!previous) return;
+    await nextTick();
+    cancelAnimationFrame(pageFocusFrame);
+    pageFocusFrame = requestAnimationFrame(() => {
+      if (appUnmounted || pageScene.active) return;
+      const heading = document.querySelector<HTMLElement>('.workspace main h1');
+      if (!heading) return;
+      if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: true });
+    });
+  },
+);
 watch(
   () => route.path,
   async () => {
@@ -101,13 +137,21 @@ watch(
 onUnmounted(() => {
   appUnmounted = true;
   cancelAnimationFrame(introFocusFrame);
+  cancelAnimationFrame(pageFocusFrame);
+  cancelPageScene();
   clearInterval(poll);
   navObserver?.disconnect();
   window.removeEventListener('resize', onResize);
+  document.removeEventListener('visibilitychange', releasePageSceneMotion);
+  reducedMotion.removeEventListener('change', releasePageSceneMotion);
 });
 </script>
 <template>
-  <div class="app-shell" :inert="introActive">
+  <div
+    class="app-shell"
+    :inert="introActive || pageScene.active"
+    :class="{ 'page-scene-under': pageScene.active }"
+  >
     <aside class="sidebar">
       <RouterLink to="/" class="brand"
         ><span class="brand-mark"><BookOpen :size="23" /></span
@@ -219,4 +263,21 @@ onUnmounted(() => {
     ></Transition>
   </div>
   <OpeningIntro v-if="introActive" @finish="finishIntro" />
+  <Teleport to="body">
+    <Transition name="page-scene">
+      <div
+        v-if="pageScene.active && !introActive"
+        class="page-scene"
+        role="status"
+        aria-live="polite"
+        tabindex="-1"
+      >
+        <div class="page-scene__content">
+          <span class="page-scene__symbol">回解</span>
+          <span class="page-scene__trail" aria-hidden="true"><i></i></span>
+          <p>{{ pageScene.waiting ? '正在准备内容…' : '把思路，带到下一页。' }}</p>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>

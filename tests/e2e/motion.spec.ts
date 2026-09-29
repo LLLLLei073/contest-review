@@ -161,10 +161,79 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
       })
       .toBe(true);
   }
+  await expect(page.locator('.page-scene')).toHaveCount(0);
   await page.locator('.sidebar nav a').first().focus();
   await page.keyboard.press('Tab');
   expect(await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle)).not.toBe('none');
   await page.locator('.profile-chip').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test('page change waits for its scene and returns focus to the new heading', async ({ page }, testInfo) => {
+  await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
+  const started = Date.now();
+  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await expect(page.locator('.page-scene')).toBeVisible();
+  await expect(page.locator('.app-shell')).toHaveAttribute('inert', '');
+  await expect(page.locator('.page-scene')).toHaveCount(0);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(540);
+  await expect(page.getByRole('heading', { name: '训练统计', exact: true })).toBeFocused();
+  await page.goBack();
+  await expect(page.locator('.page-scene')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '今日题单' })).toBeFocused();
+});
+
+test('major views switch locally and reduced motion skips the minimum delay', async ({ page }, testInfo) => {
+  await page.goto(testInfo.project.name === 'pages' ? './#/statistics' : '/statistics');
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
+  const switcher = page.getByRole('navigation', { name: '训练统计内容' });
+  await switcher.getByRole('button', { name: '练习趋势' }).click();
+  await expect(page.locator('.switch-surface')).toHaveAttribute('aria-busy', 'true');
+  await switcher.getByRole('button', { name: '数据健康' }).click();
+  await expect(page.locator('.switch-surface')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('.statistics-content h2:visible').first()).toBeFocused();
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await switcher.getByRole('button', { name: '训练概览' }).click();
+  await expect(page.locator('.switch-surface')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('.sidebar nav').getByRole('link', { name: '设置与数据' }).click();
+  await expect(page.locator('.page-scene')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '设置与数据' })).toBeFocused();
+});
+
+test('slow data keeps the page scene informative until the first result settles', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === 'pages', 'Pages storage does not use the local statistics request');
+  await page.goto('/');
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
+  await page.route('**/api/statistics?source=all', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await route.continue();
+  });
+  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await expect(page.locator('.page-scene')).toContainText('正在准备内容…');
+  await expect(page.locator('.page-scene')).toHaveCount(0, { timeout: 5000 });
+  await expect(page.getByRole('heading', { name: '训练统计', exact: true })).toBeFocused();
+});
+
+test('an unanswered request releases the scene and leaves the page loading state visible', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === 'pages', 'Pages storage does not use the local statistics request');
+  await page.goto('/');
+  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
+  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
+  await page.route('**/api/statistics?source=all', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 9500));
+    await route.continue();
+  });
+  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await expect(page.locator('.page-scene')).toHaveCount(0, { timeout: 9000 });
+  await expect(page.getByText('正在读取训练统计…')).toBeVisible();
 });

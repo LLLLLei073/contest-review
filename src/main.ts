@@ -3,6 +3,7 @@ import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router
 import { browserMode } from './api';
 import App from './App.vue';
 import Dashboard from './pages/Dashboard.vue';
+import { beginPageScene } from './pageScene';
 import './style.css';
 const router = createRouter({
   history: browserMode ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
@@ -17,6 +18,9 @@ const router = createRouter({
     { path: '/settings', component: () => import('./pages/Settings.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
+});
+router.afterEach((to, from, failure) => {
+  if (!failure && from.matched.length && to.path !== from.path) beginPageScene(to.fullPath);
 });
 createApp(App).use(router).mount('#app');
 if (browserMode && 'serviceWorker' in navigator && import.meta.env.PROD) {

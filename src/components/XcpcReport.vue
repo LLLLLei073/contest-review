@@ -4,7 +4,7 @@ import { RefreshCw, ArrowUpRight } from 'lucide-vue-next';
 import { api } from '../api';
 import type { XcpcHistory, XcpcReport } from '../../shared/xcpc';
 const props = defineProps<{ slug: string }>();
-const emit = defineEmits<{ updated: [] }>();
+const emit = defineEmits<{ updated: []; ready: [slug: string] }>();
 type Response = {
   history: XcpcHistory;
   report: XcpcReport | null;
@@ -21,17 +21,26 @@ const team = computed(() =>
 );
 let alive = true,
   timer: ReturnType<typeof setTimeout> | undefined;
+let initialReadSettled = false;
+function settleInitialRead() {
+  if (!alive || initialReadSettled) return;
+  initialReadSettled = true;
+  emit('ready', props.slug);
+}
 async function read(auto = false) {
   try {
     const next = await api<Response>(`/xcpc/contests/${encodeURIComponent(props.slug)}/analysis`);
     if (!alive) return;
     const wasRunning = data.value?.task.status === 'running';
     data.value = next;
+    settleInitialRead();
     if (next.task.status === 'running') timer = setTimeout(() => void read(), 1200);
     else if (wasRunning) emit('updated');
     if (auto && !next.report && next.task.status === 'idle' && navigator.onLine) await refresh();
   } catch (e) {
     if (alive) error.value = (e as Error).message;
+  } finally {
+    settleInitialRead();
   }
 }
 async function refresh() {

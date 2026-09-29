@@ -4,11 +4,12 @@ import { ArrowUpRight, RefreshCw } from 'lucide-vue-next';
 import { api, fullDate } from '../api';
 import type { AtcoderReport } from '../../shared/atcoder';
 const props = defineProps<{ contestId: string }>();
-const emit = defineEmits<{ updated: [] }>();
+const emit = defineEmits<{ updated: []; ready: [contestId: string] }>();
 const report = ref<AtcoderReport | null>(null),
   error = ref(''),
   busy = ref(false);
 let requestNumber = 0;
+let initialReadSettled = false;
 const problemRows = computed(() => {
   const map = new Map<string, AtcoderReport['inContest']>();
   for (const item of report.value?.inContest ?? [])
@@ -41,11 +42,19 @@ async function load(refresh = false) {
     );
     if (current !== requestNumber) return;
     report.value = next;
+    if (!initialReadSettled) {
+      initialReadSettled = true;
+      emit('ready', props.contestId);
+    }
     if (refresh) emit('updated');
   } catch (e) {
     if (current === requestNumber) error.value = (e as Error).message;
   } finally {
     if (current === requestNumber) busy.value = false;
+    if (current === requestNumber && !initialReadSettled) {
+      initialReadSettled = true;
+      emit('ready', props.contestId);
+    }
   }
 }
 onMounted(() => load());
@@ -55,6 +64,7 @@ onBeforeUnmount(() => {
 watch(
   () => props.contestId,
   () => {
+    initialReadSettled = false;
     report.value = null;
     void load();
   },

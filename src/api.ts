@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import type { Settings, SyncJob } from '../shared/domain';
 export const browserMode = import.meta.env.VITE_STORAGE_MODE === 'browser';
 export const settings = ref<Settings>({ activeHandle: '', handles: [] });
+let settingsRead = 0;
 export const job = ref<SyncJob | null>(null);
 export const toast = ref('');
 let timer: ReturnType<typeof setTimeout>;
@@ -26,7 +27,9 @@ export async function api<T>(
   return data;
 }
 export async function loadSettings() {
-  settings.value = await api<Settings>('/settings');
+  const read = ++settingsRead;
+  const next = await api<Settings>('/settings');
+  if (read === settingsRead) settings.value = next;
 }
 export async function loadJob() {
   job.value = await api<SyncJob | null>('/sync');

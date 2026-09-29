@@ -7,6 +7,8 @@ import { api, notify, job, settings, loadSettings } from '../api';
 import ContestReport from '../components/ContestReport.vue';
 import XcpcReport from '../components/XcpcReport.vue';
 import AtcoderReport from '../components/AtcoderReport.vue';
+import { usePageReady } from '../pageScene';
+import SwitchSurface from '../components/SwitchSurface.vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 type ContestView = {
   source: 'cf' | 'xcpc' | 'atcoder';
@@ -30,12 +32,15 @@ type ContestView = {
 };
 const route = useRoute(),
   router = useRouter();
+const pageReady = usePageReady();
+const reportReady = ref(false);
 const routeValue = (key: string) => (typeof route.query[key] === 'string' ? String(route.query[key]) : '');
 const pageSize = 20;
 const rows = ref<ContestView[]>([]),
   selected = ref<ContestView | null>(null),
   draft = ref<ContestReview>({ timeAllocation: '', mistakes: '', improvements: '' }),
   error = ref(''),
+  loading = ref(true),
   busy = ref(false),
   query = ref(routeValue('q')),
   sourceFilter = ref(routeValue('source') || 'all'),
@@ -131,14 +136,20 @@ const tierLabels: Record<string, string> = {
   provincial: '省赛',
 };
 async function load() {
+  loading.value = true;
   try {
     rows.value = await api('/review/contests');
-    const key = selected.value?.key || routeValue('contest');
+    const previousKey = selected.value?.key;
+    const key = previousKey || routeValue('contest');
     selected.value = rows.value.find((r) => r.key === key) ?? null;
+    if (selected.value?.key !== previousKey) reportReady.value = !selected.value;
     if (selected.value && !draft.value.timeAllocation && !draft.value.mistakes && !draft.value.improvements)
       draft.value = { ...selected.value.review };
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    loading.value = false;
+    pageReady();
   }
 }
 function choose(c: ContestView): boolean {
@@ -149,6 +160,7 @@ function choose(c: ContestView): boolean {
   }
   if (dirty.value && !confirm('比赛复盘尚未保存，确定切换吗？')) return false;
   selected.value = c;
+  reportReady.value = false;
   draft.value = { ...c.review };
   reportView.value = 'analysis';
   mobileShowingReport.value = true;
@@ -160,6 +172,9 @@ function focusSelectedReport() {
   const heading = document.querySelector<HTMLElement>('.contest-editor h2');
   heading?.focus({ preventScroll: true });
   heading?.scrollIntoView({ block: 'start' });
+}
+function onReportReady(id: number | string) {
+  if (String(selected.value?.id) === String(id)) reportReady.value = true;
 }
 function returnToList() {
   mobileShowingReport.value = false;
@@ -347,7 +362,12 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         找到 {{ filtered.length }} 场<span v-if="filtered.length"> · 第 {{ page }} / {{ pageCount }} 页</span>
       </p>
       <div class="contest-list-results">
-        <div v-if="!filtered.length" class="empty-state">
+        <div v-if="loading && !filtered.length" class="empty-state" role="status">
+          <Flag :size="28" />
+          <h3>正在读取比赛记录…</h3>
+          <p>读取完成后可按平台、年份和参赛类型筛选。</p>
+        </div>
+        <div v-else-if="!filtered.length" class="empty-state">
           <Flag :size="28" />
           <h3>{{ rows.length ? '没有符合条件的比赛' : '还没有关联比赛' }}</h3>
           <p>{{ rows.length ? '试试其他年份、平台或关键词。' : '同步提交记录后，比赛会自动归集。' }}</p>
@@ -413,130 +433,147 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
         </button>
       </div>
     </section>
-    <Transition name="report-switch" mode="out-in" @after-enter="focusSelectedReport"
-      ><section v-if="selected" :key="selected.key" class="panel contest-editor">
-        <div class="contest-report-navigation">
-          <button class="small-button contest-back" type="button" @click="returnToList">返回比赛列表</button>
-          <span v-if="selectedIndex >= 0" class="small subtle"
-            >当前结果 {{ selectedIndex + 1 }} / {{ filtered.length }}</span
-          >
-          <div class="button-row">
-            <button class="small-button" type="button" :disabled="selectedIndex <= 0" @click="adjacent(-1)">
-              <ChevronLeft :size="15" />上一场
-            </button>
-            <button
-              class="small-button"
-              type="button"
-              :disabled="selectedIndex < 0 || selectedIndex >= filtered.length - 1"
-              @click="adjacent(1)"
-            >
-              下一场<ChevronRight :size="15" />
-            </button>
-          </div>
-        </div>
-        <div class="section-head">
-          <div>
-            <span class="eyebrow"
-              >{{
-                selected.source === 'cf'
-                  ? 'CODEFORCES'
-                  : selected.source === 'atcoder'
-                    ? 'ATCODER'
-                    : 'XCPC RATING'
-              }}
-              / {{ selected.id }}</span
-            >
-            <h2 tabindex="-1">{{ selected.name }}</h2>
-          </div>
-          <button v-if="selected.source !== 'xcpc'" class="small-button" :disabled="busy" @click="addUpsolve">
-            未 AC 题加入补题清单
-          </button>
-        </div>
-        <nav class="content-switcher report-switcher" aria-label="比赛报告内容">
-          <button :class="{ active: reportView === 'analysis' }" @click="reportView = 'analysis'">
-            成绩与建议
-          </button>
-          <button :class="{ active: reportView === 'notes' }" @click="reportView = 'notes'">
-            补充笔记<span v-if="dirty"> · 未保存</span>
-          </button>
-        </nav>
-        <div class="editor-body">
-          <div v-show="reportView === 'analysis'">
-            <div
-              v-if="
-                selected.source === 'cf' &&
-                selected.types.length &&
-                !selected.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
-              "
-              class="alert"
-            >
-              这场比赛只有练习记录，不计为正式或虚拟参赛。
-            </div>
-            <p v-if="selected.rating" class="subtle">
-              评级变化：{{ selected.rating.oldRating }} → {{ selected.rating.newRating }} · 评级结算排名 #{{
-                selected.rating.rank
-              }}
-            </p>
-            <RouterLink
-              v-if="selected.source === 'cf'"
-              class="text-link"
-              :to="'/problems?contestId=' + selected.id"
-              >查看这场比赛的错题 <ArrowUpRight :size="15"
-            /></RouterLink>
-            <ContestReport
-              v-if="selected.source === 'cf'"
-              :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
-              :contest-id="Number(selected.id)"
-              @updated="load"
-            />
-            <AtcoderReport
-              v-else-if="selected.source === 'atcoder'"
-              :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
-              :contest-id="String(selected.id)"
-              @updated="load"
-            />
-            <XcpcReport
-              v-else
-              :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
-              :slug="String(selected.id)"
-              @updated="load"
-            />
-          </div>
-          <section v-show="reportView === 'notes'" class="manual-contest-notes">
-            <h3>补充笔记 · 保留我的复盘</h3>
-            <form @submit.prevent="save">
-              <label
-                >时间分配<textarea
-                  v-model="draft.timeAllocation"
-                  rows="5"
-                  placeholder="在哪道题停留太久？是否及时切换思路？"
-                ></textarea></label
-              ><label
-                >关键失误<textarea
-                  v-model="draft.mistakes"
-                  rows="5"
-                  placeholder="记录读题、实现、策略或心态上的失误。"
-                ></textarea></label
-              ><label
-                >下一场的改进<textarea
-                  v-model="draft.improvements"
-                  rows="5"
-                  placeholder="把反思变成具体可执行的动作。"
-                ></textarea>
-              </label>
-              <div class="editor-actions">
-                <span class="small subtle">{{ dirty ? '有未保存的修改' : '内容已保存' }}</span
-                ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
-              </div>
-            </form>
-          </section>
-        </div>
-      </section>
-      <section v-else class="panel contest-placeholder">
-        <Flag :size="38" />
-        <h2>选一场比赛，慢慢回看。</h2>
-        <p>自动分析赛时表现、提交节奏和下一场的行动建议。</p>
-      </section></Transition
+    <SwitchSurface
+      :view-key="`${selected?.key ?? 'empty'}:${reportView}`"
+      :ready="reportView === 'notes' || reportReady"
+      label="比赛报告"
+      focus-selector=".contest-editor h2, .contest-placeholder h2"
     >
+      <Transition name="report-switch" mode="out-in" @after-enter="focusSelectedReport"
+        ><section v-if="selected" :key="selected.key" class="panel contest-editor">
+          <div class="contest-report-navigation">
+            <button class="small-button contest-back" type="button" @click="returnToList">
+              返回比赛列表
+            </button>
+            <span v-if="selectedIndex >= 0" class="small subtle"
+              >当前结果 {{ selectedIndex + 1 }} / {{ filtered.length }}</span
+            >
+            <div class="button-row">
+              <button class="small-button" type="button" :disabled="selectedIndex <= 0" @click="adjacent(-1)">
+                <ChevronLeft :size="15" />上一场
+              </button>
+              <button
+                class="small-button"
+                type="button"
+                :disabled="selectedIndex < 0 || selectedIndex >= filtered.length - 1"
+                @click="adjacent(1)"
+              >
+                下一场<ChevronRight :size="15" />
+              </button>
+            </div>
+          </div>
+          <div class="section-head">
+            <div>
+              <span class="eyebrow"
+                >{{
+                  selected.source === 'cf'
+                    ? 'CODEFORCES'
+                    : selected.source === 'atcoder'
+                      ? 'ATCODER'
+                      : 'XCPC RATING'
+                }}
+                / {{ selected.id }}</span
+              >
+              <h2 tabindex="-1">{{ selected.name }}</h2>
+            </div>
+            <button
+              v-if="selected.source !== 'xcpc'"
+              class="small-button"
+              :disabled="busy"
+              @click="addUpsolve"
+            >
+              未 AC 题加入补题清单
+            </button>
+          </div>
+          <nav class="content-switcher report-switcher" aria-label="比赛报告内容">
+            <button :class="{ active: reportView === 'analysis' }" @click="reportView = 'analysis'">
+              成绩与建议
+            </button>
+            <button :class="{ active: reportView === 'notes' }" @click="reportView = 'notes'">
+              补充笔记<span v-if="dirty"> · 未保存</span>
+            </button>
+          </nav>
+          <div class="editor-body">
+            <div v-show="reportView === 'analysis'">
+              <div
+                v-if="
+                  selected.source === 'cf' &&
+                  selected.types.length &&
+                  !selected.types.some((t) => ['CONTESTANT', 'VIRTUAL', 'OUT_OF_COMPETITION'].includes(t))
+                "
+                class="alert"
+              >
+                这场比赛只有练习记录，不计为正式或虚拟参赛。
+              </div>
+              <p v-if="selected.rating" class="subtle">
+                评级变化：{{ selected.rating.oldRating }} → {{ selected.rating.newRating }} · 评级结算排名 #{{
+                  selected.rating.rank
+                }}
+              </p>
+              <RouterLink
+                v-if="selected.source === 'cf'"
+                class="text-link"
+                :to="'/problems?contestId=' + selected.id"
+                >查看这场比赛的错题 <ArrowUpRight :size="15"
+              /></RouterLink>
+              <ContestReport
+                v-if="selected.source === 'cf'"
+                :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
+                :contest-id="Number(selected.id)"
+                @updated="load"
+                @ready="onReportReady"
+              />
+              <AtcoderReport
+                v-else-if="selected.source === 'atcoder'"
+                :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
+                :contest-id="String(selected.id)"
+                @updated="load"
+                @ready="onReportReady"
+              />
+              <XcpcReport
+                v-else
+                :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
+                :slug="String(selected.id)"
+                @updated="load"
+                @ready="onReportReady"
+              />
+            </div>
+            <section v-show="reportView === 'notes'" class="manual-contest-notes">
+              <h3>补充笔记 · 保留我的复盘</h3>
+              <form @submit.prevent="save">
+                <label
+                  >时间分配<textarea
+                    v-model="draft.timeAllocation"
+                    rows="5"
+                    placeholder="在哪道题停留太久？是否及时切换思路？"
+                  ></textarea></label
+                ><label
+                  >关键失误<textarea
+                    v-model="draft.mistakes"
+                    rows="5"
+                    placeholder="记录读题、实现、策略或心态上的失误。"
+                  ></textarea></label
+                ><label
+                  >下一场的改进<textarea
+                    v-model="draft.improvements"
+                    rows="5"
+                    placeholder="把反思变成具体可执行的动作。"
+                  ></textarea>
+                </label>
+                <div class="editor-actions">
+                  <span class="small subtle">{{ dirty ? '有未保存的修改' : '内容已保存' }}</span
+                  ><button class="primary" :disabled="busy"><Save :size="15" />保存比赛复盘</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+        <section v-else class="panel contest-placeholder">
+          <Flag :size="38" />
+          <h2>选一场比赛，慢慢回看。</h2>
+          <p>自动分析赛时表现、提交节奏和下一场的行动建议。</p>
+        </section></Transition
+      >
+    </SwitchSurface>
   </div>
 </template>

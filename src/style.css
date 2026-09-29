@@ -16,6 +16,118 @@
   --motion-land: linear(0, 0.32 8%, 0.79 20%, 1.03 30%, 1.01 46%, 1);
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
+.page-scene {
+  position: fixed;
+  z-index: 950;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #f7f8f3;
+  color: var(--green-dark);
+}
+.page-scene__content {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: min(280px, 80vw);
+}
+.page-scene__symbol {
+  font-size: 27px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+}
+.page-scene__trail {
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  background: #d8e5d4;
+}
+.page-scene__trail i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--green);
+  transform-origin: left center;
+  animation: scene-progress 600ms var(--motion-out) both;
+}
+.page-scene__content p {
+  margin: 0;
+  color: #778b79;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+.page-scene-enter-active,
+.page-scene-leave-active {
+  transition:
+    opacity 210ms var(--motion-out),
+    clip-path 360ms var(--motion-out);
+}
+.page-scene-enter-from {
+  opacity: 0;
+  clip-path: inset(0 0 100% 0);
+}
+.page-scene-leave-to {
+  opacity: 0;
+  clip-path: inset(100% 0 0 0);
+}
+.page-scene-under .workspace main {
+  visibility: hidden;
+}
+.switch-surface {
+  position: relative;
+  min-width: 0;
+}
+.switch-surface__content {
+  transition:
+    opacity 240ms var(--motion-out),
+    transform 360ms var(--motion-out);
+}
+.switch-surface[aria-busy='true'] .switch-surface__content {
+  visibility: hidden;
+}
+.switch-surface__veil {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  min-height: 110px;
+  border-radius: 10px;
+  background: rgba(247, 248, 243, 0.92);
+  color: var(--green-dark);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.switch-surface__line {
+  display: block;
+  width: min(130px, 55%);
+  height: 2px;
+  background: var(--green);
+  transform-origin: left;
+  animation: scene-progress 600ms var(--motion-out) both;
+}
+@keyframes scene-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-scene,
+  .page-scene__trail i,
+  .switch-surface__line,
+  .switch-surface__content,
+  .page-scene-under .workspace main {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
 * {
   box-sizing: border-box;
 }

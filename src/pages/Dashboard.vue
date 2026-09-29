@@ -5,6 +5,7 @@ import { api, settings, job, fullDate, notify } from '../api';
 import type { TrainingDay, TrainingTask } from '../../shared/training';
 import type { CategoryName } from '../../shared/training';
 import WeeklyGoalScene from '../components/WeeklyGoalScene.vue';
+import { usePageReady } from '../pageScene';
 
 const day = ref<TrainingDay | null>(null);
 const error = ref('');
@@ -22,6 +23,7 @@ const goalEditing = ref(false);
 const goalError = ref('');
 const goalSaving = ref(false);
 const goalReveal = ref(false);
+const pageReady = usePageReady();
 const date = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
 const reviewDone = computed(() => day.value?.review.filter((task) => task.completed).length ?? 0);
 const newDone = computed(() => day.value?.newProblems.filter((task) => task.completed).length ?? 0);
@@ -36,6 +38,7 @@ async function load() {
   if (!settings.value.activeHandle && !settings.value.activeAtcoder) {
     day.value = null;
     loading.value = false;
+    pageReady();
     return false;
   }
   const handle = `${settings.value.activeHandle}:${settings.value.activeAtcoder}`;
@@ -60,6 +63,7 @@ async function load() {
     return false;
   } finally {
     if (serial === loadSerial) loading.value = false;
+    if (serial === loadSerial) pageReady();
   }
 }
 async function checkRecent(force = false) {

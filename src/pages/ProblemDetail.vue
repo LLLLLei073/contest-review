@@ -15,6 +15,9 @@ import {
 import Markdown from '../components/Markdown.vue';
 import { categoryNames } from '../../shared/training';
 import { reviewQualityHints } from '../../shared/training-extras';
+import { usePageReady } from '../pageScene';
+import SwitchSurface from '../components/SwitchSurface.vue';
+const pageReady = usePageReady();
 const route = useRoute(),
   key = String(route.params.key);
 const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[] } | null>(null),
@@ -56,6 +59,8 @@ async function load() {
     snapshot.value = JSON.stringify(draft.value);
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    pageReady();
   }
 }
 async function save(action = 'save') {
@@ -170,129 +175,140 @@ onBeforeRouteLeave(async () => {
             ><small v-if="t.id === 'attempts'">{{ data.attempts.length }}</small>
           </button>
         </div>
-        <div v-if="tab === 'notes'" class="editor-body">
-          <div class="editor-toolbar">
-            <span class="subtle small">支持 Markdown · LaTeX · 代码高亮</span
-            ><button class="small-button" @click="preview = !preview">
-              <Eye :size="14" />{{ preview ? '继续编辑' : '预览笔记' }}
-            </button>
-          </div>
-          <label class="field-title">错因归类</label>
-          <div class="reason-picker">
-            <label
-              v-for="r in [...new Set([...reasonOptions, ...draft.reasons])]"
-              :key="r"
-              :class="{ picked: draft.reasons.includes(r) }"
-              ><input v-model="draft.reasons" type="checkbox" :value="r" />{{ r }}</label
-            >
-          </div>
-          <div class="inline-input">
-            <input
-              v-model="customReason"
-              maxlength="80"
-              aria-label="自定义错因"
-              placeholder="添加自定义错因"
-              @keydown.enter.prevent="addReason"
-            /><button @click="addReason">添加</button>
-          </div>
-          <template v-if="data.problem.source === 'atcoder'">
-            <label class="field-title">算法领域（手动标注，可多选）</label>
+        <SwitchSurface
+          :view-key="tab"
+          label="题目记录"
+          focus-selector=".editor-body h2, .editor-body h3, .editor-body .field-title"
+        >
+          <div v-if="tab === 'notes'" class="editor-body">
+            <div class="editor-toolbar">
+              <span class="subtle small">支持 Markdown · LaTeX · 代码高亮</span
+              ><button class="small-button" @click="preview = !preview">
+                <Eye :size="14" />{{ preview ? '继续编辑' : '预览笔记' }}
+              </button>
+            </div>
+            <label class="field-title">错因归类</label>
             <div class="reason-picker">
               <label
-                v-for="category in categoryNames"
-                :key="category"
-                :class="{ picked: draft.categories.includes(category) }"
-                ><input v-model="draft.categories" type="checkbox" :value="category" />{{ category }}</label
+                v-for="r in [...new Set([...reasonOptions, ...draft.reasons])]"
+                :key="r"
+                :class="{ picked: draft.reasons.includes(r) }"
+                ><input v-model="draft.reasons" type="checkbox" :value="r" />{{ r }}</label
               >
             </div>
-          </template>
-          <div v-for="(field, i) in fields" :key="field.key" class="note-field">
-            <label :for="field.key"
-              ><span>0{{ i + 1 }}</span
-              >{{ field.label }}</label
-            ><Markdown v-if="preview && draft[field.key]" :text="draft[field.key]" />
-            <p v-else-if="preview" class="subtle small">暂未填写</p>
-            <textarea
-              v-else
-              :id="field.key"
-              v-model="draft[field.key]"
-              :rows="field.key === 'solution' ? 6 : 3"
-              :placeholder="field.hint"
-            ></textarea>
-          </div>
-          <div class="note-field">
-            <label for="code"><span>06</span>代码留档</label
-            ><select v-model="draft.language" aria-label="代码语言">
-              <option value="cpp">C++</option>
-              <option value="python">Python</option>
-              <option value="java">Java</option>
-              <option value="javascript">JavaScript</option>
-              <option value="rust">Rust</option>
-              <option value="go">Go</option></select
-            ><Markdown v-if="preview" :text="'```' + draft.language + '\n' + draft.code + '\n```'" /><textarea
-              v-else
-              id="code"
-              v-model="draft.code"
-              class="code-input"
-              rows="10"
-              spellcheck="false"
-              placeholder="粘贴你的代码，不会自动执行"
-            ></textarea>
-          </div>
-          <div class="editor-actions">
-            <span :class="['small', dirty ? 'unsaved' : 'subtle']">{{
-              dirty ? '有未保存的修改' : '内容已保存'
-            }}</span
-            ><button :disabled="busy" @click="save()"><Save :size="15" />保存笔记</button>
-          </div>
-          <details v-if="qualityHints.length" class="review-quality small">
-            <summary>复盘质量提示（可跳过）</summary>
-            <p v-for="hint in qualityHints" :key="hint">{{ hint }}</p>
-          </details>
-        </div>
-        <div v-if="tab === 'submissions'" class="editor-body">
-          <p class="subtle small">AC 表示通过评测；是否真正掌握，由你的独立重做记录决定。</p>
-          <div v-if="!data.submissions.length" class="quiet-empty">暂无提交记录，这是手动添加的题目。</div>
-          <div v-for="s in data.submissions" :key="s.id" class="timeline-row">
-            <span :class="['verdict', s.verdict === 'OK' ? 'ok' : '']">{{
-              verdictLabel[s.verdict || ''] || s.verdict || '待判'
-            }}</span>
-            <div>
-              <a
-                :href="
-                  s.source === 'atcoder'
-                    ? `https://atcoder.jp/contests/${s.contestKey}/submissions/${s.id}`
-                    : `https://codeforces.com/${(s.contestId || 0) >= 100000 ? 'gym' : 'contest'}/${s.contestId}/submission/${s.id}`
-                "
-                target="_blank"
-                rel="noreferrer"
-                >#{{ s.id }} <ExternalLink :size="12" /></a
-              ><small
-                >{{ s.programmingLanguage }} ·
-                {{
-                  s.author.participantType === 'PRACTICE'
-                    ? '练习'
-                    : s.author.participantType === 'VIRTUAL'
-                      ? '虚拟参赛'
-                      : '正式 / 其他参赛'
-                }}</small
-              >
+            <div class="inline-input">
+              <input
+                v-model="customReason"
+                maxlength="80"
+                aria-label="自定义错因"
+                placeholder="添加自定义错因"
+                @keydown.enter.prevent="addReason"
+              /><button @click="addReason">添加</button>
             </div>
-            <time>{{ fullDate(new Date(s.creationTimeSeconds * 1000).toISOString()) }}</time>
-          </div>
-        </div>
-        <div v-if="tab === 'attempts'" class="editor-body">
-          <div v-if="!data.attempts.length" class="quiet-empty">重做后记录结果，这里会留下你的理解轨迹。</div>
-          <article v-for="a in data.attempts" :key="a.id" class="attempt-entry">
-            <div>
-              <span :class="['badge', a.result === 'independent' ? 'mastered' : 'pending']">{{
-                resultLabels[a.result]
+            <template v-if="data.problem.source === 'atcoder'">
+              <label class="field-title">算法领域（手动标注，可多选）</label>
+              <div class="reason-picker">
+                <label
+                  v-for="category in categoryNames"
+                  :key="category"
+                  :class="{ picked: draft.categories.includes(category) }"
+                  ><input v-model="draft.categories" type="checkbox" :value="category" />{{ category }}</label
+                >
+              </div>
+            </template>
+            <div v-for="(field, i) in fields" :key="field.key" class="note-field">
+              <label :for="field.key"
+                ><span>0{{ i + 1 }}</span
+                >{{ field.label }}</label
+              ><Markdown v-if="preview && draft[field.key]" :text="draft[field.key]" />
+              <p v-else-if="preview" class="subtle small">暂未填写</p>
+              <textarea
+                v-else
+                :id="field.key"
+                v-model="draft[field.key]"
+                :rows="field.key === 'solution' ? 6 : 3"
+                :placeholder="field.hint"
+              ></textarea>
+            </div>
+            <div class="note-field">
+              <label for="code"><span>06</span>代码留档</label
+              ><select v-model="draft.language" aria-label="代码语言">
+                <option value="cpp">C++</option>
+                <option value="python">Python</option>
+                <option value="java">Java</option>
+                <option value="javascript">JavaScript</option>
+                <option value="rust">Rust</option>
+                <option value="go">Go</option></select
+              ><Markdown
+                v-if="preview"
+                :text="'```' + draft.language + '\n' + draft.code + '\n```'"
+              /><textarea
+                v-else
+                id="code"
+                v-model="draft.code"
+                class="code-input"
+                rows="10"
+                spellcheck="false"
+                placeholder="粘贴你的代码，不会自动执行"
+              ></textarea>
+            </div>
+            <div class="editor-actions">
+              <span :class="['small', dirty ? 'unsaved' : 'subtle']">{{
+                dirty ? '有未保存的修改' : '内容已保存'
               }}</span
-              ><span>{{ a.minutes }} 分钟 · {{ fullDate(a.createdAt) }}</span>
+              ><button :disabled="busy" @click="save()"><Save :size="15" />保存笔记</button>
             </div>
-            <Markdown :text="a.note" />
-          </article>
-        </div>
+            <details v-if="qualityHints.length" class="review-quality small">
+              <summary>复盘质量提示（可跳过）</summary>
+              <p v-for="hint in qualityHints" :key="hint">{{ hint }}</p>
+            </details>
+          </div>
+          <div v-if="tab === 'submissions'" class="editor-body">
+            <p class="subtle small">AC 表示通过评测；是否真正掌握，由你的独立重做记录决定。</p>
+            <div v-if="!data.submissions.length" class="quiet-empty">暂无提交记录，这是手动添加的题目。</div>
+            <div v-for="s in data.submissions" :key="s.id" class="timeline-row">
+              <span :class="['verdict', s.verdict === 'OK' ? 'ok' : '']">{{
+                verdictLabel[s.verdict || ''] || s.verdict || '待判'
+              }}</span>
+              <div>
+                <a
+                  :href="
+                    s.source === 'atcoder'
+                      ? `https://atcoder.jp/contests/${s.contestKey}/submissions/${s.id}`
+                      : `https://codeforces.com/${(s.contestId || 0) >= 100000 ? 'gym' : 'contest'}/${s.contestId}/submission/${s.id}`
+                  "
+                  target="_blank"
+                  rel="noreferrer"
+                  >#{{ s.id }} <ExternalLink :size="12" /></a
+                ><small
+                  >{{ s.programmingLanguage }} ·
+                  {{
+                    s.author.participantType === 'PRACTICE'
+                      ? '练习'
+                      : s.author.participantType === 'VIRTUAL'
+                        ? '虚拟参赛'
+                        : '正式 / 其他参赛'
+                  }}</small
+                >
+              </div>
+              <time>{{ fullDate(new Date(s.creationTimeSeconds * 1000).toISOString()) }}</time>
+            </div>
+          </div>
+          <div v-if="tab === 'attempts'" class="editor-body">
+            <div v-if="!data.attempts.length" class="quiet-empty">
+              重做后记录结果，这里会留下你的理解轨迹。
+            </div>
+            <article v-for="a in data.attempts" :key="a.id" class="attempt-entry">
+              <div>
+                <span :class="['badge', a.result === 'independent' ? 'mastered' : 'pending']">{{
+                  resultLabels[a.result]
+                }}</span
+                ><span>{{ a.minutes }} 分钟 · {{ fullDate(a.createdAt) }}</span>
+              </div>
+              <Markdown :text="a.note" />
+            </article>
+          </div>
+        </SwitchSurface>
       </section>
       <aside class="detail-side">
         <section class="panel side-card">

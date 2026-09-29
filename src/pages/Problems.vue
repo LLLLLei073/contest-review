@@ -5,6 +5,8 @@ import { Search, Plus, ArrowLeft, ArrowRight, X, Filter } from 'lucide-vue-next'
 import { api, notify, settings, job } from '../api';
 import type { ProblemRow } from '../../shared/domain';
 import ProblemTable from '../components/ProblemTable.vue';
+import { usePageReady } from '../pageScene';
+const pageReady = usePageReady();
 const route = useRoute(),
   router = useRouter();
 const filters = ref({
@@ -54,6 +56,7 @@ async function load() {
     error.value = (e as Error).message;
   } finally {
     if (token === request) loading.value = false;
+    if (token === request) pageReady();
   }
 }
 async function options() {
