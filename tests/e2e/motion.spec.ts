@@ -229,11 +229,20 @@ test('an unanswered request releases the scene and leaves the page loading state
   await page.goto('/');
   const intro = page.getByRole('dialog', { name: '回解开屏动画' });
   if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
+  let releaseRequest: () => void = () => {};
+  const heldRequest = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
   await page.route('**/api/statistics?source=all', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 9500));
+    await heldRequest;
     await route.continue();
   });
   await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
-  await expect(page.locator('.page-scene')).toHaveCount(0, { timeout: 9000 });
-  await expect(page.getByText('正在读取训练统计…')).toBeVisible();
+  try {
+    await expect(page.locator('.page-scene')).toBeVisible();
+    await expect(page.locator('.page-scene')).toHaveCount(0, { timeout: 9000 });
+    await expect(page.getByText('正在读取训练统计…')).toBeVisible();
+  } finally {
+    releaseRequest();
+  }
 });
