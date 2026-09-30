@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { onBeforeRouteLeave, useRoute } from 'vue-router';
-import { ArrowLeft, ExternalLink, Save, RotateCcw, Eye, EyeOff, Clock3 } from 'lucide-vue-next';
+import {
+  ArrowLeft,
+  ExternalLink,
+  Save,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  Clock3,
+  Sparkles,
+  Trash2,
+} from 'lucide-vue-next';
 import { api, notify, statusLabels, resultLabels, fullDate, localDate } from '../api';
 import {
   reasonOptions,
@@ -12,6 +22,7 @@ import {
   type Attempt,
   type Review,
 } from '../../shared/domain';
+import type { AiReviewRecord } from '../../shared/ai-review';
 import Markdown from '../components/Markdown.vue';
 import { categoryNames } from '../../shared/training';
 import { reviewQualityHints } from '../../shared/training-extras';
@@ -33,6 +44,20 @@ const attempt = ref<{ result: 'independent' | 'hint' | 'failed'; minutes: number
   minutes: 0,
   note: '',
 });
+const aiReviews = ref<AiReviewRecord[]>([]),
+  aiConfigured = ref(false),
+  aiBusy = ref(false),
+  aiError = ref(''),
+  aiExpanded = ref<string | null>(null);
+const aiForm = ref({ code: '', language: 'cpp', verdict: '', focus: '', statement: '' });
+const aiVerdictOptions = [
+  'WRONG_ANSWER',
+  'TIME_LIMIT_EXCEEDED',
+  'MEMORY_LIMIT_EXCEEDED',
+  'RUNTIME_ERROR',
+  'COMPILATION_ERROR',
+  'OK',
+];
 const fields = [
   { key: 'wrongIdea', label: '当时的思路', hint: '当时怎么想的？卡在了哪里？' },
   { key: 'rootCause', label: '根本原因', hint: '为什么会错？是知识缺口，还是实现偏差？' },
@@ -57,11 +82,73 @@ async function load() {
     draft.value = JSON.parse(JSON.stringify(data.value!.problem.review));
     attempt.value.result = draft.value.awaitingEvaluation ? 'independent' : 'hint';
     snapshot.value = JSON.stringify(draft.value);
+    if (!aiForm.value.code && draft.value.code) {
+      aiForm.value.code = draft.value.code;
+      aiForm.value.language = draft.value.language;
+    }
+    void loadAiReviews();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
     pageReady();
   }
+}
+async function loadAiReviews() {
+  try {
+    const [list, config] = await Promise.all([
+      api<AiReviewRecord[]>('/problems/' + encodeURIComponent(key) + '/ai-reviews'),
+      api<{ configured: boolean }>('/ai/settings'),
+    ]);
+    aiReviews.value = list.slice().reverse();
+    aiConfigured.value = config.configured;
+  } catch {
+    // AI 历史读取失败不阻塞复盘笔记
+  }
+}
+async function submitAiReview() {
+  if (aiBusy.value) return;
+  aiBusy.value = true;
+  aiError.value = '';
+  try {
+    const record = await api<AiReviewRecord>('/problems/' + encodeURIComponent(key) + '/ai-reviews', {
+      code: aiForm.value.code,
+      language: aiForm.value.language,
+      verdict: aiForm.value.verdict,
+      focus: aiForm.value.focus,
+      statement: aiForm.value.statement,
+    });
+    aiReviews.value = [record, ...aiReviews.value];
+    aiExpanded.value = record.id;
+    notify('AI 分析完成');
+  } catch (e) {
+    aiError.value = (e as Error).message;
+  } finally {
+    aiBusy.value = false;
+  }
+}
+async function deleteAiReview(id: string) {
+  try {
+    await api(
+      '/problems/' + encodeURIComponent(key) + '/ai-reviews/' + encodeURIComponent(id),
+      undefined,
+      'DELETE',
+    );
+    aiReviews.value = aiReviews.value.filter((r) => r.id !== id);
+    notify('已删除该条 AI 复盘');
+  } catch (e) {
+    aiError.value = (e as Error).message;
+  }
+}
+function fillNote(field: 'rootCause' | 'counterexample' | 'wrongIdea', content: string) {
+  const current = draft.value[field].trim();
+  draft.value[field] = current ? current + '\n\n---\n\n' + content.trim() : content.trim();
+  tab.value = 'notes';
+  notify('已填入笔记，确认后请保存');
+}
+function fillReasons(points: string[]) {
+  for (const p of points) if (!draft.value.reasons.includes(p)) draft.value.reasons.push(p);
+  tab.value = 'notes';
+  notify('已并入错因归类，确认后请保存');
 }
 async function save(action = 'save') {
   if (inFlightSave) return inFlightSave;
@@ -166,13 +253,15 @@ onBeforeRouteLeave(async () => {
               { id: 'notes', label: '复盘笔记' },
               { id: 'submissions', label: '提交记录' },
               { id: 'attempts', label: '重做历史' },
+              { id: 'ai', label: 'AI 复盘' },
             ]"
             :key="t.id"
             :class="{ active: tab === t.id }"
             @click="tab = t.id"
           >
             {{ t.label }}<small v-if="t.id === 'submissions'">{{ data.submissions.length }}</small
-            ><small v-if="t.id === 'attempts'">{{ data.attempts.length }}</small>
+            ><small v-if="t.id === 'attempts'">{{ data.attempts.length }}</small
+            ><small v-if="t.id === 'ai'">{{ aiReviews.length }}</small>
           </button>
         </div>
         <SwitchSurface
@@ -293,6 +382,135 @@ onBeforeRouteLeave(async () => {
               </div>
               <time>{{ fullDate(new Date(s.creationTimeSeconds * 1000).toISOString()) }}</time>
             </div>
+          </div>
+          <div v-if="tab === 'ai'" class="editor-body">
+            <p class="subtle small">
+              粘贴一段代码，AI
+              会分析错误原因、评价思路、生成反例并推荐知识点。结果仅供参考，请结合评测与自己的重做判断。
+            </p>
+            <div v-if="!aiConfigured" class="alert">
+              尚未配置 AI 服务。请前往<RouterLink to="/settings">设置与数据 → AI 助手</RouterLink
+              >填写接口地址、密钥与模型。
+            </div>
+            <div class="note-field">
+              <label for="ai-code"><span>01</span>待分析代码</label>
+              <div class="editor-toolbar">
+                <select v-model="aiForm.language" aria-label="代码语言">
+                  <option value="cpp">C++</option>
+                  <option value="python">Python</option>
+                  <option value="java">Java</option>
+                  <option value="javascript">JavaScript</option>
+                  <option value="rust">Rust</option>
+                  <option value="go">Go</option></select
+                ><select v-model="aiForm.verdict" aria-label="评测结果">
+                  <option value="">评测结果（可选）</option>
+                  <option v-for="v in aiVerdictOptions" :key="v" :value="v">
+                    {{ verdictLabel[v] || v }}
+                  </option>
+                </select>
+              </div>
+              <textarea
+                id="ai-code"
+                v-model="aiForm.code"
+                class="code-input"
+                rows="10"
+                spellcheck="false"
+                placeholder="粘贴需要分析的代码（默认带入「代码留档」内容）"
+              ></textarea>
+            </div>
+            <details class="ai-extra">
+              <summary class="small">补充上下文（可选）：题目描述 · 希望 AI 重点关注的问题</summary>
+              <textarea
+                v-model="aiForm.statement"
+                rows="3"
+                placeholder="粘贴题目描述，AI 的反例与复杂度判断会更准确"
+              ></textarea>
+              <textarea
+                v-model="aiForm.focus"
+                rows="2"
+                placeholder="例如：我怀疑边界条件有问题 / 帮我看看复杂度"
+              ></textarea>
+            </details>
+            <div class="editor-actions">
+              <span class="small subtle">AI 每次分析都会留档在下方历史中</span
+              ><button
+                class="primary"
+                :disabled="aiBusy || !aiForm.code.trim() || !aiConfigured"
+                @click="submitAiReview"
+              >
+                <Sparkles :size="15" />{{ aiBusy ? 'AI 分析中…' : '开始 AI 分析' }}
+              </button>
+            </div>
+            <div v-if="aiError" class="alert error" role="alert">{{ aiError }}</div>
+            <div v-if="!aiReviews.length && !aiBusy" class="quiet-empty">
+              还没有 AI 复盘记录。提交代码后，分析结果会保存在这里。
+            </div>
+            <article v-for="r in aiReviews" :key="r.id" class="attempt-entry ai-entry">
+              <div class="ai-entry-head">
+                <button class="ai-entry-title" @click="aiExpanded = aiExpanded === r.id ? null : r.id">
+                  <span class="badge reviewing">AI</span
+                  ><span
+                    >{{ r.model }} · {{ verdictLabel[r.verdict] || r.verdict || '未指定结果' }} ·
+                    {{ fullDate(r.createdAt) }}</span
+                  >
+                </button>
+                <button
+                  class="icon-button"
+                  aria-label="删除该条 AI 复盘"
+                  :disabled="aiBusy"
+                  @click="deleteAiReview(r.id)"
+                >
+                  <Trash2 :size="15" />
+                </button>
+              </div>
+              <template v-if="aiExpanded === r.id">
+                <section class="ai-section">
+                  <div class="ai-section-head">
+                    <h3>错误原因</h3>
+                    <button class="small-button" @click="fillNote('rootCause', r.errorAnalysis)">
+                      填入「根本原因」
+                    </button>
+                  </div>
+                  <Markdown :text="r.errorAnalysis" />
+                </section>
+                <section class="ai-section">
+                  <div class="ai-section-head">
+                    <h3>思路评价</h3>
+                    <button class="small-button" @click="fillNote('wrongIdea', r.approachEvaluation)">
+                      追加到「当时的思路」
+                    </button>
+                  </div>
+                  <Markdown :text="r.approachEvaluation" />
+                </section>
+                <section v-if="r.counterexamples.length" class="ai-section">
+                  <div class="ai-section-head">
+                    <h3>反例</h3>
+                    <button
+                      class="small-button"
+                      @click="fillNote('counterexample', r.counterexamples.join('\n\n---\n\n'))"
+                    >
+                      填入「关键反例与边界」
+                    </button>
+                  </div>
+                  <Markdown v-for="(c, i) in r.counterexamples" :key="i" :text="c" />
+                </section>
+                <section class="ai-section">
+                  <div class="ai-section-head">
+                    <h3>推荐知识点</h3>
+                    <button
+                      v-if="r.suggestedReasons.length"
+                      class="small-button"
+                      @click="fillReasons(r.suggestedReasons)"
+                    >
+                      并入「错因归类」
+                    </button>
+                  </div>
+                  <div class="reason-picker ai-points">
+                    <span v-for="p in r.knowledgePoints" :key="p" class="tag">{{ p }}</span>
+                  </div>
+                </section>
+              </template>
+            </article>
           </div>
           <div v-if="tab === 'attempts'" class="editor-body">
             <div v-if="!data.attempts.length" class="quiet-empty">

@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   ArrowRight,
   Search,
+  Sparkles,
 } from 'lucide-vue-next';
 import { api, settings, loadSettings, loadJob, job, notify, fullDate, browserMode } from '../api';
 import type { XcpcCandidate } from '../../shared/xcpc';
@@ -19,8 +20,8 @@ const pageReady = usePageReady();
 const savedSection = sessionStorage.getItem('contest-review:settings-section');
 const savedPlatform = sessionStorage.getItem('contest-review:account-platform');
 const handle = ref(settings.value.activeHandle),
-  settingsSection = ref<'accounts' | 'sync' | 'backup'>(
-    savedSection === 'sync' || savedSection === 'backup' ? savedSection : 'accounts',
+  settingsSection = ref<'accounts' | 'sync' | 'backup' | 'ai'>(
+    savedSection === 'sync' || savedSection === 'backup' || savedSection === 'ai' ? savedSection : 'accounts',
   ),
   accountPlatform = ref<'cf' | 'atcoder' | 'xcpc'>(
     savedPlatform === 'atcoder' || savedPlatform === 'xcpc' ? savedPlatform : 'cf',
@@ -33,6 +34,12 @@ const handle = ref(settings.value.activeHandle),
 const xcpcName = ref(''),
   candidates = ref<XcpcCandidate[]>([]),
   xcpcBusy = ref(false);
+const aiBaseUrl = ref(''),
+  aiApiKey = ref(''),
+  aiModel = ref(''),
+  aiConfigured = ref(false),
+  aiBusy = ref(false),
+  aiTestResult = ref('');
 const atcoderHandle = ref(settings.value.activeAtcoder ?? ''),
   atcoderJob = ref<SyncJob | null>(null),
   atcoderVerified = ref(false),
@@ -52,6 +59,49 @@ watch(
     if (!atcoderHandle.value || atcoderHandle.value === previous) atcoderHandle.value = value ?? '';
   },
 );
+async function loadAi() {
+  const data = await api<{ configured: boolean; baseUrl: string; model: string; apiKey: string }>(
+    '/ai/settings',
+  );
+  aiConfigured.value = data.configured;
+  aiBaseUrl.value = data.baseUrl;
+  aiModel.value = data.model;
+  aiApiKey.value = data.apiKey;
+}
+async function saveAi() {
+  aiBusy.value = true;
+  aiTestResult.value = '';
+  error.value = '';
+  try {
+    const data = await api<{ configured: boolean; apiKey: string }>(
+      '/ai/settings',
+      { baseUrl: aiBaseUrl.value.trim(), apiKey: aiApiKey.value.trim(), model: aiModel.value.trim() },
+      'PUT',
+    );
+    aiConfigured.value = data.configured;
+    aiApiKey.value = data.apiKey;
+    notify('AI 配置已保存');
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    aiBusy.value = false;
+  }
+}
+async function testAi() {
+  aiBusy.value = true;
+  aiTestResult.value = '';
+  error.value = '';
+  try {
+    await saveAi();
+    if (error.value) return;
+    const data = await api<{ ok: boolean; message: string }>('/ai/test', {});
+    aiTestResult.value = data.message;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    aiBusy.value = false;
+  }
+}
 async function loadAtcoder() {
   const data = await api<{ job: SyncJob | null; verified: boolean; verifiedBy: string }>('/atcoder/binding');
   atcoderJob.value = data.job;
@@ -87,6 +137,7 @@ async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume 
   }
 }
 onMounted(() => {
+  void loadAi().catch(() => {});
   void loadAtcoder()
     .catch((e) => (error.value = (e as Error).message))
     .finally(pageReady);
@@ -219,6 +270,7 @@ async function restore() {
     <button :class="{ active: settingsSection === 'backup' }" @click="settingsSection = 'backup'">
       备份与恢复
     </button>
+    <button :class="{ active: settingsSection === 'ai' }" @click="settingsSection = 'ai'">AI 助手</button>
   </nav>
   <nav v-show="settingsSection === 'accounts'" class="content-switcher sub-switcher" aria-label="账号平台">
     <button :class="{ active: accountPlatform === 'cf' }" @click="accountPlatform = 'cf'">Codeforces</button>
@@ -517,6 +569,55 @@ async function restore() {
           >
             下载最近一次恢复前的备份
           </button>
+        </section>
+        <section v-show="settingsSection === 'ai'" class="panel settings-card">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-icon"><Sparkles :size="20" /></span>
+              <div>
+                <h2>AI 代码复盘</h2>
+                <p>配置任意 OpenAI 兼容接口后，可在题目详情页让 AI 分析错误代码。</p>
+              </div>
+            </div>
+            <span v-if="aiConfigured" class="badge mastered">已配置</span>
+          </div>
+          <form class="handle-form ai-form" @submit.prevent="saveAi">
+            <label
+              >接口地址 Base URL<input
+                v-model="aiBaseUrl"
+                required
+                maxlength="300"
+                placeholder="例如 https://api.deepseek.com/v1"
+                :disabled="aiBusy" /></label
+            ><label
+              >API 密钥<input
+                v-model="aiApiKey"
+                type="password"
+                maxlength="300"
+                placeholder="sk-…（本地服务可留空）"
+                autocomplete="off"
+                :disabled="aiBusy" /></label
+            ><label
+              >模型名称<input
+                v-model="aiModel"
+                required
+                maxlength="120"
+                placeholder="例如 deepseek-chat"
+                :disabled="aiBusy"
+            /></label>
+            <div class="button-row">
+              <button class="primary" :disabled="aiBusy">保存配置</button
+              ><button type="button" :disabled="aiBusy || !aiBaseUrl || !aiModel" @click="testAi">
+                {{ aiBusy ? '请求中…' : '保存并测试连接' }}
+              </button>
+            </div>
+          </form>
+          <p v-if="aiTestResult" class="alert success">{{ aiTestResult }}</p>
+          <p class="small subtle">
+            密钥只保存在本地数据库，并随备份导出。兼容 OpenAI 格式的服务均可使用，例如
+            DeepSeek（https://api.deepseek.com/v1）、Kimi（https://api.moonshot.cn/v1）或本地
+            Ollama（http://127.0.0.1:11434/v1）。AI 分析结果仅供参考，请以评测与独立重做为准。
+          </p>
         </section>
       </div>
       <aside class="settings-note">

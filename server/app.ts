@@ -9,6 +9,18 @@ import { CodeforcesClient, SyncService, type CFClient } from './sync.js';
 import { AnalysisService } from '../shared/analysis-service.js';
 import { ContestHub } from '../shared/contest-hub.js';
 import { TrainingService } from '../shared/training-service.js';
+import {
+  AiReviewer,
+  aiConfigSchema,
+  aiReviewInputSchema,
+  aiReviewRecordSchema,
+  aiReviewNamespace,
+  maskApiKey,
+  AI_CONFIG_KEY,
+  AI_CONFIG_NAMESPACE,
+  type AiConfig,
+  type FetchLike,
+} from '../shared/ai-review.js';
 import type { XcpcClient } from '../shared/xcpc.js';
 import {
   AtcoderService,
@@ -28,6 +40,7 @@ export async function buildApp(
     pageSize?: number;
     xcpc?: XcpcClient;
     atcoder?: AtcoderClientLike;
+    aiFetch?: FetchLike;
   } = {},
 ) {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 100 * 1024 * 1024 });
@@ -36,6 +49,19 @@ export async function buildApp(
   const atcoder = new AtcoderService(store, options.atcoder ?? new AtcoderClient());
   const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc, atcoder);
   const training = new TrainingService(store, cf);
+  const aiReviewer = new AiReviewer(options.aiFetch);
+  const aiConfig = (): AiConfig | null => {
+    const raw = store.externalGet(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY);
+    if (!raw) return null;
+    const parsed = aiConfigSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+  };
+  const aiSettingsView = (config: AiConfig | null) => ({
+    configured: !!config,
+    baseUrl: config?.baseUrl ?? '',
+    model: config?.model ?? '',
+    apiKey: config ? maskApiKey(config.apiKey) : '',
+  });
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host || '';
     if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host))
@@ -89,6 +115,27 @@ export async function buildApp(
   app.post('/api/xcpc/mode', async (req) => {
     hub.setMode(z.object({ mode: z.enum(['official', 'all']) }).parse(req.body).mode);
     return { mode: hub.mode() };
+  });
+  app.get('/api/ai/settings', async () => aiSettingsView(aiConfig()));
+  app.put('/api/ai/settings', async (req) => {
+    const body = z
+      .object({
+        baseUrl: z.string().trim().min(1).max(300),
+        apiKey: z.string().trim().max(300).default(''),
+        model: z.string().trim().min(1).max(120),
+      })
+      .parse(req.body);
+    const previous = aiConfig();
+    const apiKey =
+      previous && body.apiKey && body.apiKey === maskApiKey(previous.apiKey) ? previous.apiKey : body.apiKey;
+    const config = aiConfigSchema.parse({ baseUrl: body.baseUrl, apiKey, model: body.model });
+    store.externalPut(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY, config);
+    return aiSettingsView(config);
+  });
+  app.post('/api/ai/test', async () => {
+    const config = aiConfig();
+    if (!config) throw new Error('请先保存 AI 配置');
+    return { ok: true, message: await aiReviewer.test(config) };
   });
   app.get('/api/review/contests', async () =>
     [...hub.rows(), ...atcoder.contests()].sort(
@@ -358,6 +405,41 @@ export async function buildApp(
   app.post<{ Params: { key: string } }>('/api/problems/:key/attempts', async (req) =>
     store.attempt(store.profileForKey(req.params.key), req.params.key, attemptSchema.parse(req.body)),
   );
+  app.get<{ Params: { key: string } }>('/api/problems/:key/ai-reviews', async (req) =>
+    store.externalAllPrefix(aiReviewNamespace(store.profileForKey(req.params.key)), req.params.key + ':'),
+  );
+  app.post<{ Params: { key: string } }>('/api/problems/:key/ai-reviews', async (req) => {
+    const config = aiConfig();
+    if (!config) throw new Error('请先在「设置与数据」中配置 AI 服务');
+    const profile = store.profileForKey(req.params.key);
+    const detail = store.detail(profile, req.params.key);
+    if (!detail) throw new Error('题目不存在');
+    const input = aiReviewInputSchema.parse(req.body);
+    const result = await aiReviewer.review(
+      config,
+      { problem: detail.problem, submissions: detail.submissions },
+      input,
+    );
+    const record = aiReviewRecordSchema.parse({
+      ...result,
+      id: crypto.randomUUID(),
+      problemKey: req.params.key,
+      language: input.language,
+      verdict: input.verdict,
+      model: config.model,
+      createdAt: new Date().toISOString(),
+      code: input.code,
+    });
+    store.externalPut(aiReviewNamespace(profile), req.params.key + ':' + record.id, record);
+    return record;
+  });
+  app.delete<{ Params: { key: string; id: string } }>('/api/problems/:key/ai-reviews/:id', async (req) => {
+    store.externalDelete(
+      aiReviewNamespace(store.profileForKey(req.params.key)),
+      req.params.key + ':' + req.params.id,
+    );
+    return { ok: true };
+  });
   app.get('/api/contests', async () => store.contests(store.active()));
   app.get<{ Params: { id: string } }>('/api/contests/:id/analysis', async (req) =>
     analysis.get(profile(), z.coerce.number().int().positive().parse(req.params.id)),

@@ -324,6 +324,9 @@ export class CoreStore {
       )
       .run(namespace, key, JSON.stringify(value));
   }
+  externalDelete(namespace: string, key: string) {
+    this.db.prepare('DELETE FROM external WHERE namespace=? AND key=?').run(namespace, key);
+  }
   setting(key: string): string {
     return (
       (this.db.prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined)
@@ -452,7 +455,7 @@ export class CoreStore {
       (item) => h.startsWith('ac~') === item.key.startsWith('atcoder:'),
     )) {
       const review = this.review(h, item.key);
-      if (review.ignored || review.status === 'mastered' || review.lastEvaluatedDay === date) continue;
+      if (review.ignored || review.status === 'mastered' || (review.lastEvaluatedDay && review.lastEvaluatedDay >= date)) continue;
       const accepted = submissions
         .filter(
           (s) =>

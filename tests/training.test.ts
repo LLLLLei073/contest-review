@@ -183,6 +183,31 @@ test('late subjective evaluation schedules from AC day, so overdue remains overd
   s.close();
 });
 
+test('ingesting older AC after late evaluation does not resurrect awaiting-evaluation', () => {
+  const s = store();
+  s.ingest('tester', [make(1, 'A')]);
+  s.trainingDay('tester', now);
+  s.ingest('tester', [make(2, 'A', 'OK')]);
+  const late = new Date(now.getTime() + 86400000);
+  assert.equal(s.trainingDay('tester', late).review[0].phase, 'reflection');
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), wrongIdea: '漏看条件' });
+  assert.equal(s.trainingDay('tester', late).review[0].phase, 'evaluation');
+  s.attempt('tester', '2000:A', { result: 'independent', minutes: 20, note: '' }, late);
+  assert.equal(s.review('tester', '2000:A').awaitingEvaluation, null);
+  assert.equal(s.review('tester', '2000:A').lastEvaluatedDay, localDay(late));
+
+  // Re-ingest the same AC day submission (e.g. delayed sync or another AC on the same day).
+  // It must not re-enter awaiting-evaluation, otherwise the dashboard shows "待评价"
+  // but attempting again fails with "今天已评价过这道题".
+  s.ingest('tester', [make(3, 'A', 'OK')]);
+  assert.equal(s.review('tester', '2000:A').awaitingEvaluation, null);
+  assert.equal(s.trainingDay('tester', late).review[0].phase, 'done');
+  assert.throws(() => s.attempt('tester', '2000:A', { result: 'independent', minutes: 1, note: '' }, late), {
+    message: '今天已评价过这道题',
+  });
+  s.close();
+});
+
 test('mastery uses unique problems, transparent shrinkage and inverse allocation', () => {
   const s = store();
   s.ingest('tester', [make(1, 'A'), make(2, 'A', 'OK'), make(3, 'B')]);

@@ -3,6 +3,17 @@ import { attemptSchema, reviewSchema } from '../../shared/domain';
 import { contestReviewSchema, localDay } from '../../shared/core-store';
 import { browserRuntime } from './database';
 import { atcoderHandleSchema, atcoderProfile, atcoderNamespace } from '../../shared/atcoder';
+import {
+  AiReviewer,
+  aiConfigSchema,
+  aiReviewInputSchema,
+  aiReviewRecordSchema,
+  aiReviewNamespace,
+  maskApiKey,
+  AI_CONFIG_KEY,
+  AI_CONFIG_NAMESPACE,
+  type AiConfig,
+} from '../../shared/ai-review';
 
 export async function browserApi<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
   const runtime = await browserRuntime(),
@@ -20,6 +31,19 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   };
   const isWrite = !['GET', 'HEAD'].includes(method);
   if (isWrite) runtime.assertWritable();
+  const aiReviewer = new AiReviewer();
+  const aiConfig = (): AiConfig | null => {
+    const raw = store.externalGet(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY);
+    if (!raw) return null;
+    const parsed = aiConfigSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+  };
+  const aiSettingsView = (config: AiConfig | null) => ({
+    configured: !!config,
+    baseUrl: config?.baseUrl ?? '',
+    model: config?.model ?? '',
+    apiKey: config ? maskApiKey(config.apiKey) : '',
+  });
   let result: unknown;
   try {
     if (route === '/settings' && method === 'GET')
@@ -128,7 +152,63 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       result = hub.startReport(decodeURIComponent(route.split('/')[3]));
     else if (/^\/xcpc\/contests\/[^/]+\/review$/.test(route) && method === 'PUT')
       result = hub.saveReview(decodeURIComponent(route.split('/')[3]), contestReviewSchema.parse(body));
-    else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
+    else if (route === '/ai/settings' && method === 'GET') result = aiSettingsView(aiConfig());
+    else if (route === '/ai/settings' && method === 'PUT') {
+      const input = z
+        .object({
+          baseUrl: z.string().trim().min(1).max(300),
+          apiKey: z.string().trim().max(300).default(''),
+          model: z.string().trim().min(1).max(120),
+        })
+        .parse(body);
+      const previous = aiConfig();
+      const apiKey =
+        previous && input.apiKey && input.apiKey === maskApiKey(previous.apiKey)
+          ? previous.apiKey
+          : input.apiKey;
+      const config = aiConfigSchema.parse({ baseUrl: input.baseUrl, apiKey, model: input.model });
+      store.externalPut(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY, config);
+      result = aiSettingsView(config);
+    } else if (route === '/ai/test' && method === 'POST') {
+      const config = aiConfig();
+      if (!config) throw new Error('请先保存 AI 配置');
+      result = { ok: true, message: await aiReviewer.test(config) };
+    } else if (/^\/problems\/[^/]+\/ai-reviews$/.test(route) && method === 'GET') {
+      const key = decodeURIComponent(route.split('/')[2]);
+      result = store.externalAllPrefix(aiReviewNamespace(store.profileForKey(key)), key + ':');
+    } else if (/^\/problems\/[^/]+\/ai-reviews$/.test(route) && method === 'POST') {
+      const config = aiConfig();
+      if (!config) throw new Error('请先在「设置与数据」中配置 AI 服务');
+      const key = decodeURIComponent(route.split('/')[2]),
+        profile = store.profileForKey(key),
+        detail = store.detail(profile, key);
+      if (!detail) throw new Error('题目不存在');
+      const input = aiReviewInputSchema.parse(body);
+      const review = await aiReviewer.review(
+        config,
+        { problem: detail.problem, submissions: detail.submissions },
+        input,
+      );
+      const record = aiReviewRecordSchema.parse({
+        ...review,
+        id: crypto.randomUUID(),
+        problemKey: key,
+        language: input.language,
+        verdict: input.verdict,
+        model: config.model,
+        createdAt: new Date().toISOString(),
+        code: input.code,
+      });
+      store.externalPut(aiReviewNamespace(profile), key + ':' + record.id, record);
+      result = record;
+    } else if (/^\/problems\/[^/]+\/ai-reviews\/[^/]+$/.test(route) && method === 'DELETE') {
+      const key = decodeURIComponent(route.split('/')[2]);
+      store.externalDelete(
+        aiReviewNamespace(store.profileForKey(key)),
+        key + ':' + decodeURIComponent(route.split('/')[4]),
+      );
+      result = { ok: true };
+    } else if (route === '/sync' && method === 'GET') result = store.latestJob(store.active());
     else if (route === '/training/day' && method === 'GET') {
       result = store.combinedTrainingDay();
       await runtime.flush();
