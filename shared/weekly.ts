@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { categories, categoryNames, chooseNewProblems, type Catalog, type MasteryArea } from './training.js';
+import {
+  categories,
+  categoryNames,
+  chooseNewProblems,
+  type Catalog,
+  type DifficultyBand,
+  type MasteryArea,
+} from './training.js';
 
 export const weeklyGoalSchema = z
   .object({
@@ -34,16 +41,21 @@ export function chooseWeeklyProblems(
   catalog: Catalog['problems'],
   blocked: Set<string>,
   mastery: MasteryArea[],
-  targetRating: number,
+  difficulty: DifficultyBand,
   date: string,
   goal: WeeklyGoal,
   priorCoverage: Record<string, number> = {},
 ): PickResult {
-  const available = catalog.filter((p) => !blocked.has(p.key));
+  const available = catalog.filter(
+    (p) =>
+      !blocked.has(p.key) &&
+      p.rating !== null &&
+      p.rating >= difficulty.minimum &&
+      p.rating <= difficulty.maximum,
+  );
   const scores = new Map(mastery.map((a) => [a.name, a.score]));
   const order = (a: Catalog['problems'][number], b: Catalog['problems'][number]) =>
-    (a.rating === null ? 10000 : Math.abs(a.rating - targetRating)) -
-      (b.rating === null ? 10000 : Math.abs(b.rating - targetRating)) ||
+    Math.abs(a.rating! - difficulty.preferred) - Math.abs(b.rating! - difficulty.preferred) ||
     hash(`${date}:${a.key}`) - hash(`${date}:${b.key}`) ||
     a.key.localeCompare(b.key);
   const keys: string[] = [];
@@ -69,10 +81,10 @@ export function chooseWeeklyProblems(
     goalCount++;
     for (const c of matched) priorCoverage[c] = (priorCoverage[c] ?? 0) + 1;
     reasons[selected.key] =
-      `本周目标：${matched.join('、')}；难度${selected.rating ?? '未知'}，参考难度${targetRating}`;
+      `本周目标：${matched.join('、')}；${difficulty.basis}，推荐区间 ${difficulty.minimum}–${difficulty.maximum}，本题难度 ${selected.rating}`;
   }
   const byKey = new Map(available.map((p) => [p.key, p]));
-  for (const key of chooseNewProblems(catalog, new Set(used), mastery, targetRating, date).slice(
+  for (const key of chooseNewProblems(catalog, new Set(used), mastery, difficulty, date).slice(
     0,
     5 - keys.length,
   )) {
@@ -80,7 +92,7 @@ export function chooseWeeklyProblems(
     keys.push(key);
     const weak = categories(selected.tags).sort((a, b) => (scores.get(a) ?? 50) - (scores.get(b) ?? 50))[0];
     reasons[key] =
-      `薄弱领域：${weak}（掌握度 ${scores.get(weak) ?? 50}）；难度${selected.rating ?? '未知'}，参考难度${targetRating}`;
+      `薄弱领域：${weak}（掌握度 ${scores.get(weak) ?? 50}）；${difficulty.basis}，推荐区间 ${difficulty.minimum}–${difficulty.maximum}，本题难度 ${selected.rating}`;
   }
   return {
     keys,
@@ -88,9 +100,9 @@ export function chooseWeeklyProblems(
     goalCount,
     shortage:
       goalCount < 2
-        ? `本周目标领域仅找到 ${goalCount} 道符合条件的新题`
+        ? `本周目标领域在难度 ${difficulty.minimum}–${difficulty.maximum} 内仅找到 ${goalCount} 道未做过的有难度题`
         : keys.length < 5
-          ? `仅找到 ${keys.length} 道符合条件的新题`
+          ? `难度 ${difficulty.minimum}–${difficulty.maximum} 内仅找到 ${keys.length} 道未做过的有难度题`
           : null,
   };
 }

@@ -22,7 +22,7 @@ const tags = [
 ];
 export const fixtureNewProblems: CFSubmission['problem'][] = Array.from({ length: 10 }, (_, i) => ({
   contestId: 3100 + i, index: 'A', name: `New Knowledge ${i + 1}`,
-  tags: tags[i % tags.length], rating: 1100 + (i % 6) * 100,
+  tags: i % 3 === 0 ? ['math'] : tags[i % tags.length], rating: 1500 + (i % 3) * 100,
 }));
 export const fixtureSubmissions: CFSubmission[] = names
   .flatMap((name, i) => {

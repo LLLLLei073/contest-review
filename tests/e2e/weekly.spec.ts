@@ -37,7 +37,7 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
         contestId: 4200 + i,
         index: 'A',
         name: `Fresh ${i}`,
-        rating: 900 + i * 100,
+        rating: i % 4 < 2 ? 1000 + (i % 2) * 100 : 1500 + (i % 2) * 100,
         tags: i < 5 ? ['math'] : ['dp'],
       })),
     ],
@@ -109,12 +109,12 @@ test('weekly goal scene keeps today fixed and supports cancel, keyboard and redu
     'goal_scene_tester',
     [],
     [],
-    Array.from({ length: 12 }, (_, index) => ({
+    Array.from({ length: 24 }, (_, index) => ({
       contestId: 5200 + index,
       index: 'A',
       name: `Goal Scene ${index}`,
-      rating: 900 + index * 50,
-      tags: index < 6 ? ['math'] : ['dp'],
+      rating: index % 4 < 2 ? 1000 + (index % 2) * 100 : 1500 + (index % 2) * 100,
+      tags: index % 8 < 4 ? ['math'] : ['dp'],
     })),
   );
   const backup = store.backup();

@@ -13,7 +13,7 @@ const catalog = Array.from({ length: 18 }, (_, i) => ({
   contestId: 3000 + i,
   index: 'A',
   name: `Task ${i}`,
-  rating: 900 + i * 100,
+  rating: 1000 + (i % 4) * 100,
   tags: i < 5 ? ['math'] : i < 10 ? ['dp'] : ['graphs'],
 }));
 function fixture() {
@@ -85,6 +85,49 @@ test('balanced goal counts two total; shortages and profile isolation are explic
   const short = s.trainingDay('bob', monday);
   assert.equal(short.newProblems.length, 2);
   assert.match(short.newShortage ?? '', /0 道/);
+  s.close();
+});
+
+test('latest official Rating controls the next plan, while todays plan and another account stay fixed', () => {
+  const s = fixture();
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, monday);
+  const first = s.trainingDay('alice', monday);
+  assert.ok(first.newProblems.every((p) => (p.rating ?? 0) >= 1000 && (p.rating ?? 0) <= 1300));
+  s.enrich(
+    'alice',
+    [],
+    [
+      {
+        contestId: 90,
+        contestName: 'Recent',
+        oldRating: 1500,
+        newRating: 1600,
+        rank: 20,
+        ratingUpdateTimeSeconds: 200,
+      },
+      {
+        contestId: 80,
+        contestName: 'Older',
+        oldRating: 900,
+        newRating: 1000,
+        rank: 30,
+        ratingUpdateTimeSeconds: 100,
+      },
+    ],
+    [],
+  );
+  assert.deepEqual(
+    s.trainingDay('alice', monday).newProblems.map((p) => p.key),
+    first.newProblems.map((p) => p.key),
+  );
+  const next = s.trainingDay('alice', tuesday);
+  assert.equal(next.newProblems.length, 0);
+  assert.match(next.newShortage ?? '', /难度 1600–1900/);
+  s.activate('bob');
+  s.enrich('bob', [], [], catalog);
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, tuesday);
+  assert.equal(s.trainingDay('bob', tuesday).newProblems.length, 5);
+  assert.match(s.trainingDay('bob', tuesday).newProblems[0].recommendationReason ?? '', /暂无官方 Rating/);
   s.close();
 });
 

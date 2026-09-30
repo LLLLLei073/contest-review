@@ -58,6 +58,12 @@ export const catalogSchema = z.object({
   ),
 });
 export type Catalog = z.infer<typeof catalogSchema>;
+export interface DifficultyBand {
+  minimum: number;
+  maximum: number;
+  preferred: number;
+  basis: string;
+}
 export const dailyPlanSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   review: z
@@ -161,16 +167,21 @@ export function chooseNewProblems(
   catalog: Catalog['problems'],
   blocked: Set<string>,
   mastery: MasteryArea[],
-  targetRating: number,
+  difficulty: DifficultyBand,
   date: string,
 ): string[] {
-  const available = catalog.filter((p) => !blocked.has(p.key));
+  const available = catalog.filter(
+    (p) =>
+      !blocked.has(p.key) &&
+      p.rating !== null &&
+      p.rating >= difficulty.minimum &&
+      p.rating <= difficulty.maximum,
+  );
   const buckets = new Map<CategoryName, Catalog['problems']>(categoryNames.map((name) => [name, []]));
   for (const problem of available)
     for (const category of categories(problem.tags)) buckets.get(category)!.push(problem);
   const order = (a: Catalog['problems'][number], b: Catalog['problems'][number]) =>
-    (a.rating === null ? 10000 : Math.abs(a.rating - targetRating)) -
-      (b.rating === null ? 10000 : Math.abs(b.rating - targetRating)) ||
+    Math.abs(a.rating! - difficulty.preferred) - Math.abs(b.rating! - difficulty.preferred) ||
     hash(`${date}:${a.key}`) - hash(`${date}:${b.key}`) ||
     a.key.localeCompare(b.key);
   for (const bucket of buckets.values()) bucket.sort(order);
@@ -196,20 +207,36 @@ export function chooseNewProblems(
   }
   return selected;
 }
-export function targetDifficulty(
+export function recommendationDifficulty(
   problems: Problem[],
   submissions: CFSubmission[],
   keyOf: (s: CFSubmission) => string,
-): number {
+  officialRating?: number,
+): DifficultyBand {
   const solved = new Set(submissions.filter((s) => s.verdict === 'OK').map(keyOf));
   const rated = problems
     .filter((p) => p.rating !== null && solved.has(p.key))
     .map((p) => p.rating!)
     .sort((a, b) => a - b);
-  const attempted = problems
-    .filter((p) => p.rating !== null)
-    .map((p) => p.rating!)
-    .sort((a, b) => a - b);
-  const values = rated.length ? rated : attempted;
-  return values.length ? values[Math.floor((values.length - 1) / 2)] : 800;
+  const median = rated.length ? rated[Math.floor((rated.length - 1) / 2)] : null;
+  const hasRating = officialRating !== undefined && Number.isFinite(officialRating) && officialRating > 0;
+  const minimum = hasRating ? Math.max(800, officialRating) : median === null ? 1000 : median + 100;
+  const maximum = hasRating ? Math.max(800, officialRating + 300) : minimum + 300;
+  const preferred = Math.min(
+    maximum,
+    Math.max(
+      minimum,
+      hasRating ? Math.max(officialRating + 100, (median ?? officialRating) + 100) : minimum + 100,
+    ),
+  );
+  return {
+    minimum,
+    maximum,
+    preferred,
+    basis: hasRating
+      ? `CF 官方 Rating ${officialRating}`
+      : median === null
+        ? '暂无官方 Rating 和已 AC 难度，按 1000 起步'
+        : `暂无官方 Rating，按唯一已 AC 题中位难度 ${median} 加 100`,
+  };
 }

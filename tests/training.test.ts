@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { Store } from '../server/store.js';
 import { localDay, problemKey } from '../shared/core-store.js';
 import { emptyReview, type CFSubmission } from '../shared/domain.js';
-import { categoryNames, chooseNewProblems, masteryAreas, type Catalog } from '../shared/training.js';
+import {
+  categoryNames,
+  chooseNewProblems,
+  masteryAreas,
+  recommendationDifficulty,
+  type Catalog,
+} from '../shared/training.js';
 import { TrainingService } from '../shared/training-service.js';
 import { buildApp } from '../server/app.js';
 
@@ -25,9 +31,59 @@ const catalog = (): CFSubmission['problem'][] =>
     contestId: 2001 + i,
     index: 'A',
     name: 'New ' + i,
-    rating: 800 + i * 100,
+    rating: 1000 + (i % 4) * 100,
     tags: [i % 2 ? 'math' : 'dp'],
   }));
+
+test('difficulty band honors official Rating, unique AC fallback and strict boundaries', () => {
+  const solved = [make(1, 'A', 'OK'), make(2, 'A', 'OK'), make(3, 'B', 'OK')];
+  const known = [
+    {
+      key: '2000:A',
+      contestId: 2000,
+      index: 'A',
+      name: 'A',
+      rating: 800,
+      tags: [],
+      url: 'https://codeforces.com/problemset',
+      manual: false,
+    },
+    {
+      key: '2000:B',
+      contestId: 2000,
+      index: 'B',
+      name: 'B',
+      rating: 1200,
+      tags: [],
+      url: 'https://codeforces.com/problemset',
+      manual: false,
+    },
+  ];
+  assert.deepEqual(recommendationDifficulty(known, solved, problemKey), {
+    minimum: 900,
+    maximum: 1200,
+    preferred: 1000,
+    basis: '暂无官方 Rating，按唯一已 AC 题中位难度 800 加 100',
+  });
+  assert.deepEqual(recommendationDifficulty([], [], problemKey).minimum, 1000);
+  assert.deepEqual(recommendationDifficulty(known, solved, problemKey, 700).minimum, 800);
+  const band = recommendationDifficulty(known, solved, problemKey, 1450);
+  assert.deepEqual([band.minimum, band.maximum, band.preferred], [1450, 1750, 1550]);
+  const candidates: Catalog['problems'] = [1400, 1450, 1600, 1750, 1800, null].map((rating, i) => ({
+    key: `${4000 + i}:A`,
+    contestId: 4000 + i,
+    index: 'A',
+    name: 'Candidate',
+    rating,
+    tags: ['math'],
+    url: 'https://codeforces.com/problemset',
+  }));
+  const mastery = categoryNames.map((name) => ({ name, score: 50, samples: 0 }));
+  assert.deepEqual(
+    new Set(chooseNewProblems(candidates, new Set(), mastery, band, '2026-09-30')),
+    new Set(['4001:A', '4002:A', '4003:A']),
+  );
+});
 function store() {
   const s = new Store(':memory:');
   s.activate('tester');
@@ -246,7 +302,13 @@ test('mastery uses unique problems, transparent shrinkage and inverse allocation
     })),
   );
   const skewed = categoryNames.map((name) => ({ name, score: name === '数学' ? 0 : 100, samples: 20 }));
-  const chosen = chooseNewProblems(pool, new Set(), skewed, 1000, '2026-09-26');
+  const chosen = chooseNewProblems(
+    pool,
+    new Set(),
+    skewed,
+    recommendationDifficulty([], [], problemKey),
+    '2026-09-26',
+  );
   assert.equal(chosen.length, 5);
   assert.equal(new Set(chosen).size, 5);
   assert.ok(

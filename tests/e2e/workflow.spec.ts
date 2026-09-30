@@ -45,6 +45,8 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await expect(page.getByText('复盘已保存')).toBeVisible();
   await page.getByRole('link', { name: '今日题单', exact: true }).click();
   await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
+  await page.locator('.recommendation-detail summary').first().click();
+  await expect(page.locator('.recommendation-detail').first()).toContainText('CF 官方 Rating 1447');
   await expect(page.getByText('Two Screens', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('progressbar', { name: '今日复习进度' })).toHaveAttribute('aria-valuenow', '1');
   await expect(page.locator('.daily-panel').first().locator('.daily-task').first()).toHaveAttribute(

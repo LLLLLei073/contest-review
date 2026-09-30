@@ -14,8 +14,7 @@ import {
   dailyPlanSchema,
   trainingMetaSchema,
   masteryAreas,
-  chooseNewProblems,
-  targetDifficulty,
+  recommendationDifficulty,
   categories,
   type Catalog,
   type DailyPlan,
@@ -988,7 +987,7 @@ export class CoreStore {
                 ...this.priorNewKeys(cf, date),
               ]),
               this.combinedStatistics('all', now).mastery,
-              targetDifficulty(cfKnown, cfSubmissions, problemKey),
+              recommendationDifficulty(cfKnown, cfSubmissions, problemKey, this.latestOfficialRating(cf)),
               date,
               weeklyGoal,
               this.weeklyCoverage(cf, date),
@@ -1093,6 +1092,17 @@ export class CoreStore {
       }
     });
   }
+  private latestOfficialRating(h: string): number | undefined {
+    return this.all<CFContest & { rating?: CFRating }>('contests', h)
+      .map((contest) => contest.rating)
+      .filter(
+        (rating): rating is CFRating => !!rating && Number.isFinite(rating.newRating) && rating.newRating > 0,
+      )
+      .sort(
+        (a, b) =>
+          (b.ratingUpdateTimeSeconds ?? 0) - (a.ratingUpdateTimeSeconds ?? 0) || b.contestId - a.contestId,
+      )[0]?.newRating;
+  }
   trainingDay(h: string, now = new Date()): TrainingDay {
     const date = localDay(now);
     this.reconcileAcceptedRedo(h, date);
@@ -1155,7 +1165,7 @@ export class CoreStore {
             catalog?.problems ?? [],
             blocked,
             mastery,
-            targetDifficulty(known, submissions, problemKey),
+            recommendationDifficulty(known, submissions, problemKey, this.latestOfficialRating(h)),
             date,
             weeklyGoal,
             this.weeklyCoverage(h, date),
