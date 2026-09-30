@@ -185,7 +185,7 @@ test('same-day AC confirms redo, reflection then evaluation advance separately',
   assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.phase, 'reflection');
   s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), solution: '分析后找到正确解法' });
   assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.phase, 'evaluation');
-  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.completed, true);
+  assert.equal(s.trainingDay('tester', now).review.find((p) => p.key === '2000:A')?.completed, false);
   s.ingest('tester', [make(4, 'A', 'OK', now)]);
   assert.equal(s.review('tester', '2000:A').stage, 0);
   s.attempt('tester', '2000:A', { result: 'independent', minutes: 15, note: '' }, now);
@@ -261,6 +261,76 @@ test('ingesting older AC after late evaluation does not resurrect awaiting-evalu
   assert.throws(() => s.attempt('tester', '2000:A', { result: 'independent', minutes: 1, note: '' }, late), {
     message: '今天已评价过这道题',
   });
+  s.close();
+});
+
+test('legacy evaluated record repairs stale waiting state without another attempt or stage change', () => {
+  const s = store();
+  s.ingest('tester', [make(1, 'A')]);
+  s.trainingDay('tester', now);
+  s.ingest('tester', [make(2, 'A', 'OK')]);
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), rootCause: '边界遗漏' });
+  s.attempt('tester', '2000:A', { result: 'independent', minutes: 12, note: '完成' }, now);
+  const evaluated = s.review('tester', '2000:A');
+  s.put('reviews', 'tester', '2000:A', {
+    ...evaluated,
+    awaitingEvaluation: {
+      date: localDay(now),
+      submissionId: 2,
+      redoAt: new Date(make(2, 'A', 'OK').creationTimeSeconds * 1000).toISOString(),
+      previousNextReview: evaluated.nextReview,
+    },
+    nextReview: null,
+    firstReflectionAt: null,
+  });
+  const nextDay = new Store(':memory:');
+  nextDay.restore(s.backup());
+  assert.equal(nextDay.trainingDay('tester', tomorrow).review.length, 0);
+  assert.equal(nextDay.review('tester', '2000:A').nextReview, evaluated.nextReview);
+  nextDay.close();
+  const restored = new Store(':memory:');
+  restored.restore(s.backup());
+  const day = restored.trainingDay('tester', now);
+  assert.equal(day.review[0].phase, 'done');
+  assert.equal(day.review[0].completed, true);
+  assert.equal(restored.review('tester', '2000:A').awaitingEvaluation, null);
+  assert.equal(restored.review('tester', '2000:A').firstReflectionAt !== null, true);
+  assert.equal(restored.review('tester', '2000:A').nextReview, evaluated.nextReview);
+  assert.equal(restored.review('tester', '2000:A').stage, 1);
+  restored.put('reviews', 'tester', '2000:A', {
+    ...restored.review('tester', '2000:A'),
+    awaitingEvaluation: {
+      date: localDay(now),
+      submissionId: 2,
+      redoAt: new Date(make(2, 'A', 'OK').creationTimeSeconds * 1000).toISOString(),
+      previousNextReview: null,
+    },
+    nextReview: null,
+  });
+  assert.equal(restored.trainingDay('tester', now).review[0].phase, 'done');
+  assert.equal(restored.review('tester', '2000:A').nextReview, evaluated.nextReview);
+  restored.ingest('tester', [make(3, 'A', 'OK')]);
+  assert.equal(restored.trainingDay('tester', now).review[0].phase, 'done');
+  assert.equal(restored.all('attempts', 'tester').length, 1);
+  restored.close();
+  s.close();
+});
+
+test('existing substantive notes complete first reflection while labels and code alone do not', () => {
+  const s = store();
+  s.ingest('tester', [make(1, 'A'), make(2, 'B')]);
+  s.trainingDay('tester', now);
+  s.saveReview('tester', '2000:A', { ...s.review('tester', '2000:A'), solution: '记录过正确解法' });
+  s.saveReview('tester', '2000:B', {
+    ...s.review('tester', '2000:B'),
+    reasons: ['边界遗漏'],
+    code: 'int main() {}',
+  });
+  s.ingest('tester', [make(3, 'A', 'OK'), make(4, 'B', 'OK')]);
+  const day = s.trainingDay('tester', now);
+  assert.equal(day.review.find((task) => task.key === '2000:A')?.phase, 'evaluation');
+  assert.equal(day.review.find((task) => task.key === '2000:B')?.phase, 'reflection');
+  assert.equal(day.review.filter((task) => task.completed).length, 0);
   s.close();
 });
 

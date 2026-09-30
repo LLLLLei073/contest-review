@@ -147,6 +147,44 @@ test('AtCoder same-day AC confirms redo, cross-platform review stays fixed and u
   store.close();
 });
 
+test('AtCoder legacy evaluation state repairs in the combined day and remains account-isolated', () => {
+  const { store } = setup();
+  const profile = atcoderProfile('Alice');
+  const key = 'atcoder:abc001_1';
+  store.ingestAtcoder(profile, [submission(1, 'abc001_1', 'WA')]);
+  store.combinedTrainingDay(midday);
+  store.ingestAtcoder(profile, [submission(2, 'abc001_1', 'AC')]);
+  store.saveReview(profile, key, { ...store.review(profile, key), wrongIdea: '漏看条件' });
+  store.attempt(profile, key, { result: 'independent', minutes: 8, note: '' }, midday);
+  const evaluated = store.review(profile, key);
+  store.put('reviews', profile, key, {
+    ...evaluated,
+    awaitingEvaluation: {
+      date: localDay(midday),
+      submissionId: 2,
+      redoAt: midday.toISOString(),
+      previousNextReview: evaluated.nextReview,
+    },
+    nextReview: null,
+    firstReflectionAt: null,
+  });
+  const nextDay = new Store(':memory:');
+  nextDay.restore(store.backup());
+  assert.equal(nextDay.combinedTrainingDay(new Date(midday.getTime() + 86400000)).review.length, 0);
+  nextDay.close();
+  const day = store.combinedTrainingDay(midday);
+  assert.equal(day.review.find((task) => task.key === key)?.phase, 'done');
+  assert.equal(day.review.find((task) => task.key === key)?.completed, true);
+  assert.equal(store.review(profile, key).nextReview, evaluated.nextReview);
+  assert.equal(store.review(profile, key).stage, 1);
+  store.activateAtcoder('Bob');
+  assert.equal(
+    store.combinedTrainingDay(midday).review.some((task) => task.key === key),
+    false,
+  );
+  store.close();
+});
+
 test('AtCoder report separates contest-window and after-contest submissions without invented score', async () => {
   const { store, client, service } = setup();
   client.items = [

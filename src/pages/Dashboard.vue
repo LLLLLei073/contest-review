@@ -325,6 +325,9 @@ watch(
               {{ task.redoAccepted ? '手动评价' : '记录尝试' }}
             </button>
           </div>
+          <p v-if="task.phase === 'reflection'" class="subtle small">
+            保存“当时的思路、根本原因、正确解法、复杂度分析、关键反例”中的任意一项，才算完成复盘；仅选错因或保存代码不计入。
+          </p>
           <form v-if="activeKey === task.key" class="daily-attempt" @submit.prevent="saveAttempt(task.key)">
             <select v-model="result" aria-label="重做结果">
               <option value="independent" :disabled="!task.redoAccepted">独立做对（需当天 AC）</option>

@@ -446,6 +446,51 @@ export class CoreStore {
       throw new Error('复习中的题目需要设置下次日期');
     return this.saveReview(h, key, reviewSchema.parse(next));
   }
+  private repairLegacyReview(h: string, key: string): Review {
+    let review = this.review(h, key);
+    if (
+      review.firstReflectionRequired &&
+      review.firstRedoAt &&
+      !review.firstReflectionAt &&
+      hasReflection(review)
+    ) {
+      review = { ...review, firstReflectionAt: new Date().toISOString() };
+      this.put('reviews', h, key, review);
+    }
+    if (
+      review.awaitingEvaluation &&
+      review.lastEvaluatedDay &&
+      review.lastEvaluatedDay >= review.awaitingEvaluation.date
+    ) {
+      const evaluated = this.all<Attempt>('attempts', h)
+        .filter(
+          (attempt) =>
+            attempt.problemKey === key && localDay(new Date(attempt.createdAt)) === review.lastEvaluatedDay,
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (evaluated || review.awaitingEvaluation.previousNextReview) {
+        const days = evaluated?.result === 'independent' ? [3, 7, 14, 30][review.stage - 1] : 1;
+        const recoveredDate =
+          evaluated && days !== undefined
+            ? new Date(new Date(review.awaitingEvaluation.redoAt).getTime() + days * 86400000).toISOString()
+            : null;
+        review = {
+          ...review,
+          awaitingEvaluation: null,
+          nextReview:
+            review.status === 'mastered'
+              ? null
+              : (review.awaitingEvaluation.previousNextReview ?? recoveredDate),
+        };
+        this.put('reviews', h, key, review);
+      }
+    }
+    return review;
+  }
+  private repairLegacyReviews(h: string) {
+    const rows = this.db.prepare('SELECT key FROM reviews WHERE profile=?').all(h) as { key: string }[];
+    for (const row of rows) this.repairLegacyReview(h, row.key);
+  }
   private reconcileAcceptedRedo(h: string, date: string) {
     const plan = this.combinedPlan(date) ?? this.get<DailyPlan>('daily_plans', h, date);
     if (!plan) return;
@@ -453,8 +498,13 @@ export class CoreStore {
     for (const item of plan.review.filter(
       (item) => h.startsWith('ac~') === item.key.startsWith('atcoder:'),
     )) {
-      const review = this.review(h, item.key);
-      if (review.ignored || review.status === 'mastered' || (review.lastEvaluatedDay && review.lastEvaluatedDay >= date)) continue;
+      const review = this.repairLegacyReview(h, item.key);
+      if (
+        review.ignored ||
+        review.status === 'mastered' ||
+        (review.lastEvaluatedDay && review.lastEvaluatedDay >= date)
+      )
+        continue;
       const accepted = submissions
         .filter(
           (s) =>
@@ -471,6 +521,10 @@ export class CoreStore {
             ...review,
             firstRedoAt: review.firstRedoAt ?? redoAt,
             firstReflectionRequired: review.firstReflectionRequired || review.status === 'pending',
+            firstReflectionAt:
+              !review.firstReflectionAt && review.status === 'pending' && hasReflection(review)
+                ? new Date().toISOString()
+                : review.firstReflectionAt,
             awaitingEvaluation: {
               date,
               submissionId: accepted.id,
@@ -926,6 +980,8 @@ export class CoreStore {
     if (!ac) return this.trainingDay(cf, now);
     const date = localDay(now),
       acProfile = atcoderProfile(ac);
+    if (cf) this.repairLegacyReviews(cf);
+    this.repairLegacyReviews(acProfile);
     const cfPlan = cf ? this.get<DailyPlan>('daily_plans', cf, date) : undefined;
     const inherited = cf ? this.externalGet<DailyPlan>(`daily:-:${ac.toLowerCase()}`, date) : undefined;
     let plan = this.combinedPlan(date);
@@ -1105,6 +1161,7 @@ export class CoreStore {
   }
   trainingDay(h: string, now = new Date()): TrainingDay {
     const date = localDay(now);
+    this.repairLegacyReviews(h);
     this.reconcileAcceptedRedo(h, date);
     const catalog = this.get<Catalog>('catalog_cache', h, 'current');
     const rows = this.problems(h);
@@ -1232,7 +1289,7 @@ export class CoreStore {
           kind,
           phase,
           redoAccepted,
-          completed: !needsReflection && (redoAccepted || attempted || !!completedAt),
+          completed: !needsReflection && !needsEvaluation && (redoAccepted || attempted || !!completedAt),
           attempted,
           nextReview: r.nextReview,
         },
