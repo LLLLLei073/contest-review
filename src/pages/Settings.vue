@@ -11,21 +11,36 @@ import {
   Search,
   Sparkles,
 } from 'lucide-vue-next';
-import { api, settings, loadSettings, loadJob, job, notify, fullDate, browserMode } from '../api';
+import { useSection } from '../sections';
+import DataHealth from '../components/DataHealth.vue';
+import {
+  api,
+  settings,
+  loadSettings,
+  loadJob,
+  job,
+  notify,
+  fullDate,
+  browserMode,
+  recentChecks,
+} from '../api';
 import type { XcpcCandidate } from '../../shared/xcpc';
 import type { SyncJob } from '../../shared/domain';
-import { usePageReady } from '../pageScene';
-import SwitchSurface from '../components/SwitchSurface.vue';
-const pageReady = usePageReady();
 const savedSection = sessionStorage.getItem('contest-review:settings-section');
 const savedPlatform = sessionStorage.getItem('contest-review:account-platform');
+const settingsSection = useSection(
+  ['accounts', 'sync', 'backup', 'ai'] as const,
+  'accounts',
+  'view',
+  savedSection === 'sync' || savedSection === 'backup' || savedSection === 'ai' ? savedSection : 'accounts',
+);
+const accountPlatform = useSection(
+  ['cf', 'atcoder', 'xcpc'] as const,
+  'cf',
+  'platform',
+  savedPlatform === 'atcoder' || savedPlatform === 'xcpc' ? savedPlatform : 'cf',
+);
 const handle = ref(settings.value.activeHandle),
-  settingsSection = ref<'accounts' | 'sync' | 'backup' | 'ai'>(
-    savedSection === 'sync' || savedSection === 'backup' || savedSection === 'ai' ? savedSection : 'accounts',
-  ),
-  accountPlatform = ref<'cf' | 'atcoder' | 'xcpc'>(
-    savedPlatform === 'atcoder' || savedPlatform === 'xcpc' ? savedPlatform : 'cf',
-  ),
   busy = ref(false),
   error = ref(''),
   restoreFile = ref<File | null>(null),
@@ -136,11 +151,23 @@ async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume 
     busy.value = false;
   }
 }
+let aiLoaded = false;
+watch(
+  settingsSection,
+  async (value) => {
+    if (value === 'ai' && !aiLoaded) {
+      try {
+        await loadAi();
+        aiLoaded = true;
+      } catch (e) {
+        error.value = (e as Error).message;
+      }
+    }
+  },
+  { immediate: true },
+);
 onMounted(() => {
-  void loadAi().catch(() => {});
-  void loadAtcoder()
-    .catch((e) => (error.value = (e as Error).message))
-    .finally(pageReady);
+  void loadAtcoder().catch((e) => (error.value = (e as Error).message));
   atcoderTimer = setInterval(() => {
     if (atcoderJob.value?.status === 'running') void loadAtcoder();
   }, 2000);
@@ -256,6 +283,7 @@ async function restore() {
     <span class="date-chip"><ShieldCheck :size="16" />本地优先</span>
   </div>
   <div v-if="error" class="alert error" role="alert">{{ error }}</div>
+  <p v-if="recentChecks" class="alert" role="status">正在核对近期提交，完成后即可切换账号。</p>
   <div v-if="browserMode" class="alert">
     在线版的数据保存在当前浏览器中，不会上传到
     GitHub。清除网站数据或更换浏览器前，请导出备份；导入历史时请保持页面打开。
@@ -279,11 +307,7 @@ async function restore() {
     </button>
     <button :class="{ active: accountPlatform === 'xcpc' }" @click="accountPlatform = 'xcpc'">XCPC</button>
   </nav>
-  <SwitchSurface
-    :view-key="`${settingsSection}:${settingsSection === 'accounts' ? accountPlatform : ''}`"
-    label="设置内容"
-    focus-selector=".settings-card h2"
-  >
+  <div>
     <div class="settings-layout">
       <div>
         <section
@@ -308,8 +332,8 @@ async function restore() {
                 pattern="[A-Za-z0-9_]+"
                 maxlength="64"
                 placeholder="例如 kenkoooo"
-                :disabled="busy || atcoderJob?.status === 'running'" /></label
-            ><button class="primary" :disabled="busy || atcoderJob?.status === 'running'">
+                :disabled="recentChecks > 0 || busy || atcoderJob?.status === 'running'" /></label
+            ><button class="primary" :disabled="recentChecks > 0 || busy || atcoderJob?.status === 'running'">
               绑定 AtCoder <ArrowRight :size="16" />
             </button>
           </form>
@@ -319,6 +343,7 @@ async function restore() {
               v-for="h in settings.atcoderHandles"
               :key="h"
               :disabled="
+                recentChecks > 0 ||
                 busy ||
                 h.toLowerCase() === settings.activeAtcoder?.toLowerCase() ||
                 atcoderJob?.status === 'running'
@@ -351,29 +376,9 @@ async function restore() {
               ></template
             >
           </p>
-          <div class="button-row">
-            <button
-              class="primary"
-              :disabled="busy || !settings.activeAtcoder || atcoderJob?.status === 'running'"
-              @click="syncAtcoder()"
-            >
-              <RefreshCw :size="15" />{{ atcoderJob ? '增量同步' : '首次同步' }}</button
-            ><button
-              :disabled="busy || !settings.activeAtcoder || atcoderJob?.status === 'running'"
-              @click="syncAtcoder('full')"
-            >
-              全量核对</button
-            ><button
-              v-if="atcoderJob && ['failed', 'interrupted'].includes(atcoderJob.status)"
-              :disabled="busy"
-              @click="syncAtcoder(atcoderJob.mode, true)"
-            >
-              继续同步
-            </button>
-          </div>
-          <p class="small subtle">
-            请求间隔至少一秒。来源可能延迟或中断；失败时保留已导入数据，离线仍可复盘。
-          </p>
+          <RouterLink class="small-button" to="/settings?view=sync&platform=atcoder"
+            >同步 AtCoder 提交 →</RouterLink
+          >
         </section>
         <section
           v-show="settingsSection === 'accounts' && accountPlatform === 'cf'"
@@ -397,8 +402,8 @@ async function restore() {
                 pattern="[a-zA-Z0-9_.\-]+"
                 maxlength="64"
                 placeholder="例如 tourist"
-                :disabled="busy || job?.status === 'running'" /></label
-            ><button class="primary" :disabled="busy || job?.status === 'running'">
+                :disabled="recentChecks > 0 || busy || job?.status === 'running'" /></label
+            ><button class="primary" :disabled="recentChecks > 0 || busy || job?.status === 'running'">
               {{ busy ? '处理中…' : '绑定用户名' }}<ArrowRight :size="16" />
             </button>
           </form>
@@ -407,7 +412,7 @@ async function restore() {
             ><button
               v-for="h in settings.handles"
               :key="h"
-              :disabled="busy || job?.status === 'running' || h === settings.activeHandle"
+              :disabled="recentChecks > 0 || busy || job?.status === 'running' || h === settings.activeHandle"
               @click="bind(h)"
             >
               {{ h }}
@@ -440,9 +445,9 @@ async function restore() {
                 required
                 maxlength="80"
                 placeholder="输入选手姓名"
-                :disabled="xcpcBusy || busy"
+                :disabled="recentChecks > 0 || xcpcBusy || busy"
             /></label>
-            <button class="primary" :disabled="xcpcBusy || busy">
+            <button class="primary" :disabled="recentChecks > 0 || xcpcBusy || busy">
               <Search :size="16" />{{ xcpcBusy ? '搜索中…' : '搜索选手' }}
             </button>
           </form>
@@ -450,7 +455,7 @@ async function restore() {
             <button
               v-for="candidate in candidates"
               :key="candidate.key"
-              :disabled="xcpcBusy || busy"
+              :disabled="recentChecks > 0 || xcpcBusy || busy"
               @click="bindXcpc(candidate.key)"
             >
               {{ candidate.name }} · {{ candidate.org }} · {{ candidate.contests }} 场
@@ -473,7 +478,7 @@ async function restore() {
             <div class="section-title">
               <span class="section-icon"><RefreshCw :size="20" /></span>
               <div>
-                <h2>同步提交历史</h2>
+                <h2>Codeforces 提交同步</h2>
                 <p>首次读取全部公开历史，之后可增量更新。</p>
               </div>
             </div>
@@ -498,16 +503,23 @@ async function restore() {
             >
             <div v-if="job.status === 'running'" class="progress-indeterminate"></div>
           </div>
-          <div v-else class="quiet-empty align-left">尚未同步。绑定用户名后，开始建立你的错题档案。</div>
+          <div v-else class="quiet-empty align-left">
+            <template v-if="settings.activeHandle">尚未同步。点击“开始首次同步”导入公开提交。</template>
+            <template v-else
+              >尚未同步。<RouterLink to="/settings?view=accounts&platform=cf"
+                >绑定 Codeforces 用户名</RouterLink
+              >后开始导入。</template
+            >
+          </div>
           <div class="button-row">
             <button
               class="primary"
-              :disabled="busy || !settings.activeHandle || job?.status === 'running'"
+              :disabled="recentChecks > 0 || busy || !settings.activeHandle || job?.status === 'running'"
               @click="sync()"
             >
               <RefreshCw :size="15" />{{ job ? '增量同步' : '开始首次同步' }}</button
             ><button
-              :disabled="busy || !settings.activeHandle || job?.status === 'running'"
+              :disabled="recentChecks > 0 || busy || !settings.activeHandle || job?.status === 'running'"
               @click="sync('full')"
             >
               全量重新核对</button
@@ -524,6 +536,49 @@ async function restore() {
             按至少两秒的间隔请求。历史较多时需要等待；已读取数据会分页保存。全量核对用于更新较早的判题变化。
           </p>
         </section>
+        <section v-show="settingsSection === 'sync'" class="panel settings-card">
+          <h2>AtCoder 提交同步</h2>
+          <p>同步公开提交及官方比赛历史，与 Codeforces 独立保存。</p>
+          <p v-if="!settings.activeAtcoder">
+            请先<RouterLink to="/settings?view=accounts&platform=atcoder">绑定 AtCoder 用户名</RouterLink>。
+          </p>
+          <p v-if="atcoderJob" role="status">
+            <strong>{{
+              { running: '正在同步', completed: '同步完成', failed: '同步未完成', interrupted: '同步已中断' }[
+                atcoderJob.status
+              ]
+            }}</strong>
+            · {{ atcoderJob.message }} · 已读取 {{ atcoderJob.processed }} 条
+          </p>
+          <div class="button-row">
+            <button
+              class="primary"
+              :disabled="
+                recentChecks > 0 || busy || !settings.activeAtcoder || atcoderJob?.status === 'running'
+              "
+              @click="syncAtcoder()"
+            >
+              <RefreshCw :size="15" />{{ atcoderJob ? '增量同步' : '首次同步' }}</button
+            ><button
+              :disabled="
+                recentChecks > 0 || busy || !settings.activeAtcoder || atcoderJob?.status === 'running'
+              "
+              @click="syncAtcoder('full')"
+            >
+              全量核对</button
+            ><button
+              v-if="atcoderJob && ['failed', 'interrupted'].includes(atcoderJob.status)"
+              :disabled="busy"
+              @click="syncAtcoder(atcoderJob.mode, true)"
+            >
+              继续同步
+            </button>
+          </div>
+          <p class="small subtle">
+            请求间隔至少一秒。来源可能延迟或中断；失败时保留已导入数据，离线仍可复盘。
+          </p>
+        </section>
+        <DataHealth v-if="settingsSection === 'sync'" />
         <section v-show="settingsSection === 'backup'" class="panel settings-card">
           <div class="section-head">
             <div class="section-title">
@@ -538,7 +593,7 @@ async function restore() {
             <div>
               <h3>导出完整备份</h3>
               <p>建议定期备份到其他磁盘。文件格式为 JSON。</p>
-              <button :disabled="busy || job?.status === 'running'" @click="download()">
+              <button :disabled="recentChecks > 0 || busy || job?.status === 'running'" @click="download()">
                 <Download :size="16" />导出备份
               </button>
             </div>
@@ -551,12 +606,14 @@ async function restore() {
                   type="file"
                   accept=".json,application/json"
                   aria-label="选择备份文件"
-                  :disabled="busy || job?.status === 'running'"
+                  :disabled="recentChecks > 0 || busy || job?.status === 'running'"
                   @change="selectFile"
               /></label>
               <div v-if="restoreFile" class="restore-confirm">
                 <span>{{ restoreFile.name }}</span
-                ><button :disabled="busy || job?.status === 'running'" @click="restore">恢复此备份</button>
+                ><button :disabled="recentChecks > 0 || busy || job?.status === 'running'" @click="restore">
+                  恢复此备份
+                </button>
               </div>
             </div>
           </div>
@@ -564,7 +621,7 @@ async function restore() {
           <button
             v-if="browserMode"
             class="text-link"
-            :disabled="busy || job?.status === 'running'"
+            :disabled="recentChecks > 0 || busy || job?.status === 'running'"
             @click="download(true)"
           >
             下载最近一次恢复前的备份
@@ -575,7 +632,7 @@ async function restore() {
             <div class="section-title">
               <span class="section-icon"><Sparkles :size="20" /></span>
               <div>
-                <h2>AI 代码复盘</h2>
+                <h2>AI 助手配置</h2>
                 <p>配置任意 OpenAI 兼容接口后，可在题目详情页让 AI 分析错误代码。</p>
               </div>
             </div>
@@ -641,5 +698,5 @@ async function restore() {
         <p>当时的思路、真正的错因、解法与代码。通过评测之后，仍值得再独立做一次。</p>
       </aside>
     </div>
-  </SwitchSurface>
+  </div>
 </template>

@@ -5,8 +5,6 @@ import { Search, Plus, ArrowLeft, ArrowRight, X, Filter } from 'lucide-vue-next'
 import { api, notify, settings, job } from '../api';
 import type { ProblemRow } from '../../shared/domain';
 import ProblemTable from '../components/ProblemTable.vue';
-import { usePageReady } from '../pageScene';
-const pageReady = usePageReady();
 const route = useRoute(),
   router = useRouter();
 const filters = ref({
@@ -53,10 +51,9 @@ async function load() {
       error.value = '';
     }
   } catch (e) {
-    error.value = (e as Error).message;
+    if (token === request) error.value = (e as Error).message;
   } finally {
     if (token === request) loading.value = false;
-    if (token === request) pageReady();
   }
 }
 async function options() {
@@ -74,7 +71,18 @@ watch(
   { deep: true },
 );
 watch(page, load);
-onUnmounted(() => clearTimeout(timer));
+onUnmounted(() => {
+  request++;
+  clearTimeout(timer);
+});
+watch(
+  () => route.query,
+  (query) => {
+    filters.value.status = typeof query.status === 'string' ? query.status : '';
+    filters.value.due = typeof query.due === 'string' ? query.due : '';
+    filters.value.contestId = typeof query.contestId === 'string' ? query.contestId : '';
+  },
+);
 watch(
   () => job.value?.status,
   (s, p) => {
@@ -202,7 +210,13 @@ async function add() {
             : '先绑定用户名，开始建立你的错题库。'
         }}
       </p>
-      <RouterLink to="/settings" class="text-link">前往设置 <ArrowRight :size="14" /></RouterLink>
+      <RouterLink
+        :to="
+          settings.activeHandle || settings.activeAtcoder ? '/settings?view=sync' : '/settings?view=accounts'
+        "
+        class="text-link"
+        >前往设置 <ArrowRight :size="14"
+      /></RouterLink>
     </div>
     <div class="pagination">
       <span>共 {{ total }} 题 · 每页 25 题</span>

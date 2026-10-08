@@ -54,6 +54,9 @@ function backup() {
   tomorrow.setDate(tomorrow.getDate() + 1);
   s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, tomorrow);
   s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] });
+  // The training landing page checks recent submissions; keep this isolated learning catalog
+  // from being replaced by the unrelated server/browser Codeforces fixture.
+  s.markRecentChecked('learning_tester');
   s.externalPut('ai', 'config', {
     baseUrl: 'https://learning-ai.test/v1',
     apiKey: 'fixture',
@@ -89,7 +92,8 @@ test('learning loop: draft, confirm, RAG, graph, diagnosis, next-day agent, hint
   await page.getByRole('button', { name: '恢复此备份' }).click();
   await expect(page.locator('.profile-chip')).toContainText('learning_tester');
   await page.goto(info.project.name === 'pages' ? './#/problems/2000%3AA' : '/problems/2000%3AA');
-  await page.getByRole('button', { name: '学习闭环', exact: true }).click();
+  await page.getByRole('button', { name: '解题助手', exact: true }).click();
+  await page.getByRole('button', { name: '经验沉淀', exact: true }).click();
   await page.getByRole('button', { name: '生成经验卡草稿' }).click();
   await expect(page.getByRole('status').filter({ hasText: '已完成' })).toBeVisible();
   await page.getByRole('link', { name: '知识与经验库' }).click();
@@ -98,27 +102,31 @@ test('learning loop: draft, confirm, RAG, graph, diagnosis, next-day agent, hint
   await page.getByLabel('我已核对内容及关联知识点，允许用于检索').check();
   await page.getByRole('button', { name: '保存经验卡' }).click();
   await expect(page.getByText('已确认', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'RAG 问答', exact: true }).click();
+  await page.getByRole('button', { name: '算法问答', exact: true }).click();
   await page.getByLabel('向算法助手提问').fill('二分边界');
   await page.getByRole('button', { name: '检索并回答' }).click();
   await expect(page.getByText('资料显示需要先证明循环不变量，并检查边界。')).toBeVisible();
   await page.getByRole('button', { name: '知识图谱', exact: true }).click();
   await expect(page.getByRole('img', { name: '算法知识关系图' })).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Learning Fixture');
+  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
   await page.getByRole('button', { name: '学情诊断', exact: true }).click();
   await page.getByRole('button', { name: '生成学情诊断' }).click();
   await expect(page.getByText('证据显示需要复核边界条件。')).toBeVisible();
-  await page.getByRole('button', { name: '训练 Agent', exact: true }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '今日训练' }).click();
+  await page.getByRole('button', { name: '次日计划', exact: true }).click();
   await expect(page.getByLabel('自动调整次日计划（仅在应用运行时触发）')).not.toBeChecked();
   await page.getByRole('button', { name: '生成次日计划' }).click();
   await expect(page.getByText('调整后：', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: '撤回此版本' }).click();
   await expect(page.getByRole('heading', { name: /已撤回/ })).toBeVisible();
   await page.goto(info.project.name === 'pages' ? './#/problems/2000%3AA' : '/problems/2000%3AA');
-  await page.getByRole('button', { name: '学习闭环', exact: true }).click();
+  await page.getByRole('button', { name: '解题助手', exact: true }).click();
+  await page.getByRole('button', { name: '分步提示', exact: true }).click();
   await page.getByLabel('题面与输入输出约束').fill('输入一个整数 n，1<=n<=10，输出 2*n。');
   await page.getByRole('button', { name: '1. 方向提示' }).click();
   await expect(page.locator('summary').filter({ hasText: '第 1 级' })).toBeVisible();
+  await page.getByRole('button', { name: '反例对拍', exact: true }).click();
   await page.getByRole('button', { name: '生成对拍包' }).click();
   await expect(page.getByText('AI 建议 · 未运行')).toBeVisible();
   const download = page.waitForEvent('download');
@@ -127,29 +135,28 @@ test('learning loop: draft, confirm, RAG, graph, diagnosis, next-day agent, hint
   expect(archive.suggestedFilename()).toMatch(/\.zip$/);
   await archive.saveAs(info.outputPath('stress-bundle.zip'));
   const bundleId = archive.suggestedFilename().slice(7, -4);
-  await page
-    .getByLabel('导入本机对拍报告')
-    .setInputFiles({
-      name: 'report.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(
-        JSON.stringify({
-          format: 'contest-review-stress',
-          version: 1,
-          bundleId,
-          codeHash: fingerprint('#include <iostream>\nint main(){int n;std::cin>>n;std::cout<<n;}'),
-          seed: 1,
-          rounds: 1,
-          round: 1,
-          status: 'mismatch',
-          input: '3\n',
-          expected: '6',
-          actual: '3',
-          message: '输出不同',
-        }),
-      ),
-    });
+  await page.getByLabel('导入本机对拍报告').setInputFiles({
+    name: 'report.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        format: 'contest-review-stress',
+        version: 1,
+        bundleId,
+        codeHash: fingerprint('#include <iostream>\nint main(){int n;std::cin>>n;std::cout<<n;}'),
+        seed: 1,
+        rounds: 1,
+        round: 1,
+        status: 'mismatch',
+        input: '3\n',
+        expected: '6',
+        actual: '3',
+        message: '输出不同',
+      }),
+    ),
+  });
   await expect(page.getByText('用户报告已验证', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '迁移练习', exact: true }).click();
   await page.getByRole('button', { name: '安排迁移检测' }).click();
   await page.getByRole('link', { name: '查看迁移任务与评价' }).click();
   await expect(page.getByRole('button', { name: '独立完成', exact: true })).toBeVisible();
@@ -157,7 +164,8 @@ test('learning loop: draft, confirm, RAG, graph, diagnosis, next-day agent, hint
   await expect(page.getByText('结果：未完成')).toBeVisible();
   await page.reload();
   await expect(page.getByText('结果：未完成')).toBeVisible();
-  await page.getByRole('button', { name: 'RAG 问答', exact: true }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '知识中心' }).click();
+  await page.getByRole('button', { name: '算法问答', exact: true }).click();
   await page.getByLabel('向算法助手提问').fill('二分循环不变量');
   await page.getByRole('button', { name: '检索并回答' }).click();
   await expect(page.getByText('资料显示需要先证明循环不变量，并检查边界。')).toHaveCount(2);

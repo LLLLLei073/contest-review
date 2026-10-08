@@ -3,7 +3,6 @@ import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router
 import { browserMode } from './api';
 import App from './App.vue';
 import Dashboard from './pages/Dashboard.vue';
-import { beginPageScene } from './pageScene';
 import './style.css';
 const router = createRouter({
   history: browserMode ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
@@ -20,8 +19,16 @@ const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });
-router.afterEach((to, from, failure) => {
-  if (!failure && from.matched.length && to.path !== from.path) beginPageScene(to.fullPath);
+router.beforeEach((to) => {
+  const legacy: Record<string, { path: string; view: string }> = {
+    '/knowledge:diagnosis': { path: '/statistics', view: 'diagnosis' },
+    '/knowledge:training': { path: '/', view: 'training' },
+    '/knowledge:transfers': { path: '/', view: 'transfers' },
+    '/statistics:upsolve': { path: '/contests', view: 'upsolve' },
+    '/statistics:health': { path: '/settings', view: 'sync' },
+  };
+  const target = legacy[to.path + ':' + to.query.view];
+  if (target) return { path: target.path, query: { ...to.query, view: target.view }, replace: true };
 });
 createApp(App).use(router).mount('#app');
 if (browserMode && 'serviceWorker' in navigator && import.meta.env.PROD) {

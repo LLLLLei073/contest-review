@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, computed } from 'vue';
+import { defineAsyncComponent, onBeforeUnmount, ref, computed, watch } from 'vue';
 import { ChartNoAxesCombined } from 'lucide-vue-next';
-import { api, fullDate, notify } from '../api';
+import { api } from '../api';
 import type { Statistics } from '../../shared/domain';
-import type { UpsolveItem } from '../../shared/training-extras';
 import type { WeeklyGoal } from '../../shared/weekly';
 import { useSpringValues } from '../motion';
-import { usePageReady } from '../pageScene';
-import SwitchSurface from '../components/SwitchSurface.vue';
+import { useSection } from '../sections';
+import { useLearningState } from '../learningState';
+const LearningActivity = defineAsyncComponent(() => import('../components/LearningActivity.vue'));
 import MonthlyReport from '../components/MonthlyReport.vue';
-const pageReady = usePageReady();
 const stats = ref<Statistics | null>(null),
   error = ref(''),
   loading = ref(true);
-const source = ref<'all' | 'cf' | 'atcoder'>('all');
-const activeSection = ref<'overview' | 'monthly' | 'activity' | 'upsolve' | 'health'>('overview');
+const source = useSection(['all', 'cf', 'atcoder'] as const, 'all', 'source');
+const activeSection = useSection(['overview', 'monthly', 'activity', 'diagnosis'] as const, 'overview');
+const learning = useLearningState();
+const activityOpened = ref(activeSection.value === 'diagnosis');
+watch(activeSection, () => {
+  if (activeSection.value === 'diagnosis') activityOpened.value = true;
+});
 function showSection(id: string) {
   activeSection.value = id as typeof activeSection.value;
 }
@@ -24,14 +28,7 @@ const weekly = ref<{
   completed: number;
   coverage: Record<string, number>;
 } | null>(null);
-const upsolve = ref<UpsolveItem[]>([]);
 const reasonTrend = ref<{ week: string; samples: number; reasons: { name: string; count: number }[] }[]>([]);
-const health = ref<{
-  cf: { handle: string; sync: string | null; catalog: string | null; problems: number; rated: number };
-  atcoder: { handle: string; sync: string | null; catalog: string | null; problems: number; rated: number };
-  pendingVerdicts: number;
-  lastBackup: string | null;
-} | null>(null);
 const radarSpring = useSpringValues(Array(8).fill(0));
 let alive = true;
 const maximum = computed(() =>
@@ -45,33 +42,36 @@ const radarRing = (radius: number) => Array.from({ length: 8 }, (_, i) => radarP
 const radarShape = computed(
   () => stats.value?.mastery.map((_, i) => radarPoint(i, radarSpring.values.value[i] * 1.1)).join(' ') ?? '',
 );
+let loadSerial = 0;
 async function load() {
+  const serial = ++loadSerial;
+  if (activeSection.value === 'diagnosis') {
+    void learning.load();
+    return;
+  }
+  if (activeSection.value === 'monthly') return;
   loading.value = true;
+  error.value = '';
   try {
-    const next = await api<Statistics>('/statistics?source=' + source.value);
-    if (!alive) return;
+    const currentSource = source.value;
+    const next = await api<Statistics>('/statistics?source=' + currentSource);
+    if (!alive || serial !== loadSerial) return;
     stats.value = next;
     radarSpring.setTarget(next.mastery.map((area) => area.score));
-    pageReady();
-    [weekly.value, upsolve.value, reasonTrend.value, health.value] = await Promise.all([
-      api<NonNullable<typeof weekly.value>>('/training/weekly'),
-      api<UpsolveItem[]>('/training/upsolve'),
-      api<typeof reasonTrend.value>('/training/reason-trend?source=' + source.value),
-      api<NonNullable<typeof health.value>>('/training/health'),
-    ]);
+    if (activeSection.value === 'overview') {
+      const nextWeekly = await api<NonNullable<typeof weekly.value>>('/training/weekly');
+      if (alive && serial === loadSerial) weekly.value = nextWeekly;
+    } else {
+      const nextTrend = await api<typeof reasonTrend.value>('/training/reason-trend?source=' + currentSource);
+      if (alive && serial === loadSerial) reasonTrend.value = nextTrend;
+    }
   } catch (e) {
-    if (alive) error.value = (e as Error).message;
+    if (alive && serial === loadSerial) error.value = (e as Error).message;
   } finally {
-    loading.value = false;
-    if (alive) pageReady();
+    if (alive && serial === loadSerial) loading.value = false;
   }
 }
-async function removeUpsolve(item: UpsolveItem) {
-  await api(`/training/upsolve/${item.source}/${encodeURIComponent(item.key)}`, {}, 'DELETE');
-  upsolve.value = await api('/training/upsolve');
-  notify('已从补题清单移除');
-}
-onMounted(load);
+watch([activeSection, source], load, { immediate: true });
 onBeforeUnmount(() => {
   alive = false;
 });
@@ -81,16 +81,16 @@ onBeforeUnmount(() => {
     <div>
       <div class="eyebrow">PROGRESS, NOT PERFECTION</div>
       <h1>训练统计</h1>
-      <RouterLink to="/knowledge?view=diagnosis">生成 AI 学情诊断</RouterLink>
+      <RouterLink to="/statistics?view=diagnosis">生成 AI 学情诊断</RouterLink>
       <p>找到反复出现的问题，让下一次练习更有方向。</p>
     </div>
     <span class="date-chip"><ChartNoAxesCombined :size="17" />按唯一题目统计</span>
   </div>
-  <div v-if="error" class="alert error">{{ error }}</div>
+  <div v-if="error" class="alert error" role="alert">{{ error }}</div>
   <div class="contest-filter statistics-source">
     <label
       >统计来源
-      <select v-model="source" @change="load">
+      <select v-model="source">
         <option value="all">两站合计</option>
         <option value="cf">Codeforces</option>
         <option value="atcoder">AtCoder</option>
@@ -103,8 +103,7 @@ onBeforeUnmount(() => {
         { id: 'overview', label: '训练概览' },
         { id: 'monthly', label: '月度报告' },
         { id: 'activity', label: '练习趋势' },
-        { id: 'upsolve', label: `赛后补题 ${upsolve.length}` },
-        { id: 'health', label: '数据健康' },
+        { id: 'diagnosis', label: '学情诊断' },
       ]"
       :key="item.id"
       :class="{ active: activeSection === item.id }"
@@ -114,10 +113,17 @@ onBeforeUnmount(() => {
       {{ item.label }}
     </button>
   </nav>
-  <SwitchSurface :view-key="activeSection" label="训练统计" focus-selector=".statistics-content h2">
-    <div v-if="loading && !stats" class="quiet-empty" role="status">正在读取训练统计…</div>
+  <LearningActivity
+    v-if="activityOpened"
+    v-show="activeSection === 'diagnosis'"
+    mode="diagnosis"
+    :session="learning"
+  />
+  <MonthlyReport v-if="activeSection === 'monthly'" :source="source" />
+  <div v-show="activeSection === 'overview' || activeSection === 'activity'">
+    <button v-if="error" @click="load">重试统计</button>
+    <div v-if="loading" class="quiet-empty" role="status">正在读取训练统计…</div>
     <div v-if="stats" class="statistics-content">
-      <MonthlyReport v-if="activeSection === 'monthly'" :source="source" />
       <section
         v-if="weekly"
         v-show="activeSection === 'overview'"
@@ -140,32 +146,6 @@ onBeforeUnmount(() => {
           >
         </div>
       </section>
-      <section v-show="activeSection === 'upsolve'" class="panel training-extra-panel">
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">UPSOLVE</span>
-            <h2>赛后补题清单</h2>
-            <p>从比赛报告添加；完成状态按对应账号同步到的 AC 判断，不占固定题单名额。</p>
-          </div>
-        </div>
-        <div v-if="!upsolve.length" class="quiet-empty">
-          还没有补题。打开比赛报告，把未 AC 的题目加入这里。
-        </div>
-        <article v-for="item in upsolve" :key="item.source + item.key" class="upsolve-row">
-          <div>
-            <strong>{{ item.name }}</strong>
-            <p class="small subtle">
-              {{ item.source === 'cf' ? 'CF' : 'AtCoder' }} · {{ item.contestName }} ·
-              {{ item.rating ?? '暂无难度' }} ·
-              {{ item.completed ? '已 AC' : item.attempted ? '已尝试' : '未尝试' }}
-            </p>
-          </div>
-          <div class="button-row">
-            <a class="small-button" :href="item.url" target="_blank" rel="noreferrer">打开原题</a
-            ><button class="small-button" @click="removeUpsolve(item)">移除</button>
-          </div>
-        </article>
-      </section>
       <section v-show="activeSection === 'activity'" class="panel training-extra-panel statistics-reasons">
         <div class="section-head">
           <div>
@@ -179,34 +159,6 @@ onBeforeUnmount(() => {
           <strong>{{ week.week }} 起 · {{ week.samples }} 题</strong
           ><span>{{ week.reasons.map((r) => `${r.name} ${r.count}/${week.samples}`).join(' · ') }}</span>
         </div>
-      </section>
-      <section v-if="health" v-show="activeSection === 'health'" class="panel training-extra-panel">
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">DATA HEALTH</span>
-            <h2>数据健康</h2>
-          </div>
-        </div>
-        <div class="health-grid">
-          <p>
-            CF 提交：{{ health.cf.sync ? fullDate(health.cf.sync) : '尚未同步' }}<br />题目目录
-            {{ health.cf.problems }} 题，含难度 {{ health.cf.rated }} 题<br />目录更新：{{
-              health.cf.catalog ? fullDate(health.cf.catalog) : '暂无数据'
-            }}
-          </p>
-          <p>
-            AtCoder 提交：{{ health.atcoder.sync ? fullDate(health.atcoder.sync) : '尚未同步' }}<br />题目目录
-            {{ health.atcoder.problems }} 题，含估计难度 {{ health.atcoder.rated }} 题<br />目录更新：{{
-              health.atcoder.catalog ? fullDate(health.atcoder.catalog) : '暂无数据'
-            }}
-          </p>
-          <p>
-            待判提交：{{ health.pendingVerdicts }} 条<br />上次备份导出：{{
-              health.lastBackup ? fullDate(health.lastBackup) : '尚无记录'
-            }}
-          </p>
-        </div>
-        <RouterLink to="/settings" class="small-button">同步与导出备份</RouterLink>
       </section>
       <div v-show="activeSection === 'overview'" class="metrics statistics-metrics">
         <div class="metric">
@@ -380,5 +332,5 @@ onBeforeUnmount(() => {
         </section>
       </div>
     </div>
-  </SwitchSurface>
+  </div>
 </template>

@@ -4,7 +4,7 @@ import { ArrowUpRight, RefreshCw } from 'lucide-vue-next';
 import { api, fullDate } from '../api';
 import type { AtcoderReport } from '../../shared/atcoder';
 const props = defineProps<{ contestId: string }>();
-const emit = defineEmits<{ updated: []; ready: [contestId: string] }>();
+const emit = defineEmits<{ updated: [] }>();
 const report = ref<AtcoderReport | null>(null),
   error = ref(''),
   busy = ref(false);
@@ -44,7 +44,6 @@ async function load(refresh = false) {
     report.value = next;
     if (!initialReadSettled) {
       initialReadSettled = true;
-      emit('ready', props.contestId);
     }
     if (refresh) emit('updated');
   } catch (e) {
@@ -53,7 +52,6 @@ async function load(refresh = false) {
     if (current === requestNumber) busy.value = false;
     if (current === requestNumber && !initialReadSettled) {
       initialReadSettled = true;
-      emit('ready', props.contestId);
     }
   }
 }

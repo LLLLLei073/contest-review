@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { CoreStore } from './core-store.js';
-import type { CFSubmission, ContestReview, Problem, SyncJob } from './domain.js';
+import type { CFSubmission, ContestReview, SyncJob } from './domain.js';
 
 export const atcoderHandleSchema = z
   .string()

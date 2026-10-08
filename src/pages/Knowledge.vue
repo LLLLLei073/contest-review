@@ -1,33 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, notify } from '../api';
-import { checkLearningAgent } from '../learning';
+import { useLearningState } from '../learningState';
+import { useSection } from '../sections';
 import Markdown from '../components/Markdown.vue';
 import { categoryNames } from '../../shared/training';
 import type { LearningService } from '../../shared/learning-service';
-import type { ExperienceCard, LearningRecord, Citation } from '../../shared/learning-domain';
-import { usePageReady } from '../pageScene';
-const ready = usePageReady(),
-  route = useRoute();
-const transferLabels = { pending: '待验证', independent: '独立完成', hint: '借助提示', failed: '未完成' };
+import type { ExperienceCard, Citation } from '../../shared/learning-domain';
+const route = useRoute();
 const nodeLabels: Record<string, string> = {
   knowledge: '知识点',
   problem: '题目',
   reason: '错因',
   experience: '经验卡',
 };
-const state = ref<ReturnType<LearningService['state']>>(),
-  graph = ref<ReturnType<LearningService['graph']>>();
-const section = ref(String(route.query.view || 'library')),
-  query = ref(''),
+const session = useLearningState();
+const { state, busy, error, message, run } = session;
+const graph = ref<ReturnType<LearningService['graph']>>();
+const section = useSection(['library', 'ask', 'graph'] as const, 'library');
+const query = ref(''),
   results = ref<Citation[]>([]),
-  question = ref(''),
-  period = ref<'30' | 'all'>('30');
-const busy = ref(false),
-  error = ref(''),
-  message = ref(''),
-  selected = ref<ExperienceCard>(),
+  question = ref('');
+const selected = ref<ExperienceCard>(),
   category = ref('all'),
   focus = ref('');
 const records = computed(() => state.value?.records ?? []);
@@ -41,7 +36,6 @@ const library = computed(() =>
       (k.title + k.content + k.aliases.join(' ')).toLowerCase().includes(query.value.toLowerCase()),
   ),
 );
-const auto = computed(() => records.value.some((r) => r.kind === 'preferences' && r.auto));
 const graphNodes = computed(() => {
   const all = graph.value?.nodes ?? [],
     edges = graph.value?.edges ?? [];
@@ -69,43 +63,42 @@ const drawingEdges = computed(() =>
     return a && b ? [{ ...e, a, b }] : [];
   }),
 );
+let graphSerial = 0,
+  searchSerial = 0,
+  alive = true;
+const graphLoading = ref(false);
+onBeforeUnmount(() => {
+  alive = false;
+  graphSerial++;
+  searchSerial++;
+});
 async function load() {
-  try {
-    [state.value, graph.value] = await Promise.all([
-      api<ReturnType<LearningService['state']>>('/learning/state'),
-      api<ReturnType<LearningService['graph']>>('/learning/graph'),
-    ]);
-    if (route.query.experience) {
-      const c = cards.value.find((c) => c.id === route.query.experience);
-      if (c) selected.value = JSON.parse(JSON.stringify(c));
-    }
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    ready();
+  await session.load();
+  if (route.query.experience && !selected.value) {
+    const card = cards.value.find((c) => c.id === route.query.experience);
+    if (card) selected.value = JSON.parse(JSON.stringify(card));
   }
 }
-async function run(action: string, input: unknown) {
-  if (busy.value) return;
-  busy.value = true;
+async function loadGraph() {
+  const serial = ++graphSerial;
+  graphLoading.value = true;
   error.value = '';
-  message.value = '';
   try {
-    const result = await api<LearningRecord & { message?: string }>('/learning/' + action, input);
-    message.value = result.message || '已完成';
-    await load();
-    return result;
+    const next = await api<ReturnType<LearningService['graph']>>('/learning/graph');
+    if (serial === graphSerial) graph.value = next;
   } catch (e) {
-    error.value = (e as Error).message;
+    if (serial === graphSerial) error.value = (e as Error).message;
   } finally {
-    busy.value = false;
+    if (serial === graphSerial) graphLoading.value = false;
   }
 }
 async function search() {
+  const serial = ++searchSerial;
   try {
-    results.value = await api('/learning/search', { query: query.value });
+    const next = await api<Citation[]>('/learning/search', { query: query.value });
+    if (alive && serial === searchSerial) results.value = next;
   } catch (e) {
-    error.value = (e as Error).message;
+    if (alive && serial === searchSerial) error.value = (e as Error).message;
   }
 }
 async function saveCard() {
@@ -114,16 +107,19 @@ async function saveCard() {
     notify('经验卡已保存');
   }
 }
-async function evaluate(id: string, result: 'independent' | 'hint' | 'failed') {
-  await run('transfer-result', { id, result, minutes: Number(transferMinutes.value[id] || 0) });
-  void checkLearningAgent();
-}
-const transferMinutes = ref<Record<string, number>>({});
-onMounted(load);
+onMounted(() => {
+  void load();
+});
 watch(
-  () => route.query,
+  section,
+  (value) => {
+    if (value === 'graph') void loadGraph();
+  },
+  { immediate: true },
+);
+watch(
+  () => route.query.experience,
   () => {
-    section.value = String(route.query.view || 'library');
     void load();
   },
 );
@@ -136,17 +132,18 @@ watch(
       <p class="subtle">把每次复盘变成下次能用上的经验。</p>
     </div>
   </div>
-  <div v-if="error" role="alert" class="alert error">{{ error }}</div>
+  <div v-if="error" role="alert" class="alert error">
+    {{ error }} <button @click="section === 'graph' ? loadGraph() : load()">重试</button>
+  </div>
+  <p v-if="session.loading.value" role="status">正在读取知识与经验…</p>
+  <p v-if="graphLoading" role="status">正在读取知识图谱…</p>
   <div v-if="message" role="status" class="alert">{{ message }}</div>
   <nav class="content-switcher learning-tabs" aria-label="知识中心内容">
     <button
       v-for="s in [
         { id: 'library', label: '知识与经验' },
-        { id: 'ask', label: 'RAG 问答' },
+        { id: 'ask', label: '算法问答' },
         { id: 'graph', label: '知识图谱' },
-        { id: 'diagnosis', label: '学情诊断' },
-        { id: 'training', label: '训练 Agent' },
-        { id: 'transfers', label: '迁移检测' },
       ]"
       :key="s.id"
       :class="{ active: section === s.id }"
@@ -156,11 +153,11 @@ watch(
     </button>
   </nav>
   <p v-if="state && !state.configured" class="alert">
-    未配置 AI。仍可浏览知识卡、搜索个人资料和查看历史；生成内容请先到<RouterLink to="/settings"
+    未配置 AI。仍可浏览知识卡、搜索个人资料和查看历史；生成内容请先到<RouterLink to="/settings?view=ai"
       >设置与数据</RouterLink
     >配置接口。
   </p>
-  <section v-if="section === 'library'" class="learning-stack">
+  <section v-show="section === 'library'" class="learning-stack">
     <div class="learning-controls">
       <label
         >搜索知识与经验<input
@@ -208,7 +205,9 @@ watch(
       </article>
     </div>
     <h2>个人经验卡</h2>
-    <p v-if="!cards.length" class="subtle">从题目详情的“学习闭环”生成草稿，确认后才会用于 RAG 和知识图谱。</p>
+    <p v-if="!cards.length" class="subtle">
+      从题目详情的“解题助手 → 经验沉淀”生成草稿，确认后才会用于算法问答和知识图谱。
+    </p>
     <article v-for="c in cards" :key="c.id" class="panel learning-card">
       <div class="section-head">
         <h3>{{ c.title }}</h3>
@@ -248,7 +247,7 @@ watch(
       </div>
     </form>
   </section>
-  <section v-if="section === 'ask'" class="learning-stack">
+  <section v-show="section === 'ask'" class="learning-stack">
     <form class="panel learning-card learning-stack" @submit.prevent="run('ask', { question })">
       <label
         >向算法助手提问<textarea
@@ -358,129 +357,5 @@ watch(
         来源：{{ e.source }}
       </details>
     </div>
-  </section>
-  <section v-if="section === 'diagnosis'" class="learning-stack">
-    <div class="learning-controls">
-      <label
-        >诊断范围<select v-model="period">
-          <option value="30">最近 30 天</option>
-          <option value="all">全部历史</option>
-        </select></label
-      ><button class="button" :disabled="busy" @click="run('diagnose', { period })">生成学情诊断</button>
-    </div>
-    <article
-      v-for="r in records
-        .filter((r) => r.kind === 'diagnosis')
-        .slice()
-        .reverse()"
-      :key="r.id"
-      class="panel learning-card"
-    >
-      <template v-if="r.kind === 'diagnosis'"
-        ><h2>
-          {{ r.period === '30' ? '近 30 天' : '全部历史' }} ·
-          {{ new Date(r.createdAt).toLocaleString('zh-CN') }}
-        </h2>
-        <p v-for="w in r.warnings" :key="w" class="subtle">{{ w }}</p>
-        <div v-for="(f, i) in r.findings" :key="i">
-          <Markdown :text="f.cause" /><Markdown :text="f.action" />
-          <details>
-            <summary>查看诊断证据</summary>
-            <div v-for="id in f.evidenceIds" :key="id">
-              <p>{{ r.evidence.find((e) => e.id === id)?.text ?? id }}</p>
-              <RouterLink
-                v-if="id.startsWith('problem:')"
-                :to="'/problems/' + encodeURIComponent(id.slice(8))"
-                >查看原始复盘</RouterLink
-              >
-            </div>
-          </details>
-          <RouterLink v-for="k in f.knowledgeIds" :key="k" :to="'/knowledge?card=' + k"
-            >{{ state?.knowledge.find((n) => n.id === k)?.title }}
-          </RouterLink>
-        </div></template
-      >
-    </article>
-  </section>
-  <section v-if="section === 'training'" class="learning-stack">
-    <div class="panel learning-card learning-stack">
-      <h2>次日训练计划</h2>
-      <p>AI 依据训练反馈与比赛建议调整未来题单。当天题单保持稳定，每栏最多五题，失败时沿用规则推荐。</p>
-      <label
-        ><input
-          type="checkbox"
-          :checked="auto"
-          :disabled="busy"
-          @change="run('preferences', { auto: !auto })"
-        />自动调整次日计划（仅在应用运行时触发）</label
-      ><button class="button" :disabled="busy" @click="run('agent', { automatic: false })">
-        生成次日计划</button
-      ><RouterLink to="/">查看今日题单与周目标</RouterLink>
-    </div>
-    <article
-      v-for="r in records
-        .filter((r) => r.kind === 'revision' || r.kind === 'agent-run')
-        .slice()
-        .reverse()"
-      :key="r.id"
-      class="panel learning-card"
-    >
-      <template v-if="r.kind === 'revision'"
-        ><h3>{{ r.date }} · {{ r.reverted ? '已撤回' : '计划修订' }}</h3>
-        <Markdown :text="r.reason" />
-        <p>调整前：{{ r.before.newKeys.join('、') }}</p>
-        <p>调整后：{{ r.after.newKeys.join('、') }}</p>
-        <details>
-          <summary>输入摘要</summary>
-          <pre>{{ r.inputSummary }}</pre>
-        </details>
-        <button class="small-button" :disabled="busy || r.reverted" @click="run('revert', { id: r.id })">
-          撤回此版本
-        </button></template
-      >
-      <p v-else-if="r.kind === 'agent-run'">
-        {{ new Date(r.createdAt).toLocaleString('zh-CN') }} · {{ r.message }}
-      </p>
-    </article>
-  </section>
-  <section v-if="section === 'transfers'" class="learning-stack">
-    <p class="subtle">
-      从题目详情推荐相关变式题，占用次日新知名额。标签相关不代表严格等价，独立完成须有同步 AC 证据。
-    </p>
-    <article
-      v-for="r in records
-        .filter((r) => r.kind === 'transfer')
-        .slice()
-        .reverse()"
-      :key="r.id"
-      class="panel learning-card"
-    >
-      <template v-if="r.kind === 'transfer'"
-        ><h2>{{ r.targetKey }} · {{ r.date }}</h2>
-        <p>{{ r.reason }}</p>
-        <div class="button-row">
-          <RouterLink :to="'/problems/' + encodeURIComponent(r.problemKey)">原始复盘</RouterLink
-          ><a
-            :href="'https://codeforces.com/problemset/problem/' + r.targetKey.replace(':', '/')"
-            target="_blank"
-            rel="noreferrer"
-            >打开迁移题</a
-          >
-        </div>
-        <p>结果：{{ transferLabels[r.result] }}</p>
-        <div v-if="r.result === 'pending'" class="learning-controls">
-          <label
-            >迁移练习用时（分钟）<input
-              v-model="transferMinutes[r.id]"
-              type="number"
-              min="0"
-              max="100000" /></label
-          ><button class="small-button" :disabled="busy" @click="evaluate(r.id, 'independent')">
-            独立完成</button
-          ><button class="small-button" :disabled="busy" @click="evaluate(r.id, 'hint')">借助提示</button
-          ><button class="small-button" :disabled="busy" @click="evaluate(r.id, 'failed')">未完成</button>
-        </div></template
-      >
-    </article>
   </section>
 </template>

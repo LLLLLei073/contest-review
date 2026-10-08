@@ -8,7 +8,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
-  await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '今日训练' })).toBeVisible();
   await page.locator('.profile-chip').click();
   await page.getByLabel('Codeforces Handle').fill('review_tester');
   await page.getByRole('button', { name: '绑定用户名' }).click();
@@ -18,7 +18,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await page.getByRole('button', { name: '选择目标' }).click();
   await page.getByRole('dialog').getByRole('button', { name: /数学/ }).click();
   await page.getByRole('dialog').getByRole('button', { name: '确定' }).click();
@@ -43,7 +43,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await expect(page.locator('.markdown img')).toHaveCount(0);
   await page.getByRole('button', { name: '保存笔记', exact: true }).click();
   await expect(page.getByText('复盘已保存')).toBeVisible();
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
   await page.locator('.recommendation-detail summary').first().click();
   await expect(page.locator('.recommendation-detail').first()).toContainText('CF 官方 Rating 1447');
@@ -93,7 +93,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await page.getByRole('link', { name: '2000C Two Screens', exact: true }).click();
   await expect(page.getByLabel('当时的思路', { exact: false })).toHaveValue('只考虑了单个字符串。');
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('dashboard-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -105,7 +105,6 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
   page,
 }, testInfo) => {
   await page.goto(testInfo.project.name === 'pages' ? './#/settings' : '/settings');
-  await page.getByRole('button', { name: '跳过动画' }).click();
   await page.getByLabel('Codeforces Handle').fill('isolation_reference');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.locator('.profile-chip')).toContainText('isolation_reference');

@@ -5,7 +5,7 @@ import { api } from '../api';
 import { verdictLabel } from '../../shared/domain';
 import type { AnalysisReport } from '../../shared/contest-analysis';
 const props = defineProps<{ contestId: number }>();
-const emit = defineEmits<{ updated: []; ready: [contestId: number] }>();
+const emit = defineEmits<{ updated: [] }>();
 const report = ref<AnalysisReport | null>(null),
   sessionKey = ref(''),
   error = ref(''),
@@ -20,12 +20,6 @@ const labels: Record<string, string> = {
 };
 let alive = true,
   timer: ReturnType<typeof setTimeout> | undefined;
-let initialReadSettled = false;
-function settleInitialRead() {
-  if (!alive || initialReadSettled) return;
-  initialReadSettled = true;
-  emit('ready', props.contestId);
-}
 const time = (seconds: number | null) =>
   seconds === null ? '—' : `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 async function read(auto = false) {
@@ -34,7 +28,6 @@ async function read(auto = false) {
     if (!alive) return;
     const wasRunning = report.value?.task.status === 'running';
     report.value = data;
-    settleInitialRead();
     if (data.task.status === 'running') timer = setTimeout(() => void read(), 1200);
     else if (wasRunning) emit('updated');
     if (auto && !data.fetchedAt && data.task.status === 'idle' && data.sessions.length && navigator.onLine)
@@ -42,7 +35,6 @@ async function read(auto = false) {
   } catch (e) {
     if (alive) error.value = (e as Error).message;
   } finally {
-    settleInitialRead();
   }
 }
 async function refresh() {

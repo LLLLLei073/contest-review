@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useSection } from '../sections';
+import { useRoute } from 'vue-router';
 import { api, notify, settings } from '../api';
 import type { CFContest } from '../../shared/domain';
 import type { SimulationEvent } from '../../shared/training-extras';
-import { usePageReady } from '../pageScene';
-import SwitchSurface from '../components/SwitchSurface.vue';
-const pageReady = usePageReady();
 
 type Report = {
   id: string;
@@ -30,8 +29,9 @@ type Report = {
 const contests = ref<CFContest[]>([]),
   sessions = ref<Report[]>([]),
   selected = ref<Report | null>(null);
+const route = useRoute();
+const view = useSection(['choose', 'session', 'history'] as const, 'choose');
 const query = ref(''),
-  view = ref<'choose' | 'session' | 'history'>('choose'),
   error = ref(''),
   busy = ref(false),
   now = ref(Date.now());
@@ -66,11 +66,9 @@ async function load() {
     contests.value = nextContests;
     sessions.value = nextSessions;
     selected.value = nextSessions.find((s) => s.id === selected.value?.id) ?? nextSessions[0] ?? null;
-    if (selected.value && !ended.value) view.value = 'session';
+    if (selected.value && !ended.value && route.query.view === undefined) view.value = 'session';
   } catch (e) {
     error.value = (e as Error).message;
-  } finally {
-    pageReady();
   }
 }
 async function start(contestId: number) {
@@ -145,7 +143,9 @@ onUnmounted(() => clearInterval(timer));
     </div>
   </div>
   <div v-if="error" class="alert error" role="alert">{{ error }}</div>
-  <div v-if="!settings.activeHandle" class="panel quiet-empty">请先在设置中绑定 Codeforces 用户名。</div>
+  <div v-if="!settings.activeHandle" class="panel quiet-empty">
+    请先<RouterLink to="/settings?view=accounts&platform=cf">绑定 Codeforces 用户名</RouterLink>。
+  </div>
   <template v-else>
     <nav class="content-switcher" aria-label="模拟赛内容">
       <button :class="{ active: view === 'session' }" :disabled="!selected" @click="view = 'session'">
@@ -156,11 +156,7 @@ onUnmounted(() => clearInterval(timer));
         历史场次 {{ sessions.length }}
       </button>
     </nav>
-    <SwitchSurface
-      :view-key="`${view}:${view === 'session' ? (selected?.id ?? '') : ''}`"
-      label="模拟赛视图"
-      focus-selector=".training-extra-panel h2"
-    >
+    <div>
       <section v-show="view === 'choose'" class="panel training-extra-panel">
         <div class="section-head">
           <div>
@@ -265,6 +261,6 @@ onUnmounted(() => clearInterval(timer));
           </button>
         </div>
       </section>
-    </SwitchSurface>
+    </div>
   </template>
 </template>

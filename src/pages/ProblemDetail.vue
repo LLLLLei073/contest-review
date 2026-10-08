@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { onBeforeRouteLeave, useRoute } from 'vue-router';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import {
   ArrowLeft,
   ExternalLink,
@@ -24,18 +24,31 @@ import {
 } from '../../shared/domain';
 import type { AiReviewRecord } from '../../shared/ai-review';
 import Markdown from '../components/Markdown.vue';
+import { useSection } from '../sections';
 import LearningProblem from '../components/LearningProblem.vue';
 import { categoryNames } from '../../shared/training';
 import { reviewQualityHints } from '../../shared/training-extras';
-import { usePageReady } from '../pageScene';
-import SwitchSurface from '../components/SwitchSurface.vue';
-const pageReady = usePageReady();
 const route = useRoute(),
   key = String(route.params.key);
+const tab = useSection(['notes', 'submissions', 'attempts', 'assistant'] as const, 'notes');
+const tool = useSection(['code', 'hints', 'stress', 'experience', 'transfer'] as const, 'code', 'tool');
+const showSharedCode = ref(false);
+const evaluationCard = ref<HTMLElement | null>(null);
+function focusEvaluation() {
+  evaluationCard.value?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  const heading = evaluationCard.value?.querySelector<HTMLElement>('h2');
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+}
+const learningOpened = ref(tab.value === 'assistant' && tool.value !== 'code');
+watch([tab, tool], () => {
+  if (tab.value === 'assistant' && tool.value !== 'code') learningOpened.value = true;
+});
 const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[] } | null>(null),
   draft = ref<Review>(emptyReview()),
   snapshot = ref(''),
-  tab = ref('notes'),
   preview = ref(false),
   error = ref(''),
   busy = ref(false),
@@ -72,7 +85,7 @@ const fields = [
   { key: 'complexity', label: '复杂度分析', hint: '时间复杂度与空间复杂度' },
   { key: 'counterexample', label: '关键反例与边界', hint: '留下一个最小反例，提醒未来的自己。' },
 ] as const;
-const dirty = computed(() => JSON.stringify(draft.value) !== snapshot.value);
+const dirty = computed(() => Boolean(data.value) && JSON.stringify(draft.value) !== snapshot.value);
 const qualityHints = computed(() => reviewQualityHints(draft.value));
 const nextDate = computed({
   get: () => (draft.value.nextReview ? localDate(draft.value.nextReview) : ''),
@@ -92,8 +105,6 @@ async function load() {
     void loadAiReviews();
   } catch (e) {
     error.value = (e as Error).message;
-  } finally {
-    pageReady();
   }
 }
 async function loadAiReviews() {
@@ -122,11 +133,12 @@ async function fetchSubmissionCode(submissionId: number) {
     if (result.language) aiForm.value.language = result.language;
     const submission = data.value?.submissions.find((s) => s.id === submissionId);
     if (submission?.verdict) aiForm.value.verdict = submission.verdict;
-    tab.value = 'ai';
+    tab.value = 'assistant';
+    tool.value = 'code';
     notify('已获取提交代码，可开始 AI 分析');
   } catch (e) {
     const message = (e as Error).message;
-    if (tab.value === 'ai') aiError.value = message;
+    if (tab.value === 'assistant') aiError.value = message;
     else error.value = message;
   } finally {
     fetchingSubmission.value = 0;
@@ -254,9 +266,13 @@ onMounted(() => {
   window.addEventListener('beforeunload', unload);
 });
 onUnmounted(() => window.removeEventListener('beforeunload', unload));
-onBeforeRouteLeave(async () => {
+async function confirmLeave() {
   if (inFlightSave) await inFlightSave;
   return !dirty.value || window.confirm('复盘内容尚未保存，确定离开吗？');
+}
+onBeforeRouteLeave(confirmLeave);
+onBeforeRouteUpdate((to) => {
+  if (String(to.params.key) !== key) return confirmLeave();
 });
 </script>
 <template>
@@ -283,6 +299,13 @@ onBeforeRouteLeave(async () => {
           ><span class="solve-label">{{ data.problem.solved ? '已 AC' : '尚未 AC' }}</span>
         </div>
       </div>
+      <button
+        v-if="draft.status !== 'mastered' && !draft.ignored"
+        class="small-button"
+        @click="focusEvaluation"
+      >
+        {{ draft.awaitingEvaluation ? '评价这次重做' : '记录重做' }}
+      </button>
       <a class="button" :href="data.problem.url" target="_blank" rel="noreferrer"
         >查看原题<ExternalLink :size="15"
       /></a>
@@ -295,27 +318,18 @@ onBeforeRouteLeave(async () => {
               { id: 'notes', label: '复盘笔记' },
               { id: 'submissions', label: '提交记录' },
               { id: 'attempts', label: '重做历史' },
-              { id: 'ai', label: 'AI 复盘' },
-              { id: 'learning', label: '学习闭环' },
+              { id: 'assistant', label: '解题助手' },
             ]"
             :key="t.id"
             :class="{ active: tab === t.id }"
             @click="tab = t.id"
           >
             {{ t.label }}<small v-if="t.id === 'submissions'">{{ data.submissions.length }}</small
-            ><small v-if="t.id === 'attempts'">{{ data.attempts.length }}</small
-            ><small v-if="t.id === 'ai'">{{ aiReviews.length }}</small>
+            ><small v-if="t.id === 'attempts'">{{ data.attempts.length }}</small>
           </button>
         </div>
-        <SwitchSurface
-          :view-key="tab"
-          label="题目记录"
-          focus-selector=".editor-body h2, .editor-body h3, .editor-body .field-title"
-        >
-          <div v-if="tab === 'learning'" class="editor-body">
-            <LearningProblem :problem-key="key" :code="aiForm.code || draft.code" :language="aiForm.language || draft.language" :statement="aiForm.statement" :ai-reviews="aiReviews" />
-          </div>
-          <div v-if="tab === 'notes'" class="editor-body">
+        <div>
+          <div v-show="tab === 'notes'" class="editor-body">
             <div class="editor-toolbar">
               <span class="subtle small">支持 Markdown · LaTeX · 代码高亮</span
               ><button class="small-button" @click="preview = !preview">
@@ -436,17 +450,40 @@ onBeforeRouteLeave(async () => {
               </button>
             </div>
           </div>
-          <div v-if="tab === 'ai'" class="editor-body">
-            <div class="button-row"><button class="small-button" @click="tab='learning'">经验卡 · 渐进提示 · 对拍 · 迁移检测</button><RouterLink to="/knowledge">检索算法知识</RouterLink></div>
-            <p class="subtle small">
+          <div v-show="tab === 'assistant'" class="editor-body">
+            <nav class="content-switcher" aria-label="解题助手工具">
+              <button
+                v-for="item in [
+                  { id: 'code', label: '代码分析' },
+                  { id: 'hints', label: '分步提示' },
+                  { id: 'stress', label: '反例对拍' },
+                  { id: 'experience', label: '经验沉淀' },
+                  { id: 'transfer', label: '迁移练习' },
+                ]"
+                :key="item.id"
+                :class="{ active: tool === item.id }"
+                @click="tool = item.id as typeof tool"
+              >
+                {{ item.label }}
+              </button>
+            </nav>
+            <p class="subtle small">工具共用下方代码、语言和题目上下文；分析建议需确认后保存到笔记。</p>
+            <p v-show="tool === 'code'" class="subtle small">
               粘贴一段代码，AI
               会分析错误原因、评价思路、生成反例并推荐知识点。结果仅供参考，请结合评测与自己的重做判断。
             </p>
             <div v-if="!aiConfigured" class="alert">
-              尚未配置 AI 服务。请前往<RouterLink to="/settings">设置与数据 → AI 助手</RouterLink
+              尚未配置 AI 服务。请前往<RouterLink to="/settings?view=ai">设置与数据 → AI 助手</RouterLink
               >填写接口地址、密钥与模型。
             </div>
-            <div class="note-field">
+            <button
+              v-if="!['code', 'stress'].includes(tool)"
+              class="small-button"
+              @click="showSharedCode = !showSharedCode"
+            >
+              {{ showSharedCode ? '收起共用代码' : '查看共用代码与语言' }}
+            </button>
+            <div v-show="['code', 'stress'].includes(tool) || showSharedCode" class="note-field">
               <label for="ai-code"><span>01</span>待分析代码</label>
               <div class="editor-toolbar">
                 <select
@@ -484,10 +521,11 @@ onBeforeRouteLeave(async () => {
                 placeholder="粘贴需要分析的代码（默认带入「代码留档」内容）"
               ></textarea>
             </div>
-            <details class="ai-extra">
+            <details class="ai-extra" :open="tool !== 'code'">
               <summary class="small">补充上下文（可选）：题目描述 · 希望 AI 重点关注的问题</summary>
               <textarea
                 v-model="aiForm.statement"
+                aria-label="题面与输入输出约束"
                 rows="3"
                 placeholder="粘贴题目描述，AI 的反例与复杂度判断会更准确"
               ></textarea>
@@ -497,96 +535,108 @@ onBeforeRouteLeave(async () => {
                 placeholder="例如：我怀疑边界条件有问题 / 帮我看看复杂度"
               ></textarea>
             </details>
-            <div class="editor-actions">
-              <span class="small subtle">AI 每次分析都会留档在下方历史中</span
-              ><button
-                class="primary"
-                :disabled="aiBusy || !aiForm.code.trim() || !aiConfigured"
-                @click="submitAiReview"
-              >
-                <Sparkles :size="15" />{{ aiBusy ? 'AI 分析中…' : '开始 AI 分析' }}
-              </button>
-            </div>
-            <div v-if="aiError" class="alert error" role="alert">{{ aiError }}</div>
-            <div v-if="!aiReviews.length && !aiBusy" class="quiet-empty">
-              还没有 AI 复盘记录。提交代码后，分析结果会保存在这里。
-            </div>
-            <article v-for="r in aiReviews" :key="r.id" class="attempt-entry ai-entry">
-              <div class="ai-entry-head">
-                <button class="ai-entry-title" @click="aiExpanded = aiExpanded === r.id ? null : r.id">
-                  <span class="badge reviewing">AI</span
-                  ><span
-                    >{{ r.model }} · {{ verdictLabel[r.verdict] || r.verdict || '未指定结果' }} ·
-                    {{ fullDate(r.createdAt) }}</span
-                  >
-                </button>
-                <button
-                  class="icon-button"
-                  aria-label="删除该条 AI 复盘"
-                  :disabled="aiBusy"
-                  @click="deleteAiReview(r.id)"
+            <LearningProblem
+              v-if="learningOpened"
+              v-show="tool !== 'code'"
+              :tool="tool"
+              :problem-key="key"
+              :code="aiForm.code"
+              :language="aiForm.language"
+              :statement="aiForm.statement"
+              :ai-reviews="aiReviews"
+            />
+            <div v-show="tool === 'code'">
+              <div class="editor-actions">
+                <span class="small subtle">AI 每次分析都会留档在下方历史中</span
+                ><button
+                  class="primary"
+                  :disabled="aiBusy || !aiForm.code.trim() || !aiConfigured"
+                  @click="submitAiReview"
                 >
-                  <Trash2 :size="15" />
+                  <Sparkles :size="15" />{{ aiBusy ? 'AI 分析中…' : '开始 AI 分析' }}
                 </button>
               </div>
-              <template v-if="aiExpanded === r.id">
-                <section class="ai-section">
-                  <div class="ai-section-head">
-                    <h3>错误原因</h3>
-                    <button class="small-button" @click="fillNote('rootCause', r.errorAnalysis)">
-                      填入「根本原因」
-                    </button>
-                  </div>
-                  <Markdown :text="r.errorAnalysis" />
-                </section>
-                <section class="ai-section">
-                  <div class="ai-section-head">
-                    <h3>思路评价</h3>
-                    <button class="small-button" @click="fillNote('wrongIdea', r.approachEvaluation)">
-                      追加到「当时的思路」
-                    </button>
-                  </div>
-                  <Markdown :text="r.approachEvaluation" />
-                </section>
-                <section v-if="r.counterexamples.length" class="ai-section">
-                  <div class="ai-section-head">
-                    <h3>反例</h3>
-                    <button
-                      class="small-button"
-                      @click="fillNote('counterexample', r.counterexamples.join('\n\n---\n\n'))"
+              <div v-if="aiError" class="alert error" role="alert">{{ aiError }}</div>
+              <div v-if="!aiReviews.length && !aiBusy" class="quiet-empty">
+                还没有 AI 复盘记录。提交代码后，分析结果会保存在这里。
+              </div>
+              <article v-for="r in aiReviews" :key="r.id" class="attempt-entry ai-entry">
+                <div class="ai-entry-head">
+                  <button class="ai-entry-title" @click="aiExpanded = aiExpanded === r.id ? null : r.id">
+                    <span class="badge reviewing">AI</span
+                    ><span
+                      >{{ r.model }} · {{ verdictLabel[r.verdict] || r.verdict || '未指定结果' }} ·
+                      {{ fullDate(r.createdAt) }}</span
                     >
-                      填入「关键反例与边界」
-                    </button>
-                  </div>
-                  <Markdown v-for="(c, i) in r.counterexamples" :key="i" :text="c" />
-                </section>
-                <section v-if="r.suggestedCode" class="ai-section">
-                  <div class="ai-section-head">
-                    <h3>代码建议</h3>
-                    <div class="ai-section-actions">
-                      <button class="small-button" @click="copyCode(r.suggestedCode)">复制代码</button>
-                      <button class="small-button" @click="fillCode(r)">填入代码留档</button>
+                  </button>
+                  <button
+                    class="icon-button"
+                    aria-label="删除该条 AI 复盘"
+                    :disabled="aiBusy"
+                    @click="deleteAiReview(r.id)"
+                  >
+                    <Trash2 :size="15" />
+                  </button>
+                </div>
+                <template v-if="aiExpanded === r.id">
+                  <section class="ai-section">
+                    <div class="ai-section-head">
+                      <h3>错误原因</h3>
+                      <button class="small-button" @click="fillNote('rootCause', r.errorAnalysis)">
+                        填入「根本原因」
+                      </button>
                     </div>
-                  </div>
-                  <Markdown :text="'```' + r.language + '\n' + r.suggestedCode + '\n```'" />
-                </section>
-                <section class="ai-section">
-                  <div class="ai-section-head">
-                    <h3>推荐知识点</h3>
-                    <button
-                      v-if="r.suggestedReasons.length"
-                      class="small-button"
-                      @click="fillReasons(r.suggestedReasons)"
-                    >
-                      并入「错因归类」
-                    </button>
-                  </div>
-                  <div class="reason-picker ai-points">
-                    <span v-for="p in r.knowledgePoints" :key="p" class="tag">{{ p }}</span>
-                  </div>
-                </section>
-              </template>
-            </article>
+                    <Markdown :text="r.errorAnalysis" />
+                  </section>
+                  <section class="ai-section">
+                    <div class="ai-section-head">
+                      <h3>思路评价</h3>
+                      <button class="small-button" @click="fillNote('wrongIdea', r.approachEvaluation)">
+                        追加到「当时的思路」
+                      </button>
+                    </div>
+                    <Markdown :text="r.approachEvaluation" />
+                  </section>
+                  <section v-if="r.counterexamples.length" class="ai-section">
+                    <div class="ai-section-head">
+                      <h3>反例</h3>
+                      <button
+                        class="small-button"
+                        @click="fillNote('counterexample', r.counterexamples.join('\n\n---\n\n'))"
+                      >
+                        填入「关键反例与边界」
+                      </button>
+                    </div>
+                    <Markdown v-for="(c, i) in r.counterexamples" :key="i" :text="c" />
+                  </section>
+                  <section v-if="r.suggestedCode" class="ai-section">
+                    <div class="ai-section-head">
+                      <h3>代码建议</h3>
+                      <div class="ai-section-actions">
+                        <button class="small-button" @click="copyCode(r.suggestedCode)">复制代码</button>
+                        <button class="small-button" @click="fillCode(r)">填入代码留档</button>
+                      </div>
+                    </div>
+                    <Markdown :text="'```' + r.language + '\n' + r.suggestedCode + '\n```'" />
+                  </section>
+                  <section class="ai-section">
+                    <div class="ai-section-head">
+                      <h3>推荐知识点</h3>
+                      <button
+                        v-if="r.suggestedReasons.length"
+                        class="small-button"
+                        @click="fillReasons(r.suggestedReasons)"
+                      >
+                        并入「错因归类」
+                      </button>
+                    </div>
+                    <div class="reason-picker ai-points">
+                      <span v-for="p in r.knowledgePoints" :key="p" class="tag">{{ p }}</span>
+                    </div>
+                  </section>
+                </template>
+              </article>
+            </div>
           </div>
           <div v-if="tab === 'attempts'" class="editor-body">
             <div v-if="!data.attempts.length" class="quiet-empty">
@@ -602,7 +652,7 @@ onBeforeRouteLeave(async () => {
               <Markdown :text="a.note" />
             </article>
           </div>
-        </SwitchSurface>
+        </div>
       </section>
       <aside class="detail-side">
         <section class="panel side-card">
@@ -638,7 +688,11 @@ onBeforeRouteLeave(async () => {
           </button>
           <div v-if="draft.ignored" class="alert">此题已忽略，不会出现在复习队列中。</div>
         </section>
-        <section v-if="draft.status !== 'mastered' && !draft.ignored" class="panel side-card">
+        <section
+          ref="evaluationCard"
+          v-if="draft.status !== 'mastered' && !draft.ignored"
+          class="panel side-card"
+        >
           <h2><Clock3 :size="18" />{{ draft.awaitingEvaluation ? '评价这次重做' : '重做与尝试' }}</h2>
           <p class="small subtle">
             {{

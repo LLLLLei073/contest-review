@@ -6,6 +6,7 @@ let settingsRead = 0;
 export const job = ref<SyncJob | null>(null);
 export const toast = ref('');
 export const dataRevision = ref(0);
+export const recentChecks = ref(0);
 let lastLearningSync = '';
 const lastReportSync = new Map<string, string>();
 function learningFeedback(path: string, method: string, data: unknown) {
@@ -13,7 +14,11 @@ function learningFeedback(path: string, method: string, data: unknown) {
   if (['/atcoder/sync', '/review/batch'].includes(path) && data && typeof data === 'object') {
     const status = data as { id?: string; status?: string; processed?: number };
     const signature = `${status.id}:${status.status}:${status.processed}`;
-    if (status.id && ['completed', 'failed', 'interrupted'].includes(status.status ?? '') && lastReportSync.get(path) !== signature) {
+    if (
+      status.id &&
+      ['completed', 'failed', 'interrupted'].includes(status.status ?? '') &&
+      lastReportSync.get(path) !== signature
+    ) {
       lastReportSync.set(path, signature);
       dataRevision.value++;
     }
@@ -41,20 +46,26 @@ export async function api<T>(
   body?: unknown,
   method = body === undefined ? 'GET' : 'POST',
 ): Promise<T> {
-  if (browserMode) {
-    const result = await (await import('./browser/api')).browserApi<T>(path, body, method);
-    learningFeedback(path, method, result);
-    return result;
+  const recent = path === '/training/recent';
+  if (recent) recentChecks.value++;
+  try {
+    if (browserMode) {
+      const result = await (await import('./browser/api')).browserApi<T>(path, body, method);
+      learningFeedback(path, method, result);
+      return result;
+    }
+    const response = await fetch('/api' + path, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-Review-App': '1' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error([data.error, ...(data.details || [])].join('；'));
+    learningFeedback(path, method, data);
+    return data;
+  } finally {
+    if (recent) recentChecks.value--;
   }
-  const response = await fetch('/api' + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'X-Review-App': '1' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error([data.error, ...(data.details || [])].join('；'));
-  learningFeedback(path, method, data);
-  return data;
 }
 export async function loadSettings() {
   const read = ++settingsRead;

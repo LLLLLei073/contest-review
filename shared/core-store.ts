@@ -32,12 +32,10 @@ import {
   normalizeAtcoder,
   atcoderSubmissionSchema,
   atcoderProblemSchema,
-  atcoderContestSchema,
   atcoderReportSchema,
   atcoderCatalogSchema,
   atcoderHistorySchema,
   type AtcoderSubmission,
-  type AtcoderContest,
 } from './atcoder.js';
 import {
   analysisCacheSchema,

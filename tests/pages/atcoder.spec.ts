@@ -85,11 +85,16 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await page.getByRole('button', { name: 'AtCoder', exact: true }).click();
   await page.getByLabel('AtCoder 用户名').fill('alice');
   await page.getByRole('button', { name: '绑定 AtCoder' }).click();
+  await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '首次同步', exact: true }).click();
-  await expect(page.getByText('已从官方比赛历史验证该用户名')).toBeVisible({ timeout: 20000 });
-  await expect(page.locator('.settings-card').first()).toContainText('同步完成', { timeout: 20000 });
+  const atcoderSync = page.locator('.settings-card').filter({
+    has: page.getByRole('heading', { name: 'AtCoder 提交同步', exact: true }),
+  });
+  await expect(atcoderSync).toContainText('同步完成', { timeout: 20000 });
+  await page.getByRole('button', { name: '账号连接' }).click();
+  await expect(page.getByText('已从官方比赛历史验证该用户名')).toBeVisible();
   expect(mirrorResources).toBe(3);
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.getByText('Review A', { exact: true })).toBeVisible();
   await expect(page.getByText('新知题仅从 Codeforces 选择。')).toBeVisible();
   await page.getByRole('link', { name: '查看笔记' }).first().click();
@@ -103,10 +108,11 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
   await page.getByRole('button', { name: '账号连接' }).click();
   await page.getByRole('button', { name: 'AtCoder', exact: true }).click();
+  await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '增量同步' }).click();
-  await expect(page.locator('.settings-card').first()).toContainText('正在同步', { timeout: 10000 });
-  await expect(page.locator('.settings-card').first()).toContainText('同步完成', { timeout: 20000 });
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await expect(atcoderSync).toContainText('正在同步', { timeout: 10000 });
+  await expect(atcoderSync).toContainText('同步完成', { timeout: 20000 });
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.getByText('重做完成 · 待复盘')).toBeVisible();
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page.getByRole('button', { name: /ABC Browser Fixture/ }).click();

@@ -5,7 +5,7 @@ import staticPlugin from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { attemptSchema, reviewSchema, type ProblemRow } from '../shared/domain.js';
+import { attemptSchema, reviewSchema } from '../shared/domain.js';
 import { Store, contestReviewSchema, localDay } from './store.js';
 import { CodeforcesClient, SyncService, type CFClient } from './sync.js';
 import { AnalysisService } from '../shared/analysis-service.js';
@@ -91,7 +91,7 @@ export async function buildApp(
       .header('Referrer-Policy', 'no-referrer')
       .header('X-Frame-Options', 'DENY');
   });
-  app.setErrorHandler((error, req, reply) => {
+  app.setErrorHandler((error, _req, reply) => {
     if (error instanceof z.ZodError)
       return reply.code(400).send({
         error: '输入格式不正确',
@@ -495,7 +495,7 @@ export async function buildApp(
     ),
   );
   app.get('/api/statistics/monthly', async (req) => monthlyReport(store, req.query));
-  app.get('/api/backup', async (req, reply) => {
+  app.get('/api/backup', async (_req, reply) => {
     idle();
     return reply
       .header('Content-Disposition', `attachment; filename="contest-review-${Date.now()}.json"`)

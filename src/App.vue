@@ -15,40 +15,7 @@ import {
 } from 'lucide-vue-next';
 import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
 import { useSpringValues } from './motion';
-import OpeningIntro from './OpeningIntro.vue';
-import { beginPageScene, cancelPageScene, pageScene, releasePageSceneMotion } from './pageScene';
 const route = useRoute();
-const introStorageKey = 'contest-review:intro-seen:v1';
-function shouldShowIntro() {
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-  try {
-    if (sessionStorage.getItem(introStorageKey)) return false;
-    sessionStorage.setItem(introStorageKey, '1');
-  } catch {
-    // Storage may be unavailable; the opening still remains optional and skippable.
-  }
-  return true;
-}
-const introActive = ref(shouldShowIntro());
-let introFocusFrame = 0;
-let appUnmounted = false;
-let accountTransitionsReady = false;
-let pageFocusFrame = 0;
-async function finishIntro() {
-  if (!introActive.value) return;
-  introActive.value = false;
-  await nextTick();
-  if (appUnmounted) return;
-  introFocusFrame = requestAnimationFrame(() => {
-    if (document.activeElement !== document.body && document.activeElement !== document.documentElement)
-      return;
-    const brand = document.querySelector<HTMLElement>('.brand');
-    const focusTarget = brand?.getClientRects().length
-      ? brand
-      : document.querySelector<HTMLElement>('.sidebar nav a.active');
-    focusTarget?.focus({ preventScroll: true });
-  });
-}
 const navElement = ref<HTMLElement | null>(null);
 const navVisible = ref(false);
 const navSpring = useSpringValues([0, 0, 0, 0]);
@@ -69,7 +36,7 @@ function measureNav(immediate = false) {
   navVisible.value = true;
 }
 const navigation = [
-  { to: '/', label: '今日题单', icon: LayoutDashboard },
+  { to: '/', label: '今日训练', icon: LayoutDashboard },
   { to: '/problems', label: '错题库', icon: Library },
   { to: '/contests', label: '比赛复盘', icon: Flag },
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
@@ -77,6 +44,7 @@ const navigation = [
   { to: '/settings', label: '设置与数据', icon: Settings2 },
 ];
 const initError = ref('');
+const initialized = ref(false);
 let poll: ReturnType<typeof setInterval>;
 onMounted(async () => {
   await nextTick();
@@ -91,68 +59,32 @@ onMounted(async () => {
     await loadJob();
   } catch (e) {
     initError.value = (e as Error).message;
+  } finally {
+    initialized.value = true;
   }
-  accountTransitionsReady = true;
-  document.addEventListener('visibilitychange', releasePageSceneMotion);
-  reducedMotion.addEventListener('change', releasePageSceneMotion);
   poll = setInterval(() => loadJob().catch(() => {}), 2500);
 });
 const onResize = () => measureNav(true);
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-watch(
-  () =>
-    `${settings.value.activeHandle}|${settings.value.activeAtcoder}|${settings.value.xcpcPlayer?.key ?? ''}`,
-  () => {
-    if (accountTransitionsReady) beginPageScene(route.fullPath);
-  },
-  { flush: 'sync' },
-);
-watch(
-  () => pageScene.active,
-  async (active, previous) => {
-    if (active) {
-      await nextTick();
-      if (!introActive.value && pageScene.active)
-        document.querySelector<HTMLElement>('.page-scene')?.focus({ preventScroll: true });
-      return;
-    }
-    if (!previous) return;
-    await nextTick();
-    cancelAnimationFrame(pageFocusFrame);
-    pageFocusFrame = requestAnimationFrame(() => {
-      if (appUnmounted || pageScene.active) return;
-      const heading = document.querySelector<HTMLElement>('.workspace main h1');
-      if (!heading) return;
-      if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
-      heading.focus({ preventScroll: true });
-    });
-  },
-);
 watch(
   () => route.path,
   async () => {
     await nextTick();
     measureNav();
+    const heading = document.querySelector<HTMLElement>('.workspace main h1');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
   },
 );
 onUnmounted(() => {
-  appUnmounted = true;
-  cancelAnimationFrame(introFocusFrame);
-  cancelAnimationFrame(pageFocusFrame);
-  cancelPageScene();
   clearInterval(poll);
   navObserver?.disconnect();
   window.removeEventListener('resize', onResize);
-  document.removeEventListener('visibilitychange', releasePageSceneMotion);
-  reducedMotion.removeEventListener('change', releasePageSceneMotion);
 });
 </script>
 <template>
-  <div
-    class="app-shell"
-    :inert="introActive || pageScene.active"
-    :class="{ 'page-scene-under': pageScene.active }"
-  >
+  <div class="app-shell">
     <aside class="sidebar">
       <RouterLink to="/" class="brand"
         ><span class="brand-mark"><BookOpen :size="23" /></span
@@ -215,10 +147,10 @@ onUnmounted(() => {
                       ? '知识中心'
                       : $route.path === '/settings'
                         ? '设置与数据'
-                        : '今日题单'
+                        : '今日训练'
           }}</b>
         </div>
-        <RouterLink to="/settings" class="profile-chip"
+        <RouterLink to="/settings?view=accounts" class="profile-chip"
           ><span class="avatar">{{
             settings.activeHandle
               ? settings.activeHandle[0].toUpperCase()
@@ -242,12 +174,14 @@ onUnmounted(() => {
         /></RouterLink>
       </header>
       <main>
+        <p v-if="!initialized" role="status">正在打开训练空间…</p>
         <div v-if="initError" class="alert error">
           {{ browserMode ? '无法打开浏览器错题库：' : '无法连接本地服务：' }}{{ initError }}
         </div>
         <RouterView
+          v-if="initialized"
           :key="
-            ($route.path === '/contests' ? $route.path : $route.fullPath) +
+            ($route.params.key ? '/problems/' + String($route.params.key) : $route.path) +
             '|' +
             settings.activeHandle +
             '|' +
@@ -265,22 +199,4 @@ onUnmounted(() => {
         }}<button class="icon-button" aria-label="关闭通知" @click="toast = ''"><X :size="15" /></button></div
     ></Transition>
   </div>
-  <OpeningIntro v-if="introActive" @finish="finishIntro" />
-  <Teleport to="body">
-    <Transition name="page-scene">
-      <div
-        v-if="pageScene.active && !introActive"
-        class="page-scene"
-        role="status"
-        aria-live="polite"
-        tabindex="-1"
-      >
-        <div class="page-scene__content">
-          <span class="page-scene__symbol">回解</span>
-          <span class="page-scene__trail" aria-hidden="true"><i></i></span>
-          <p>{{ pageScene.waiting ? '正在准备内容…' : '把思路，带到下一页。' }}</p>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
 </template>

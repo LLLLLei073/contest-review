@@ -3,76 +3,23 @@ import { mockCodeforces } from '../browser-fixture';
 
 test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.project.name === 'pages') await mockCodeforces(page);
-});
-
-test('opening plays once per session, supports skip and reduced motion', async ({ page }, testInfo) => {
-  const url = testInfo.project.name === 'pages' ? './#/' : '/';
-  await page.goto(url);
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  const skip = page.getByRole('button', { name: '跳过动画' });
-  await expect(intro).toBeVisible();
-  await expect(page.locator('.app-shell')).toHaveAttribute('inert', '');
-  await expect(skip).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(skip).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(intro).toHaveCount(0);
-  await expect(page.locator('.brand')).toBeFocused();
-  await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
-  await page.locator('.sidebar nav').getByRole('link', { name: '错题库' }).click();
-  await expect(intro).toHaveCount(0);
-  await page.reload();
-  await expect(intro).toHaveCount(0);
-
-  await page.evaluate(() => sessionStorage.removeItem('contest-review:intro-seen:v1'));
-  await page.reload();
-  await expect(intro).toBeVisible();
-  await skip.click();
-  await expect(intro).toHaveCount(0);
-
-  await page.evaluate(() => sessionStorage.removeItem('contest-review:intro-seen:v1'));
-  await page.reload();
-  await expect(intro).toBeVisible();
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await expect(intro).toHaveCount(0);
-
-  await page.evaluate(() => sessionStorage.removeItem('contest-review:intro-seen:v1'));
-  await page.reload();
-  await expect(intro).toHaveCount(0);
-  await expect(page.locator('.page-head h1')).toBeVisible();
-  expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
-});
-
-test('opening completes automatically without mobile overflow', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  await expect(intro).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await expect(intro).toHaveCount(0, { timeout: 3000 });
-  await expect(page.locator('.sidebar nav a.active')).toBeFocused();
-  await expect(page.getByRole('heading', { name: '今日题单' })).toBeVisible();
-});
-
-test('opening completion does not steal focus from a newly available form', async ({ page }, testInfo) => {
-  await page.goto(testInfo.project.name === 'pages' ? './#/settings' : '/settings');
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  await expect(intro).toBeVisible();
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        const shell = document.querySelector('.app-shell')!;
-        const observer = new MutationObserver(() => {
-          if (shell.hasAttribute('inert')) return;
-          observer.disconnect();
-          document.querySelector<HTMLInputElement>('input[placeholder="例如 tourist"]')?.focus();
-          resolve();
-        });
-        observer.observe(shell, { attributes: true, attributeFilter: ['inert'] });
-      }),
-  );
-  await expect(intro).toHaveCount(0);
-  await expect(page.getByLabel('Codeforces Handle')).toBeFocused();
+  else {
+    // Other flows share the fixture server and may have started an asynchronous report.
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get('/api/contests/2000/analysis');
+          const data = await response.json();
+          return data.task?.status !== 'running';
+        },
+        { timeout: 20000 },
+      )
+      .toBe(true);
+    // Navigation tests must not start another profile's automatic AtCoder network sync.
+    await page.route('**/api/training/recent', (route) =>
+      route.fulfill({ json: { checkedAt: new Date().toISOString(), error: null } }),
+    );
+  }
 });
 
 test('navigation spring, chart endpoint and reduced-motion fallback', async ({ page }, testInfo) => {
@@ -98,7 +45,7 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
     })
     .toBeLessThan(2);
   await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
-  await page.locator('.sidebar nav').getByRole('link', { name: '今日题单' }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '今日训练' }).click();
   await expect
     .poll(async () => {
       const marker = await indicator.boundingBox();
@@ -131,7 +78,7 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
     .toBeLessThan(0.1);
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.locator('.sidebar nav').getByRole('link', { name: '今日题单' }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '今日训练' }).click();
   await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
   await expect(radar).toBeVisible();
   const reduced = await radar.evaluate((svg) => {
@@ -152,7 +99,7 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
       return marker && link ? Math.abs(marker.x - link.x) + Math.abs(marker.y - link.y) : 100;
     })
     .toBeLessThan(2);
-  for (const label of ['今日题单', '错题库', '比赛复盘', '训练统计']) {
+  for (const label of ['今日训练', '错题库', '比赛复盘', '训练统计']) {
     await page.locator('.sidebar nav').getByRole('link', { name: label }).click();
     await expect(page.locator('.page-head h1')).toContainText(label);
     await expect
@@ -170,79 +117,42 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
   expect(errors).toEqual([]);
 });
 
-test('page change waits for its scene and returns focus to the new heading', async ({ page }, testInfo) => {
-  await page.goto(testInfo.project.name === 'pages' ? './#/' : '/');
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
-  const started = Date.now();
+test('entry and navigation are immediately interactive without blocking scenes', async ({ page }, info) => {
+  await page.goto(info.project.name === 'pages' ? './#/' : '/');
+  await expect(page.locator('.opening-intro, .page-scene, .switch-surface__veil')).toHaveCount(0);
+  await expect(page.locator('.app-shell')).not.toHaveAttribute('inert', '');
   await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
-  await expect(page.locator('.page-scene')).toBeVisible();
-  await expect(page.locator('.app-shell')).toHaveAttribute('inert', '');
-  await expect(page.locator('.page-scene')).toHaveCount(0);
-  expect(Date.now() - started).toBeGreaterThanOrEqual(540);
   await expect(page.getByRole('heading', { name: '训练统计', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: '练习趋势', exact: true }).click();
+  await expect(page).toHaveURL(/view=activity/);
+  await page.getByRole('button', { name: '训练概览', exact: true }).click();
+  await expect(page).toHaveURL(/view=overview/);
   await page.goBack();
-  await expect(page.locator('.page-scene')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: '今日题单' })).toBeFocused();
+  await expect(page.getByRole('button', { name: '练习趋势', exact: true })).toHaveClass(/active/);
+  await page.reload();
+  await expect(page.getByRole('button', { name: '练习趋势', exact: true })).toHaveClass(/active/);
+  await expect(page.locator('.opening-intro, .page-scene, .switch-surface__veil')).toHaveCount(0);
 });
 
-test('major views switch locally and reduced motion skips the minimum delay', async ({ page }, testInfo) => {
-  await page.goto(testInfo.project.name === 'pages' ? './#/statistics' : '/statistics');
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
-  const switcher = page.getByRole('navigation', { name: '训练统计内容' });
-  await switcher.getByRole('button', { name: '练习趋势' }).click();
-  await expect(page.locator('.switch-surface')).toHaveAttribute('aria-busy', 'true');
-  await switcher.getByRole('button', { name: '数据健康' }).click();
-  await expect(page.locator('.switch-surface')).toHaveAttribute('aria-busy', 'false');
-  await expect(page.locator('.statistics-content h2:visible').first()).toBeFocused();
-
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await switcher.getByRole('button', { name: '训练概览' }).click();
-  await expect(page.locator('.switch-surface')).toHaveAttribute('aria-busy', 'false');
-  await page.locator('.sidebar nav').getByRole('link', { name: '设置与数据' }).click();
-  await expect(page.locator('.page-scene')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: '设置与数据' })).toBeFocused();
-});
-
-test('slow data keeps the page scene informative until the first result settles', async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name === 'pages', 'Pages storage does not use the local statistics request');
-  await page.goto('/');
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
-  await page.route('**/api/statistics?source=all', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    await route.continue();
-  });
-  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
-  await expect(page.locator('.page-scene')).toContainText('正在准备内容…');
-  await expect(page.locator('.page-scene')).toHaveCount(0, { timeout: 5000 });
-  await expect(page.getByRole('heading', { name: '训练统计', exact: true })).toBeFocused();
-});
-
-test('an unanswered request releases the scene and leaves the page loading state visible', async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name === 'pages', 'Pages storage does not use the local statistics request');
-  await page.goto('/');
-  const intro = page.getByRole('dialog', { name: '回解开屏动画' });
-  if (await intro.isVisible()) await page.getByRole('button', { name: '跳过动画' }).click();
-  let releaseRequest: () => void = () => {};
-  const heldRequest = new Promise<void>((resolve) => {
-    releaseRequest = resolve;
+test('slow or failed data remains local and does not block navigation', async ({ page }, info) => {
+  test.skip(info.project.name === 'pages', 'Pages uses its browser database rather than the local API.');
+  await page.setViewportSize({ width: 390, height: 844 });
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
   });
   await page.route('**/api/statistics?source=all', async (route) => {
-    await heldRequest;
-    await route.continue();
+    await held;
+    await route.fulfill({ status: 503, json: { error: '测试统计暂不可用' } });
   });
-  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
-  try {
-    await expect(page.locator('.page-scene')).toBeVisible();
-    await expect(page.locator('.page-scene')).toHaveCount(0, { timeout: 9000 });
-    await expect(page.getByText('正在读取训练统计…')).toBeVisible();
-  } finally {
-    releaseRequest();
-  }
+  await page.goto('/statistics');
+  await expect(page.getByText('正在读取训练统计…')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.locator('.app-shell')).not.toHaveAttribute('inert', '');
+  release();
+  await expect(page.getByRole('alert').filter({ hasText: '测试统计暂不可用' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.locator('.sidebar nav').getByRole('link', { name: '知识中心' }).click();
+  await expect(page.getByRole('heading', { name: '知识中心', exact: true })).toBeVisible();
+  await expect(page.locator('.page-scene')).toHaveCount(0);
 });

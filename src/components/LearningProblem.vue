@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { api } from '../api';
 import { downloadFiles } from '../learning';
 import type { LearningRecord } from '../../shared/learning-domain';
 import type { AiReviewRecord } from '../../shared/ai-review';
 import Markdown from './Markdown.vue';
 const props = defineProps<{
+  tool: string;
   problemKey: string;
   code: string;
   language: string;
@@ -16,9 +17,15 @@ const records = ref<LearningRecord[]>([]),
   busy = ref(false),
   error = ref(''),
   message = ref(''),
-  statement = ref(props.statement),
   idea = ref(''),
   sourceId = ref('');
+const statement = computed(() => props.statement);
+let alive = true,
+  loadSerial = 0;
+onBeforeUnmount(() => {
+  alive = false;
+  loadSerial++;
+});
 const hints = computed(() =>
   records.value
     .filter((r) => r.kind === 'hint' && r.problemKey === props.problemKey)
@@ -32,14 +39,18 @@ const bundles = computed(() =>
     .reverse(),
 );
 async function load() {
-  records.value = (await api<{ records: LearningRecord[] }>('/learning/state')).records;
+  const serial = ++loadSerial;
+  const next = (await api<{ records: LearningRecord[] }>('/learning/state')).records;
+  if (alive && serial === loadSerial) records.value = next;
 }
 async function run(action: string, input: unknown) {
+  if (busy.value || !alive) return;
   busy.value = true;
   error.value = '';
   message.value = '';
   try {
     const r = await api<{ message?: string }>('/learning/' + action, input);
+    if (!alive) return;
     message.value = r.message || '已完成';
     await load();
   } catch (e) {
@@ -76,10 +87,10 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
     <p v-if="message" role="status">{{ message }}</p>
     <div class="learning-controls">
       <RouterLink to="/knowledge">知识与经验库</RouterLink
-      ><RouterLink to="/knowledge?view=diagnosis">学情诊断</RouterLink
-      ><RouterLink to="/knowledge?view=training">训练 Agent</RouterLink>
+      ><RouterLink to="/statistics?view=diagnosis">学情诊断</RouterLink
+      ><RouterLink to="/?view=training">次日计划</RouterLink>
     </div>
-    <section class="learning-stack">
+    <section v-show="tool === 'experience'" class="learning-stack">
       <h2>沉淀个人经验</h2>
       <label
         >经验来源<select v-model="sourceId">
@@ -97,16 +108,9 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
       </button>
       <p class="small subtle">AI 分析先转成草稿，在知识中心核对确认后才能参与检索。</p>
     </section>
-    <section class="learning-stack">
+    <section v-show="tool === 'hints'" class="learning-stack">
       <h2>渐进式提示</h2>
-      <label
-        >题面与输入输出约束<textarea
-          v-model="statement"
-          rows="5"
-          maxlength="20000"
-          placeholder="提示与对拍共用这份题面"
-        /></label
-      ><label>我目前的思路<textarea v-model="idea" rows="2" maxlength="2000" /></label>
+      <label>我目前的思路<textarea v-model="idea" rows="2" maxlength="2000" /></label>
       <div class="button-row">
         <button
           v-for="(label, i) in ['方向提示', '关键观察', '算法思路', '完整题解']"
@@ -126,11 +130,11 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
         /></template>
       </details>
     </section>
-    <section class="learning-stack">
+    <section v-show="tool === 'stress'" class="learning-stack">
       <h2>反例与对拍</h2>
       <p class="small subtle">
-        使用 AI 复盘输入区的代码与语言生成对拍包。支持 C++17 / Python 3；下载后审阅代码，在本机执行，再导入
-        report.json。生成内容尚未验证。
+        使用上方共用代码、语言和题目上下文生成对拍包。支持 C++17 / Python
+        3；下载后审阅代码，在本机执行，再导入 report.json。生成内容尚未验证。
       </p>
       <button
         class="small-button"
@@ -169,13 +173,14 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
         >
       </article>
     </section>
-    <section>
+    <section v-show="tool === 'transfer'">
       <h2>验证迁移能力</h2>
       <p class="small subtle">推荐未做过的相关变式题，安排到次日新知栏，并保持每日最多五道新知题。</p>
       <button class="small-button" :disabled="busy" @click="run('transfer', { problemKey })">
         安排迁移检测
       </button>
-      <RouterLink to="/knowledge?view=transfers">查看迁移任务与评价</RouterLink>
+      <RouterLink v-if="!busy" to="/?view=transfers">查看迁移任务与评价</RouterLink>
+      <span v-else role="status">正在保存安排，请稍候…</span>
     </section>
   </div>
 </template>

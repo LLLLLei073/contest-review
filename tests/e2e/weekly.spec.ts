@@ -55,7 +55,7 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
   page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
   await expect(page.locator('.profile-chip')).toContainText('weekly_tester');
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.getByText('请选择本周方向')).toBeVisible();
   await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(0);
   await page.getByRole('button', { name: '选择目标' }).click();
@@ -77,10 +77,12 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
   await page.getByRole('link', { name: '训练统计', exact: true }).click();
   await expect(page.locator('.statistics-metrics')).toBeVisible();
   expect((await page.locator('.mastery-panel').boundingBox())!.y).toBeLessThan(1000);
+  await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page.getByRole('button', { name: /赛后补题/ }).click();
   await expect(page.getByRole('heading', { name: '赛后补题清单' })).toBeVisible();
   await expect(page.getByText('Old B', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '数据健康' }).click();
+  await page.getByRole('link', { name: '设置与数据', exact: true }).click();
+  await page.getByRole('button', { name: '同步状态' }).click();
   await expect(page.getByRole('heading', { name: '数据健康' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('weekly-statistics-desktop.png'), fullPage: true });
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
@@ -129,7 +131,7 @@ test('weekly goal scene keeps today fixed and supports cancel, keyboard and redu
   });
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
 
   await page.getByRole('button', { name: '选择目标' }).click();
   const dialog = page.getByRole('dialog', { name: /这一周/ });

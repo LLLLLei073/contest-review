@@ -29,14 +29,13 @@ test('Pages confirms same-day AC before reflection and waits for subjective eval
     });
   });
   await page.goto('./#/settings');
-  await page.getByRole('button', { name: '跳过动画' }).click();
   await page.getByLabel('Codeforces Handle').fill('redo_tester');
   await page.getByRole('button', { name: '绑定用户名' }).click();
   await expect(page.locator('.profile-chip')).toContainText('redo_tester');
   await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.getByText('Two Screens', { exact: true })).toBeVisible();
   includeRedo = true;
   await page.getByRole('button', { name: '检查提交' }).click();
@@ -44,7 +43,7 @@ test('Pages confirms same-day AC before reflection and waits for subjective eval
   await page.getByRole('link', { name: '写复盘' }).first().click();
   await page.getByLabel('当时的思路', { exact: false }).fill('忽略了边界条件');
   await page.getByRole('button', { name: '保存笔记', exact: true }).click();
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.getByText('重做完成 · 待评价')).toBeVisible();
   await page.getByRole('button', { name: '手动评价' }).click();
   await page.getByLabel('耗时（分钟）').fill('15');

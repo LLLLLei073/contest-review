@@ -64,7 +64,7 @@ test('restored legacy review state shows completed evaluation and explains incom
   });
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
-  await page.getByRole('link', { name: '今日题单', exact: true }).click();
+  await page.getByRole('link', { name: '今日训练', exact: true }).click();
   const reviewed = page.locator('.daily-panel').first().locator('.daily-task');
   await expect(reviewed).toHaveCount(2);
   await expect(reviewed.nth(0)).toHaveAttribute('data-phase', 'done');
