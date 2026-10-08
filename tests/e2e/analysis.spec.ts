@@ -104,7 +104,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   await page.getByRole('button', { name: '导出备份', exact: true }).click();
   const path = (await (await downloaded).path())!;
   const result = JSON.parse(readFileSync(path, 'utf8'));
-  expect(result.version).toBe(7);
+  expect(result.version).toBe(8);
   expect(result.tables.analysis_cache).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path);
   page.once('dialog', (d) => d.accept());

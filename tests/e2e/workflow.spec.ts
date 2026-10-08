@@ -81,7 +81,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   const path = await download.path();
   const backup = JSON.parse(readFileSync(path!, 'utf8'));
   expect(backup.format).toBe('contest-review');
-  expect(backup.version).toBe(7);
+  expect(backup.version).toBe(8);
   expect(
     backup.tables.catalog_cache.filter((row: { profile: string }) => row.profile === 'review_tester'),
   ).toHaveLength(1);

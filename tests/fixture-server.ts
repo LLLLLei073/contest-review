@@ -7,6 +7,7 @@ import { buildApp } from '../server/app.js';
 import type { CFClient } from '../server/sync.js';
 import type { CFSubmission } from '../shared/domain.js';
 import { fixtureNewProblems } from './cf-fixtures.js';
+import { learningReply } from './learning-fixture.js';
 const names = [
   'Two Screens',
   'Turtle and a MEX Problem',
@@ -79,7 +80,8 @@ const cf: CFClient = {
         name: `Codeforces Round ${980 + i} (Div. 2)`,
         startTimeSeconds: 1789500000 + i * 86400,
       })) as T;
-    if (method === 'problemset.problems') return { problems: [...submissions.map((s) => s.problem), ...fixtureNewProblems] } as T;
+    if (method === 'problemset.problems')
+      return { problems: [...submissions.map((s) => s.problem), ...fixtureNewProblems] } as T;
     if (method === 'user.rating')
       return [
         {
@@ -94,5 +96,15 @@ const cf: CFClient = {
   },
 };
 const dir = mkdtempSync(join(tmpdir(), 'contest-review-e2e-'));
-const { app } = await buildApp(new Store(join(dir, 'review.sqlite')), cf);
+const { app } = await buildApp(new Store(join(dir, 'review.sqlite')), cf, {
+  aiFetch: async (_url, init) => {
+    const request = JSON.parse((init as { body: string }).body);
+    const result = learningReply(request.messages[0].content, JSON.parse(request.messages[1].content));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(result) } }] }),
+    };
+  },
+});
 await app.listen({ host: '127.0.0.1', port: 3211 });

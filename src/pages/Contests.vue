@@ -7,6 +7,7 @@ import { api, notify, job, settings, loadSettings } from '../api';
 import ContestReport from '../components/ContestReport.vue';
 import XcpcReport from '../components/XcpcReport.vue';
 import AtcoderReport from '../components/AtcoderReport.vue';
+import LearningCoach from '../components/LearningCoach.vue';
 import { usePageReady } from '../pageScene';
 import SwitchSurface from '../components/SwitchSurface.vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
@@ -48,7 +49,7 @@ const rows = ref<ContestView[]>([]),
   typeFilter = ref(routeValue('type') || 'all'),
   page = ref(Math.max(1, Number(routeValue('page')) || 1)),
   mobileShowingReport = ref(Boolean(routeValue('contest'))),
-  reportView = ref<'analysis' | 'notes'>('analysis'),
+  reportView = ref<'analysis' | 'notes' | 'coach'>('analysis'),
   batch = ref<BatchJob | null>(null),
   batchBusy = ref(false);
 let batchTimer: ReturnType<typeof setInterval> | undefined;
@@ -435,7 +436,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
     </section>
     <SwitchSurface
       :view-key="`${selected?.key ?? 'empty'}:${reportView}`"
-      :ready="reportView === 'notes' || reportReady"
+      :ready="reportView !== 'analysis' || reportReady"
       label="比赛报告"
       focus-selector=".contest-editor h2, .contest-placeholder h2"
     >
@@ -486,6 +487,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             </button>
           </div>
           <nav class="content-switcher report-switcher" aria-label="比赛报告内容">
+            <button :class="{ active: reportView === 'coach' }" @click="reportView = 'coach'">AI 教练</button>
             <button :class="{ active: reportView === 'analysis' }" @click="reportView = 'analysis'">
               成绩与建议
             </button>
@@ -494,6 +496,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
             </button>
           </nav>
           <div class="editor-body">
+            <LearningCoach v-if="reportView === 'coach'" :source="selected.source" :contest-id="String(selected.id)" />
             <div v-show="reportView === 'analysis'">
               <div
                 v-if="

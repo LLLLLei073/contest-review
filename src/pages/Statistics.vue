@@ -8,12 +8,13 @@ import type { WeeklyGoal } from '../../shared/weekly';
 import { useSpringValues } from '../motion';
 import { usePageReady } from '../pageScene';
 import SwitchSurface from '../components/SwitchSurface.vue';
+import MonthlyReport from '../components/MonthlyReport.vue';
 const pageReady = usePageReady();
 const stats = ref<Statistics | null>(null),
   error = ref(''),
   loading = ref(true);
 const source = ref<'all' | 'cf' | 'atcoder'>('all');
-const activeSection = ref<'overview' | 'activity' | 'upsolve' | 'health'>('overview');
+const activeSection = ref<'overview' | 'monthly' | 'activity' | 'upsolve' | 'health'>('overview');
 function showSection(id: string) {
   activeSection.value = id as typeof activeSection.value;
 }
@@ -80,6 +81,7 @@ onBeforeUnmount(() => {
     <div>
       <div class="eyebrow">PROGRESS, NOT PERFECTION</div>
       <h1>训练统计</h1>
+      <RouterLink to="/knowledge?view=diagnosis">生成 AI 学情诊断</RouterLink>
       <p>找到反复出现的问题，让下一次练习更有方向。</p>
     </div>
     <span class="date-chip"><ChartNoAxesCombined :size="17" />按唯一题目统计</span>
@@ -99,6 +101,7 @@ onBeforeUnmount(() => {
     <button
       v-for="item in [
         { id: 'overview', label: '训练概览' },
+        { id: 'monthly', label: '月度报告' },
         { id: 'activity', label: '练习趋势' },
         { id: 'upsolve', label: `赛后补题 ${upsolve.length}` },
         { id: 'health', label: '数据健康' },
@@ -114,6 +117,7 @@ onBeforeUnmount(() => {
   <SwitchSurface :view-key="activeSection" label="训练统计" focus-selector=".statistics-content h2">
     <div v-if="loading && !stats" class="quiet-empty" role="status">正在读取训练统计…</div>
     <div v-if="stats" class="statistics-content">
+      <MonthlyReport v-if="activeSection === 'monthly'" :source="source" />
       <section
         v-if="weekly"
         v-show="activeSection === 'overview'"

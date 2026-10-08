@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { LearningService } from '../../shared/learning-service';
+import { monthlyReport } from '../../shared/monthly-report';
 import { attemptSchema, reviewSchema } from '../../shared/domain';
 import { contestReviewSchema, localDay } from '../../shared/core-store';
 import { browserRuntime } from './database';
@@ -46,7 +48,13 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   });
   let result: unknown;
   try {
-    if (route === '/settings' && method === 'GET')
+    if (route.startsWith('/learning/'))
+      result = await new LearningService(store, aiReviewer, () => runtime.flush()).route(
+        route.slice('/learning/'.length),
+        method,
+        body,
+      );
+    else if (route === '/settings' && method === 'GET')
       result = {
         activeHandle: store.active(),
         handles: store.handles(),
@@ -173,7 +181,9 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const config = aiConfig();
       if (!config) throw new Error('请先保存 AI 配置');
       result = { ok: true, message: await aiReviewer.test(config) };
-    } else if (/^\/problems\/[^/]+\/ai-reviews$/.test(route) && method === 'GET') {
+    } else if (/^\/problems\/[^/]+\/fetch-submission-code$/.test(route) && method === 'POST')
+      throw new Error('在线版受浏览器跨域限制，无法自动获取平台源码，请打开提交页面手动复制代码');
+    else if (/^\/problems\/[^/]+\/ai-reviews$/.test(route) && method === 'GET') {
       const key = decodeURIComponent(route.split('/')[2]);
       result = store.externalAllPrefix(aiReviewNamespace(store.profileForKey(key)), key + ':');
     } else if (/^\/problems\/[^/]+\/ai-reviews$/.test(route) && method === 'POST') {
@@ -184,6 +194,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         detail = store.detail(profile, key);
       if (!detail) throw new Error('题目不存在');
       const input = aiReviewInputSchema.parse(body);
+      const epoch = store.learningEpoch;
       const review = await aiReviewer.review(
         config,
         { problem: detail.problem, submissions: detail.submissions },
@@ -199,6 +210,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         createdAt: new Date().toISOString(),
         code: input.code,
       });
+      if (epoch !== store.learningEpoch) throw new Error('账号或数据已变化，本次 AI 结果已取消');
       store.externalPut(aiReviewNamespace(profile), key + ':' + record.id, record);
       result = record;
     } else if (/^\/problems\/[^/]+\/ai-reviews\/[^/]+$/.test(route) && method === 'DELETE') {
@@ -402,7 +414,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const review = contestReviewSchema.parse(body);
       store.put('contest_reviews', h, String(id), review);
       result = review;
-    } else if (route === '/statistics' && method === 'GET')
+    } else if (route === '/statistics/monthly' && method === 'GET') result = monthlyReport(store, Object.fromEntries(url.searchParams));
+    else if (route === '/statistics' && method === 'GET')
       result = store.combinedStatistics(
         z
           .object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') })

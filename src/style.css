@@ -1478,6 +1478,10 @@ svg {
   font-size: 13px;
   color: #33412a;
 }
+.ai-section-actions {
+  display: flex;
+  gap: 8px;
+}
 .ai-points {
   margin-top: 10px;
   display: flex;
@@ -4034,3 +4038,21 @@ details[open] > :not(summary) {
     padding: 16px;
   }
 }
+.learning-stack { display: grid; gap: 1.2rem; }
+.learning-tabs { flex-wrap: wrap; margin-bottom: 1.5rem; }
+.learning-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 1rem; }
+.learning-card { padding: 1.4rem; overflow-wrap: anywhere; }
+.learning-card h2, .learning-card h3 { margin-top: 0; }
+.learning-controls { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; }
+.learning-controls label { display: grid; gap: .4rem; flex: 1; min-width: 180px; }
+.learning-stack > label { display: grid; gap: .5rem; }
+.learning-checks { display: flex; gap: .8rem; flex-wrap: wrap; }
+.learning-checks label { display: flex; gap: .4rem; align-items: center; }
+.learning-stack input[type=checkbox], .learning-checks input { width: auto; }
+.learning-card pre { white-space: pre-wrap; max-height: 350px; overflow: auto; font-size: .8rem; }
+.learning-graph { padding: 1rem; }
+.learning-graph svg { display: block; width: 100%; min-height: 300px; }
+.learning-graph g { cursor: pointer; }
+.learning-selected { outline: 2px solid #92563a; }
+.learning-table { overflow-x: auto; }
+.learning-card details { margin: .8rem 0; }

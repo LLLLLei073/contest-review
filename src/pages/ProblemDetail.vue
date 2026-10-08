@@ -24,6 +24,7 @@ import {
 } from '../../shared/domain';
 import type { AiReviewRecord } from '../../shared/ai-review';
 import Markdown from '../components/Markdown.vue';
+import LearningProblem from '../components/LearningProblem.vue';
 import { categoryNames } from '../../shared/training';
 import { reviewQualityHints } from '../../shared/training-extras';
 import { usePageReady } from '../pageScene';
@@ -48,7 +49,9 @@ const aiReviews = ref<AiReviewRecord[]>([]),
   aiConfigured = ref(false),
   aiBusy = ref(false),
   aiError = ref(''),
-  aiExpanded = ref<string | null>(null);
+  aiExpanded = ref<string | null>(null),
+  fetchingSubmission = ref(0),
+  selectedSubmission = ref('');
 const aiForm = ref({ code: '', language: 'cpp', verdict: '', focus: '', statement: '' });
 const aiVerdictOptions = [
   'WRONG_ANSWER',
@@ -104,6 +107,45 @@ async function loadAiReviews() {
   } catch {
     // AI 历史读取失败不阻塞复盘笔记
   }
+}
+async function fetchSubmissionCode(submissionId: number) {
+  if (fetchingSubmission.value) return;
+  fetchingSubmission.value = submissionId;
+  error.value = '';
+  aiError.value = '';
+  try {
+    const result = await api<{ code: string; language: string; submissionId: number }>(
+      '/problems/' + encodeURIComponent(key) + '/fetch-submission-code',
+      { submissionId },
+    );
+    aiForm.value.code = result.code;
+    if (result.language) aiForm.value.language = result.language;
+    const submission = data.value?.submissions.find((s) => s.id === submissionId);
+    if (submission?.verdict) aiForm.value.verdict = submission.verdict;
+    tab.value = 'ai';
+    notify('已获取提交代码，可开始 AI 分析');
+  } catch (e) {
+    const message = (e as Error).message;
+    if (tab.value === 'ai') aiError.value = message;
+    else error.value = message;
+  } finally {
+    fetchingSubmission.value = 0;
+    selectedSubmission.value = '';
+  }
+}
+async function copyCode(code: string) {
+  try {
+    await navigator.clipboard.writeText(code);
+    notify('代码已复制');
+  } catch {
+    notify('复制失败，请手动选择代码复制');
+  }
+}
+function fillCode(record: AiReviewRecord) {
+  draft.value.code = record.suggestedCode;
+  if (record.language) draft.value.language = record.language;
+  tab.value = 'notes';
+  notify('已填入代码留档，确认后请保存');
 }
 async function submitAiReview() {
   if (aiBusy.value) return;
@@ -254,6 +296,7 @@ onBeforeRouteLeave(async () => {
               { id: 'submissions', label: '提交记录' },
               { id: 'attempts', label: '重做历史' },
               { id: 'ai', label: 'AI 复盘' },
+              { id: 'learning', label: '学习闭环' },
             ]"
             :key="t.id"
             :class="{ active: tab === t.id }"
@@ -269,6 +312,9 @@ onBeforeRouteLeave(async () => {
           label="题目记录"
           focus-selector=".editor-body h2, .editor-body h3, .editor-body .field-title"
         >
+          <div v-if="tab === 'learning'" class="editor-body">
+            <LearningProblem :problem-key="key" :code="aiForm.code || draft.code" :language="aiForm.language || draft.language" :statement="aiForm.statement" :ai-reviews="aiReviews" />
+          </div>
           <div v-if="tab === 'notes'" class="editor-body">
             <div class="editor-toolbar">
               <span class="subtle small">支持 Markdown · LaTeX · 代码高亮</span
@@ -381,9 +427,17 @@ onBeforeRouteLeave(async () => {
                 >
               </div>
               <time>{{ fullDate(new Date(s.creationTimeSeconds * 1000).toISOString()) }}</time>
+              <button
+                class="small-button"
+                :disabled="!!fetchingSubmission"
+                @click="fetchSubmissionCode(s.id)"
+              >
+                {{ fetchingSubmission === s.id ? '获取中…' : '获取代码并分析' }}
+              </button>
             </div>
           </div>
           <div v-if="tab === 'ai'" class="editor-body">
+            <div class="button-row"><button class="small-button" @click="tab='learning'">经验卡 · 渐进提示 · 对拍 · 迁移检测</button><RouterLink to="/knowledge">检索算法知识</RouterLink></div>
             <p class="subtle small">
               粘贴一段代码，AI
               会分析错误原因、评价思路、生成反例并推荐知识点。结果仅供参考，请结合评测与自己的重做判断。
@@ -395,7 +449,19 @@ onBeforeRouteLeave(async () => {
             <div class="note-field">
               <label for="ai-code"><span>01</span>待分析代码</label>
               <div class="editor-toolbar">
-                <select v-model="aiForm.language" aria-label="代码语言">
+                <select
+                  v-if="data.submissions.length"
+                  v-model="selectedSubmission"
+                  aria-label="从提交记录获取代码"
+                  :disabled="!!fetchingSubmission"
+                  @change="selectedSubmission && fetchSubmissionCode(Number(selectedSubmission))"
+                >
+                  <option value="">从提交记录获取代码…</option>
+                  <option v-for="s in data.submissions" :key="s.id" :value="String(s.id)">
+                    #{{ s.id }} · {{ s.programmingLanguage }} ·
+                    {{ verdictLabel[s.verdict || ''] || s.verdict || '待判' }}
+                  </option></select
+                ><select v-model="aiForm.language" aria-label="代码语言">
                   <option value="cpp">C++</option>
                   <option value="python">Python</option>
                   <option value="java">Java</option>
@@ -493,6 +559,16 @@ onBeforeRouteLeave(async () => {
                     </button>
                   </div>
                   <Markdown v-for="(c, i) in r.counterexamples" :key="i" :text="c" />
+                </section>
+                <section v-if="r.suggestedCode" class="ai-section">
+                  <div class="ai-section-head">
+                    <h3>代码建议</h3>
+                    <div class="ai-section-actions">
+                      <button class="small-button" @click="copyCode(r.suggestedCode)">复制代码</button>
+                      <button class="small-button" @click="fillCode(r)">填入代码留档</button>
+                    </div>
+                  </div>
+                  <Markdown :text="'```' + r.language + '\n' + r.suggestedCode + '\n```'" />
                 </section>
                 <section class="ai-section">
                   <div class="ai-section-head">

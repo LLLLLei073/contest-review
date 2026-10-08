@@ -5,6 +5,31 @@ export const settings = ref<Settings>({ activeHandle: '', handles: [] });
 let settingsRead = 0;
 export const job = ref<SyncJob | null>(null);
 export const toast = ref('');
+export const dataRevision = ref(0);
+let lastLearningSync = '';
+const lastReportSync = new Map<string, string>();
+function learningFeedback(path: string, method: string, data: unknown) {
+  if (method !== 'GET' && path !== '/learning/monthly-report') dataRevision.value++;
+  if (['/atcoder/sync', '/review/batch'].includes(path) && data && typeof data === 'object') {
+    const status = data as { id?: string; status?: string; processed?: number };
+    const signature = `${status.id}:${status.status}:${status.processed}`;
+    if (status.id && ['completed', 'failed', 'interrupted'].includes(status.status ?? '') && lastReportSync.get(path) !== signature) {
+      lastReportSync.set(path, signature);
+      dataRevision.value++;
+    }
+  }
+  const sync = path === '/sync' && data && typeof data === 'object' ? (data as SyncJob) : null;
+  const finished = sync?.status === 'completed' && lastLearningSync !== sync.id;
+  if (finished) lastLearningSync = sync!.id;
+  if (finished) dataRevision.value++;
+  if (
+    finished ||
+    path === '/training/day' ||
+    path === '/training/recent' ||
+    (method !== 'GET' && /\/(attempts|review|transfer-result|diagnose|coach)$/.test(path))
+  )
+    void import('./learning').then((m) => m.checkLearningAgent());
+}
 let timer: ReturnType<typeof setTimeout>;
 export function notify(message: string) {
   toast.value = message;
@@ -16,7 +41,11 @@ export async function api<T>(
   body?: unknown,
   method = body === undefined ? 'GET' : 'POST',
 ): Promise<T> {
-  if (browserMode) return (await import('./browser/api')).browserApi<T>(path, body, method);
+  if (browserMode) {
+    const result = await (await import('./browser/api')).browserApi<T>(path, body, method);
+    learningFeedback(path, method, result);
+    return result;
+  }
   const response = await fetch('/api' + path, {
     method,
     headers: { 'Content-Type': 'application/json', 'X-Review-App': '1' },
@@ -24,6 +53,7 @@ export async function api<T>(
   });
   const data = await response.json();
   if (!response.ok) throw new Error([data.error, ...(data.details || [])].join('；'));
+  learningFeedback(path, method, data);
   return data;
 }
 export async function loadSettings() {

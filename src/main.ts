@@ -15,6 +15,7 @@ const router = createRouter({
     { path: '/contests', component: () => import('./pages/Contests.vue') },
     { path: '/simulation', component: () => import('./pages/Simulation.vue') },
     { path: '/statistics', component: () => import('./pages/Statistics.vue') },
+    { path: '/knowledge', component: () => import('./pages/Knowledge.vue') },
     { path: '/settings', component: () => import('./pages/Settings.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

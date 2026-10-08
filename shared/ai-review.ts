@@ -28,6 +28,7 @@ export const aiReviewResultSchema = z.object({
   counterexamples: z.array(z.string().min(1).max(10000)).max(10),
   knowledgePoints: z.array(z.string().min(1).max(200)).min(1).max(20),
   suggestedReasons: z.array(z.string().min(1).max(80)).max(10).default([]),
+  suggestedCode: z.string().max(50000).default(''),
 });
 export type AiReviewResult = z.infer<typeof aiReviewResultSchema>;
 
@@ -81,7 +82,8 @@ export function buildPrompt(context: AiReviewContext, input: AiReviewInput) {
     '  "knowledgePoints": ["推荐知识点（字符串数组）：为补上这类题需要学习的具体算法/技巧，如「二分答案」「线段树懒标记」"],',
     '  "suggestedReasons": ["建议的错因归类（字符串数组），尽量从以下选项中选取：' +
       reasonOptions.join('、') +
-      '"]',
+      '"],',
+    '  "suggestedCode": "根据正确思路给出的修正代码（纯代码字符串，不要 Markdown 围栏）：若选手思路正确只是实现有 bug，保持其语言与代码风格修复并给出完整代码；若思路错误，用同一语言给出正确思路的完整参考实现。确实无法给出时填空字符串"',
     '}',
     '所有 Markdown 字符串内可以使用代码块（```）与 LaTeX（$…$）。counterexamples 至少给出 1 条，确实无法构造时说明原因。',
   ].join('\n');
@@ -141,7 +143,7 @@ export type FetchLike = (
 }>;
 
 export class AiReviewer {
-  constructor(private fetchImpl: FetchLike = fetch as unknown as FetchLike) {}
+  constructor(private fetchImpl: FetchLike = (url, init) => fetch(url, init as RequestInit)) {}
 
   async complete(config: AiConfig, system: string, user: string, maxTokens = 4000): Promise<string> {
     let response: Awaited<ReturnType<FetchLike>>;
@@ -189,4 +191,90 @@ export class AiReviewer {
     await this.complete(config, '你是一个助手。', '请只回复「连接成功」四个字。', 20);
     return '连接成功';
   }
+}
+
+export type PageFetchLike = (
+  url: string,
+  init?: unknown,
+) => Promise<{
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+}>;
+
+export function submissionUrl(s: {
+  source?: 'cf' | 'atcoder';
+  contestId?: number;
+  contestKey?: string;
+  id: number;
+}): string {
+  if (s.source === 'atcoder') {
+    if (!s.contestKey) throw new Error('该提交缺少比赛标识，无法定位源码页面');
+    return `https://atcoder.jp/contests/${s.contestKey}/submissions/${s.id}`;
+  }
+  const contestId = s.contestId ?? 0;
+  if (!contestId) throw new Error('该提交缺少比赛标识，无法定位源码页面');
+  return `https://codeforces.com/${contestId >= 100000 ? 'gym' : 'contest'}/${contestId}/submission/${s.id}`;
+}
+
+const htmlEscapes: [RegExp, string][] = [
+  [/&lt;/g, '<'],
+  [/&gt;/g, '>'],
+  [/&quot;/g, '"'],
+  [/&#39;/g, "'"],
+  [/&nbsp;/g, ' '],
+  [/&amp;/g, '&'],
+];
+
+export function unescapeHtml(text: string): string {
+  for (const [pattern, value] of htmlEscapes) text = text.replace(pattern, value);
+  return text;
+}
+
+export function extractSubmissionCode(html: string): string {
+  const match =
+    html.match(/<pre id="submission-code"[^>]*>([\s\S]*?)<\/pre>/) ??
+    html.match(/<pre id="program-source-text"[^>]*>([\s\S]*?)<\/pre>/);
+  if (!match) throw new Error('页面中未找到源码，可能已被平台拦截');
+  const code = unescapeHtml(match[1])
+    .replace(/^\r?\n/, '')
+    .replace(/[\s\r\n]+$/, '');
+  if (!code.trim()) throw new Error('页面中的源码为空');
+  return code;
+}
+
+export function mapProgrammingLanguage(raw: string): string {
+  const value = raw.toLowerCase();
+  if (value.includes('c++') || value.includes('gnu c') || value.includes('clang')) return 'cpp';
+  if (value.includes('python') || value.includes('pypy')) return 'python';
+  if (value.includes('java')) return 'java';
+  if (value.includes('javascript') || value.includes('node')) return 'javascript';
+  if (value.includes('rust')) return 'rust';
+  if (/\bgo\b/.test(value)) return 'go';
+  return '';
+}
+
+const pageHeaders = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+};
+
+export async function fetchSubmissionCode(
+  pageFetch: PageFetchLike,
+  submission: Parameters<typeof submissionUrl>[0],
+): Promise<string> {
+  const url = submissionUrl(submission);
+  let response: Awaited<ReturnType<PageFetchLike>>;
+  try {
+    response = await pageFetch(url, { headers: pageHeaders, signal: AbortSignal.timeout(20000) });
+  } catch {
+    throw new Error('无法连接平台，请检查网络后重试');
+  }
+  if (response.status === 403 || response.status === 429)
+    throw new Error(`平台拦截了自动获取，请打开提交页面手动复制代码：${url}`);
+  if (response.status === 404) throw new Error('提交页面不存在，可能已被平台移除');
+  if (!response.ok) throw new Error(`平台返回错误（HTTP ${response.status}），请手动复制代码：${url}`);
+  return extractSubmissionCode(await response.text());
 }

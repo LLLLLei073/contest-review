@@ -164,7 +164,7 @@ test('XCPC report retains notes and old cache on refresh failure; backup v4 rest
   assert.equal(stale.task.status, 'failed');
   assert.equal(stale.report?.fetchedAt, result.report?.fetchedAt);
   const backup = store.backup();
-  assert.equal(backup.version, 7);
+  assert.equal(backup.version, 8);
   const bad = structuredClone(backup);
   bad.external.find((r) => r.key === 'report:round_one')!.value = {};
   assert.throws(() => store.restore(bad));

@@ -73,6 +73,7 @@ const navigation = [
   { to: '/problems', label: '错题库', icon: Library },
   { to: '/contests', label: '比赛复盘', icon: Flag },
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
+  { to: '/knowledge', label: '知识中心', icon: Library },
   { to: '/settings', label: '设置与数据', icon: Settings2 },
 ];
 const initError = ref('');
@@ -210,9 +211,11 @@ onUnmounted(() => {
                   ? 'CF 模拟赛'
                   : $route.path === '/statistics'
                     ? '训练统计'
-                    : $route.path === '/settings'
-                      ? '设置与数据'
-                      : '今日题单'
+                    : $route.path === '/knowledge'
+                      ? '知识中心'
+                      : $route.path === '/settings'
+                        ? '设置与数据'
+                        : '今日题单'
           }}</b>
         </div>
         <RouterLink to="/settings" class="profile-chip"

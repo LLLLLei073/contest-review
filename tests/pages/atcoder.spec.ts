@@ -149,6 +149,6 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
       .path()
       .then(async (path) => (await import('node:fs/promises')).readFile(path, 'utf8')),
   );
-  expect(backup.version).toBe(7);
+  expect(backup.version).toBe(8);
   expect(backup.activeAtcoder).toBe('alice');
 });

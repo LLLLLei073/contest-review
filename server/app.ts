@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import { LearningService } from '../shared/learning-service.js';
+import { monthlyReport } from '../shared/monthly-report.js';
 import staticPlugin from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -15,11 +17,14 @@ import {
   aiReviewInputSchema,
   aiReviewRecordSchema,
   aiReviewNamespace,
+  fetchSubmissionCode,
+  mapProgrammingLanguage,
   maskApiKey,
   AI_CONFIG_KEY,
   AI_CONFIG_NAMESPACE,
   type AiConfig,
   type FetchLike,
+  type PageFetchLike,
 } from '../shared/ai-review.js';
 import type { XcpcClient } from '../shared/xcpc.js';
 import {
@@ -41,6 +46,7 @@ export async function buildApp(
     xcpc?: XcpcClient;
     atcoder?: AtcoderClientLike;
     aiFetch?: FetchLike;
+    pageFetch?: PageFetchLike;
   } = {},
 ) {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 100 * 1024 * 1024 });
@@ -50,6 +56,12 @@ export async function buildApp(
   const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc, atcoder);
   const training = new TrainingService(store, cf);
   const aiReviewer = new AiReviewer(options.aiFetch);
+  const learning = new LearningService(store, aiReviewer);
+  app.route<{ Params: { action: string } }>({
+    method: ['GET', 'POST'],
+    url: '/api/learning/:action',
+    handler: async (req) => learning.route(req.params.action, req.method, req.body),
+  });
   const aiConfig = (): AiConfig | null => {
     const raw = store.externalGet(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY);
     if (!raw) return null;
@@ -405,6 +417,23 @@ export async function buildApp(
   app.post<{ Params: { key: string } }>('/api/problems/:key/attempts', async (req) =>
     store.attempt(store.profileForKey(req.params.key), req.params.key, attemptSchema.parse(req.body)),
   );
+  app.post<{ Params: { key: string } }>('/api/problems/:key/fetch-submission-code', async (req) => {
+    const { submissionId } = z.object({ submissionId: z.number().int().positive() }).parse(req.body);
+    const profile = store.profileForKey(req.params.key);
+    const detail = store.detail(profile, req.params.key);
+    if (!detail) throw new Error('题目不存在');
+    const submission = detail.submissions.find((s) => s.id === submissionId);
+    if (!submission) throw new Error('该提交不属于此题目');
+    const code = await fetchSubmissionCode(
+      options.pageFetch ?? (fetch as unknown as PageFetchLike),
+      submission,
+    );
+    return {
+      code,
+      language: mapProgrammingLanguage(submission.programmingLanguage),
+      submissionId,
+    };
+  });
   app.get<{ Params: { key: string } }>('/api/problems/:key/ai-reviews', async (req) =>
     store.externalAllPrefix(aiReviewNamespace(store.profileForKey(req.params.key)), req.params.key + ':'),
   );
@@ -415,6 +444,7 @@ export async function buildApp(
     const detail = store.detail(profile, req.params.key);
     if (!detail) throw new Error('题目不存在');
     const input = aiReviewInputSchema.parse(req.body);
+    const epoch = store.learningEpoch;
     const result = await aiReviewer.review(
       config,
       { problem: detail.problem, submissions: detail.submissions },
@@ -430,6 +460,7 @@ export async function buildApp(
       createdAt: new Date().toISOString(),
       code: input.code,
     });
+    if (epoch !== store.learningEpoch) throw new Error('账号或数据已变化，本次 AI 结果已取消');
     store.externalPut(aiReviewNamespace(profile), req.params.key + ':' + record.id, record);
     return record;
   });
@@ -463,6 +494,7 @@ export async function buildApp(
       z.object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') }).parse(req.query).source,
     ),
   );
+  app.get('/api/statistics/monthly', async (req) => monthlyReport(store, req.query));
   app.get('/api/backup', async (req, reply) => {
     idle();
     return reply

@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
+import { learningRecordSchema, type LearningRecord } from './learning-domain.js';
+import { knowledgeCards } from './knowledge.js';
+import { fingerprint } from './learning-domain.js';
 import { chooseWeeklyProblems, weekStart, weeklyGoalSchema, type WeeklyGoal } from './weekly.js';
 import {
   upsolveSchema,
@@ -171,6 +175,7 @@ const backupSchema = z.object({
     z.literal(5),
     z.literal(6),
     z.literal(7),
+    z.literal(8),
   ]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
@@ -216,6 +221,7 @@ export interface DatabaseLike {
   };
 }
 export class CoreStore {
+  learningEpoch = 0;
   constructor(
     public db: DatabaseLike,
     private beforeRestore?: (backup: unknown) => string | null,
@@ -333,6 +339,8 @@ export class CoreStore {
     );
   }
   setSetting(key: string, value: string) {
+    if (['active', 'atcoder-active', 'xcpc-active'].includes(key) && this.setting(key) !== value)
+      this.learningEpoch++;
     this.db
       .prepare(
         'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
@@ -388,6 +396,7 @@ export class CoreStore {
   }
   activate(handle: string) {
     handleSchema.parse(handle);
+    if (this.active() !== handle) this.learningEpoch++;
     this.transaction(() => {
       this.db.prepare('INSERT OR IGNORE INTO profiles(handle) VALUES(?)').run(handle);
       this.db
@@ -1374,9 +1383,20 @@ export class CoreStore {
   }
   attempt(h: string, key: string, input: AttemptInput, now = new Date()) {
     const data = attemptSchema.parse(input);
+    const previous = this.all<Attempt>('attempts', h)
+      .filter((a) => a.problemKey === key)
+      .at(-1);
     if (!this.get('problems', h, key)) throw new Error('题目不存在');
     this.reconcileAcceptedRedo(h, localDay(now));
     const current = this.review(h, key);
+    const currentRedoDay = current.awaitingEvaluation?.date ?? localDay(now);
+    const hinted = this.externalAll<LearningRecord>('learning-source:' + h).some(
+      (r) =>
+        r.kind === 'hint' &&
+        r.problemKey === key &&
+        r.session === currentRedoDay + ':' + (previous?.id ?? 'first'),
+    );
+    if (hinted && data.result === 'independent') data.result = 'hint';
     if (current.status === 'mastered' || current.ignored) throw new Error('此题未处于复习流程');
     if (current.lastEvaluatedDay === localDay(now)) throw new Error('今天已评价过这道题');
     if (data.result === 'independent' && !current.awaitingEvaluation)
@@ -1642,7 +1662,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 7,
+      version: 8,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
@@ -1734,7 +1754,82 @@ export class CoreStore {
         const profile = row.namespace.slice(row.namespace.indexOf(':') + 1);
         if (!data.profiles.includes(profile)) throw new Error('备份训练数据账号不一致');
       }
-      if (row.namespace === 'atcoder-meta' && row.key === 'catalog')
+      if (row.namespace.startsWith('learning-xcpc:')) {
+        const player = row.namespace.slice('learning-xcpc:'.length),
+          record = learningRecordSchema.parse(row.value);
+        if (
+          !external.some((r) => r.namespace === 'player' && r.key === player) ||
+          record.kind !== 'coach' ||
+          !record.contestKey.startsWith('xcpc:') ||
+          record.id !== row.key
+        )
+          throw new Error('学习比赛报告账号不一致');
+        row.value = record;
+      } else if (row.namespace.startsWith('learning:') || row.namespace.startsWith('learning-source:')) {
+        const parts = row.namespace.split(':');
+        const owners = row.namespace.startsWith('learning-source:')
+          ? parts.slice(1)
+          : parts.slice(1).filter((p) => p !== '-');
+        if (
+          (row.namespace.startsWith('learning:') && parts.length !== 3) ||
+          (row.namespace.startsWith('learning-source:') && parts.length !== 2) ||
+          owners.some((p) => !data.profiles.includes(p))
+        )
+          throw new Error('学习数据账号不一致');
+        const record = learningRecordSchema.parse(row.value);
+        if (
+          !owners.length ||
+          (row.namespace.startsWith('learning:') &&
+            ((parts[1] !== '-' && parts[1].startsWith('ac~')) ||
+              (parts[2] !== '-' && !parts[2].startsWith('ac~'))))
+        )
+          throw new Error('学习账号组合不一致');
+        if (row.namespace.startsWith('learning-source:') !== ['card', 'hint', 'bundle'].includes(record.kind))
+          throw new Error('学习记录存储分区不一致');
+        if (record.id !== row.key) throw new Error('学习记录编号不一致');
+        if (
+          'problemKey' in record &&
+          !data.tables.problems.some((p) => owners.includes(p.profile) && p.key === record.problemKey)
+        )
+          throw new Error('学习记录缺少关联题目');
+        if (
+          'knowledgeIds' in record &&
+          record.knowledgeIds.some((id) => !knowledgeCards.some((k) => k.id === id))
+        )
+          throw new Error('学习记录关联未知知识点');
+        if (
+          record.kind === 'bundle' &&
+          (fingerprint(record.code) !== record.codeHash ||
+            record.reports.some((r) => r.bundleId !== record.id || r.codeHash !== record.codeHash))
+        )
+          throw new Error('对拍代码快照不一致');
+        if (
+          record.kind === 'transfer' &&
+          !data.tables.catalog_cache.some(
+            (c) =>
+              c.profile === parts[1] && (c.value as Catalog).problems.some((p) => p.key === record.targetKey),
+          )
+        )
+          throw new Error('迁移任务缺少关联题库');
+        if (record.kind === 'revision') {
+          record.before = dailyPlanSchema.parse(record.before);
+          record.after = dailyPlanSchema.parse(record.after);
+          if (record.before.date !== record.date || record.after.date !== record.date)
+            throw new Error('计划版本日期不一致');
+        }
+        row.value = record;
+      } else if (row.namespace === 'ai' && row.key === 'config') row.value = aiConfigSchema.parse(row.value);
+      else if (row.namespace.startsWith('ai-review:')) {
+        const owner = row.namespace.slice('ai-review:'.length),
+          record = aiReviewRecordSchema.parse(row.value);
+        if (
+          !data.profiles.includes(owner) ||
+          row.key !== record.problemKey + ':' + record.id ||
+          !data.tables.problems.some((p) => p.profile === owner && p.key === record.problemKey)
+        )
+          throw new Error('AI 留档关联不一致');
+        row.value = record;
+      } else if (row.namespace === 'atcoder-meta' && row.key === 'catalog')
         row.value = atcoderCatalogSchema.parse(row.value);
       else if (row.namespace.startsWith('daily:')) row.value = dailyPlanSchema.parse(row.value);
       else if (row.namespace.startsWith('weekly:')) {
@@ -1904,6 +1999,7 @@ export class CoreStore {
           this.put(t, row.profile, row.key, row.value);
         }
     });
+    this.learningEpoch++;
     return { backupPath };
   }
 }

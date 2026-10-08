@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../server/store.js';
 import { buildApp } from '../server/app.js';
-import { maskApiKey, parseAiReviewText, type AiReviewRecord, type FetchLike } from '../shared/ai-review.js';
+import {
+  extractSubmissionCode,
+  maskApiKey,
+  parseAiReviewText,
+  type AiReviewRecord,
+  type FetchLike,
+  type PageFetchLike,
+} from '../shared/ai-review.js';
 import type { CFClient } from '../server/sync.js';
 
 const noopCf: CFClient = {
@@ -17,6 +24,7 @@ const aiResult = {
   counterexamples: ['输入：\n```\n1\n1\n```\n正确输出 1，代码输出 0'],
   knowledgePoints: ['边界处理', '贪心正确性证明'],
   suggestedReasons: ['边界遗漏'],
+  suggestedCode: 'int main() { /* fixed */ return 0; }',
 };
 function fakeAi(responder: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>): {
   fetch: FetchLike;
@@ -116,6 +124,7 @@ test('AI review API: config lifecycle, masked key, review storage and errors', a
   assert.equal(record.problemKey, key);
   assert.equal(record.model, 'deepseek-chat');
   assert.equal(record.counterexamples.length, 1);
+  assert.equal(record.suggestedCode, 'int main() { /* fixed */ return 0; }');
   assert.ok(calls[0].startsWith('https://api.deepseek.com/v1/chat/completions'));
 
   const list = await app.inject({ url: `/api/problems/${encoded}/ai-reviews`, headers });
@@ -160,4 +169,101 @@ test('AI review API maps provider errors to Chinese messages', async () => {
   assert.match(denied.json().error, /密钥无效/);
   await app.close();
   s.close();
+});
+
+test('extractSubmissionCode handles AtCoder and Codeforces markup', () => {
+  const atcoder = `<html><body><pre id="submission-code" data-ace-mode="c_cpp">#include &lt;bits/stdc++.h&gt;
+using namespace std;
+int main() { cout &lt;&lt; &quot;hi&quot; &lt;&lt; &#39;!&#39;; }
+</pre></body></html>`;
+  assert.equal(
+    extractSubmissionCode(atcoder),
+    '#include <bits/stdc++.h>\nusing namespace std;\nint main() { cout << "hi" << \'!\'; }',
+  );
+  const cf = `<pre id="program-source-text" class="prettyprint lang-cpp">int main() { return 0; }</pre>`;
+  assert.equal(extractSubmissionCode(cf), 'int main() { return 0; }');
+  assert.throws(() => extractSubmissionCode('<html>no code</html>'), /未找到源码/);
+});
+
+test('old AI review results without suggestedCode still parse', () => {
+  const legacy: Record<string, unknown> = { ...aiResult };
+  delete legacy.suggestedCode;
+  const parsed = parseAiReviewText(JSON.stringify(legacy));
+  assert.equal(parsed.suggestedCode, '');
+});
+
+test('fetch-submission-code route extracts code and degrades gracefully', async () => {
+  const s = new Store(':memory:');
+  s.activate('tester');
+  s.ingest('tester', [
+    {
+      id: 42,
+      contestId: 2000,
+      creationTimeSeconds: 1700000000,
+      problem: { contestId: 2000, index: 'B', name: 'Manual problem', tags: ['greedy'] },
+      verdict: 'WRONG_ANSWER',
+      programmingLanguage: 'GNU C++20',
+      author: { participantType: 'CONTESTANT' },
+    },
+  ]);
+  const pageFetch = (async (url: string) => {
+    assert.ok(url.includes('codeforces.com/contest/2000/submission/42'));
+    return {
+      ok: true,
+      status: 200,
+      text: async () => '<pre id="program-source-text">int main() { /* bug */ }</pre>',
+    };
+  }) as unknown as PageFetchLike;
+  const { app } = await buildApp(s, noopCf, {
+    aiFetch: fakeAi(okResponder).fetch,
+    pageFetch,
+  });
+  const fetched = await app.inject({
+    method: 'POST',
+    url: '/api/problems/2000%3AB/fetch-submission-code',
+    headers,
+    payload: { submissionId: 42 },
+  });
+  assert.equal(fetched.statusCode, 200);
+  assert.equal(fetched.json().code, 'int main() { /* bug */ }');
+  assert.equal(fetched.json().language, 'cpp');
+
+  const wrongId = await app.inject({
+    method: 'POST',
+    url: '/api/problems/2000%3AB/fetch-submission-code',
+    headers,
+    payload: { submissionId: 999 },
+  });
+  assert.equal(wrongId.statusCode, 400);
+  assert.match(wrongId.json().error, /不属于此题目/);
+  await app.close();
+  s.close();
+
+  const s2 = new Store(':memory:');
+  s2.activate('tester');
+  s2.ingest('tester', [
+    {
+      id: 43,
+      contestId: 2000,
+      creationTimeSeconds: 1700000000,
+      problem: { contestId: 2000, index: 'B', name: 'Manual problem', tags: ['greedy'] },
+      verdict: 'WRONG_ANSWER',
+      programmingLanguage: 'GNU C++20',
+      author: { participantType: 'CONTESTANT' },
+    },
+  ]);
+  const blocked = await buildApp(s2, noopCf, {
+    pageFetch: (async () => ({ ok: false, status: 403, text: async () => '' })) as PageFetchLike,
+  });
+  const denied = await blocked.app.inject({
+    method: 'POST',
+    url: '/api/problems/2000%3AB/fetch-submission-code',
+    headers,
+    payload: { submissionId: 43 },
+  });
+  assert.equal(denied.statusCode, 400);
+  assert.match(denied.json().error, /手动复制代码/);
+  assert.match(denied.json().error, /codeforces\.com/);
+  await blocked.app.close();
+  s2.close();
 });

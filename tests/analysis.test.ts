@@ -222,7 +222,7 @@ test('schema v1 migrates non-destructively; v1-v4 backups roundtrip; corrupt cac
   const s = seeded();
   s.put('analysis_cache', 'tester', '9000', analysisCacheSchema.parse(fixtureInput().cache));
   const v4 = s.backup();
-  assert.equal(v4.version, 7);
+  assert.equal(v4.version, 8);
   s.restore(v4);
   assert.deepEqual(s.backup().tables, v4.tables);
   const bad = structuredClone(v4);
