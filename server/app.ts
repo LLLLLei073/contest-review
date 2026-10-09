@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import { Readable } from 'node:stream';
+import { AgentService } from '../shared/agent-service.js';
 import { growthRoute } from '../shared/growth.js';
 import { LearningService } from '../shared/learning-service.js';
 import { monthlyReport } from '../shared/monthly-report.js';
@@ -17,7 +19,6 @@ import {
   AiReviewer,
   aiConfigSchema,
   aiReviewInputSchema,
-  aiReviewRecordSchema,
   aiReviewNamespace,
   fetchSubmissionCode,
   mapProgrammingLanguage,
@@ -59,6 +60,29 @@ export async function buildApp(
   const training = new TrainingService(store, cf);
   const aiReviewer = new AiReviewer(options.aiFetch);
   const learning = new LearningService(store, aiReviewer);
+  const agent = new AgentService(store, options.aiFetch);
+  app.post('/api/agent/run', (req, reply) =>
+    reply
+      .type('application/x-ndjson')
+      .header('Cache-Control', 'no-store')
+      .send(
+        Readable.from(
+          (async function* () {
+            try {
+              for await (const event of agent.run(req.body)) yield JSON.stringify(event) + '\n';
+            } catch (error) {
+              yield JSON.stringify({ type: 'error', text: (error as Error).message }) + '\n';
+            }
+          })(),
+        ),
+      ),
+  );
+  app.route<{ Params: { action: string } }>({
+    method: ['GET', 'POST', 'PUT', 'DELETE'],
+    url: '/api/agent/:action',
+    handler: async (req) =>
+      agent.route(req.params.action, req.method, req.body, req.query as Record<string, string>),
+  });
   app.route<{ Params: { action: string } }>({
     method: ['GET', 'PUT'],
     url: '/api/growth/:action',
@@ -156,6 +180,11 @@ export async function buildApp(
     const config = aiConfig();
     if (!config) throw new Error('请先保存 AI 配置');
     return { ok: true, message: await aiReviewer.test(config) };
+  });
+  app.post('/api/ai/capabilities', async () => {
+    const config = aiConfig();
+    if (!config) throw new Error('请先保存 AI 配置');
+    return aiReviewer.capabilities(config);
   });
   app.get('/api/review/contests', async () =>
     [...hub.rows(), ...atcoder.contests()].sort(
@@ -446,31 +475,7 @@ export async function buildApp(
     store.externalAllPrefix(aiReviewNamespace(store.profileForKey(req.params.key)), req.params.key + ':'),
   );
   app.post<{ Params: { key: string } }>('/api/problems/:key/ai-reviews', async (req) => {
-    const config = aiConfig();
-    if (!config) throw new Error('请先在「设置与数据」中配置 AI 服务');
-    const profile = store.profileForKey(req.params.key);
-    const detail = store.detail(profile, req.params.key);
-    if (!detail) throw new Error('题目不存在');
-    const input = aiReviewInputSchema.parse(req.body);
-    const epoch = store.learningEpoch;
-    const result = await aiReviewer.review(
-      config,
-      { problem: detail.problem, submissions: detail.submissions },
-      input,
-    );
-    const record = aiReviewRecordSchema.parse({
-      ...result,
-      id: crypto.randomUUID(),
-      problemKey: req.params.key,
-      language: input.language,
-      verdict: input.verdict,
-      model: config.model,
-      createdAt: new Date().toISOString(),
-      code: input.code,
-    });
-    if (epoch !== store.learningEpoch) throw new Error('账号或数据已变化，本次 AI 结果已取消');
-    store.externalPut(aiReviewNamespace(profile), req.params.key + ':' + record.id, record);
-    return record;
+    return agent.task('review', { ...aiReviewInputSchema.parse(req.body), problemKey: req.params.key });
   });
   app.delete<{ Params: { key: string; id: string } }>('/api/problems/:key/ai-reviews/:id', async (req) => {
     store.externalDelete(

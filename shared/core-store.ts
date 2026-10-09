@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { growthRecordSchema } from './growth-domain.js';
 import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
+import { agentRecordSchema } from './agent-domain.js';
 import { learningRecordSchema, type LearningRecord } from './learning-domain.js';
 import { knowledgeCards } from './knowledge.js';
 import { fingerprint } from './learning-domain.js';
@@ -175,6 +176,7 @@ const backupSchema = z.object({
     z.literal(6),
     z.literal(7),
     z.literal(8),
+    z.literal(9),
   ]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
@@ -1660,7 +1662,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 8,
+      version: 9,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
@@ -1735,6 +1737,47 @@ export class CoreStore {
       const id = `${row.namespace}\0${row.key}`;
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
+      if (row.namespace.startsWith('agent:')) {
+        const parts = row.namespace.split(':');
+        if (
+          parts.length !== 3 ||
+          (parts[1] === '-' && parts[2] === '-') ||
+          (parts[1] !== '-' && (parts[1].startsWith('ac~') || !data.profiles.includes(parts[1]))) ||
+          (parts[2] !== '-' && (!parts[2].startsWith('ac~') || !data.profiles.includes(parts[2])))
+        )
+          throw new Error('智能体账号组合不一致');
+        const record = agentRecordSchema.parse(row.value);
+        if (record.id !== row.key) throw new Error('智能体记录编号不一致');
+        if (
+          'sessionId' in record &&
+          !external.some(
+            (x) =>
+              x.namespace === row.namespace &&
+              x.key === record.sessionId &&
+              (x.value as { kind?: string }).kind === 'session',
+          )
+        )
+          throw new Error('智能体记录缺少会话');
+        if (record.kind === 'session') {
+          const ctx = record.context;
+          if (
+            ctx.kind === 'problem' &&
+            !data.tables.problems.some(
+              (x) => [parts[1], parts[2]].includes(x.profile) && x.key === ctx.problemKey,
+            )
+          )
+            throw new Error('智能体会话题目归属不一致');
+          if (
+            ctx.kind === 'contest' &&
+            ctx.source === 'xcpc' &&
+            !external.some((x) => x.namespace === 'player' && x.key === record.xcpc)
+          )
+            throw new Error('智能体比赛身份不一致');
+        }
+        if (record.kind === 'proposal' && record.status === 'pending') record.status = 'expired';
+        if (record.kind === 'run' && record.status === 'running') record.status = 'cancelled';
+        row.value = record;
+      }
       if (row.namespace.startsWith('growth:')) {
         const parts = row.namespace.split(':');
         if (
@@ -1867,6 +1910,7 @@ export class CoreStore {
       else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('review:'))
         row.value = contestReviewSchema.parse(row.value);
       else if (row.namespace.startsWith('growth:')) row.value = growthRecordSchema.parse(row.value);
+      else if (row.namespace.startsWith('agent:')) row.value = agentRecordSchema.parse(row.value);
       else row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
     }
     if (data.xcpcActive && !externalKeys.has(`player\0${data.xcpcActive}`))

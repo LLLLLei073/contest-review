@@ -1,0 +1,378 @@
+.astra-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.astra-layout:has(.astra-memory) {
+  grid-template-columns: 210px minmax(0, 1fr) 260px;
+}
+.astra-sessions,
+.astra-memory {
+  padding: 20px;
+  min-width: 0;
+}
+.astra-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.astra-profile > div {
+  display: grid;
+  gap: 6px;
+}
+.astra-profile img {
+  width: 55px;
+  height: 68px;
+  object-fit: cover;
+  object-position: 50% 15%;
+}
+.astra-sessions > .button {
+  width: 100%;
+  justify-content: center;
+}
+.astra-session-list {
+  display: grid;
+  gap: 7px;
+  max-height: 340px;
+  overflow: auto;
+  margin: 16px 0;
+}
+.astra-session-list .button {
+  display: grid;
+  text-align: left;
+  justify-content: start;
+  white-space: normal;
+}
+.astra-session-list small {
+  color: var(--muted);
+}
+.astra-dialog {
+  min-width: 0;
+  overflow: hidden;
+}
+.astra-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.astra-dialog-header .terminal-tag {
+  margin-left: auto;
+}
+.astra-log {
+  height: clamp(350px, 55vh, 620px);
+  overflow: auto;
+  padding: 26px;
+  overscroll-behavior: contain;
+}
+.astra-welcome {
+  max-width: 560px;
+  margin: 48px auto;
+}
+.astra-welcome h2 {
+  font-size: clamp(23px, 2.5vw, 35px);
+  margin: 20px 0 14px;
+}
+.astra-welcome p {
+  line-height: 1.9;
+  color: var(--muted);
+}
+.astra-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+}
+.astra-message {
+  padding: 18px 20px;
+  margin: 0 0 20px;
+  border: 1px solid var(--line);
+  max-width: 95%;
+  overflow-wrap: anywhere;
+}
+.astra-message.user {
+  margin-left: 8%;
+  background: rgba(83, 210, 224, 0.06);
+}
+.astra-message.assistant {
+  margin-right: 5%;
+  border-left: 2px solid var(--accent);
+}
+.astra-message .terminal-tag {
+  display: block;
+  margin-bottom: 12px;
+}
+.astra-working {
+  color: var(--muted);
+  font-size: 13px;
+}
+.astra-composer {
+  border-top: 1px solid var(--line);
+  padding: 18px 22px;
+}
+.astra-composer textarea,
+.astra-memory textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+}
+.astra-composer > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.astra-composer > div .button {
+  flex-shrink: 0;
+}
+.astra-composer > div > span {
+  min-width: 0;
+}
+.astra-memory h2 {
+  font-size: 18px;
+}
+.astra-memory > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+}
+.astra-memory-item {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+.astra-memory-item > label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.astra-memory-item > div {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.astra-proposal {
+  margin: 0 22px 16px;
+  border: 1px solid var(--line);
+  padding: 14px;
+  background: rgba(237, 191, 110, 0.04);
+}
+.astra-proposal > div {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.astra-proposal pre {
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+}
+.astra-task-log {
+  padding: 8px 22px 16px;
+  font-size: 12px;
+}
+.astra-hero-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  margin: 0 0 8px;
+  color: var(--accent);
+}
+.astra-suggestion {
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.astra-suggestion p {
+  margin: 0;
+  font-size: 13px;
+  flex: 1;
+}
+.astra-suggestion button {
+  flex-shrink: 0;
+}
+.astra-context-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+@media (max-width: 1100px) {
+  .astra-layout:has(.astra-memory) {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+  .astra-memory {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 700px) {
+  .astra-layout,
+  .astra-layout:has(.astra-memory) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .astra-sessions {
+    padding: 12px;
+  }
+  .astra-profile {
+    margin-bottom: 12px;
+  }
+  .astra-profile img {
+    height: 48px;
+    width: 40px;
+  }
+  .astra-session-list {
+    display: flex;
+    max-height: 90px;
+    overflow: auto;
+    margin: 10px 0;
+  }
+  .astra-session-list .button {
+    flex: 0 0 150px;
+  }
+  .astra-dialog-header {
+    padding: 14px;
+  }
+  .astra-log {
+    height: 52vh;
+    padding: 14px;
+  }
+  .astra-welcome {
+    margin: 26px 0;
+  }
+  .astra-message {
+    padding: 14px;
+    max-width: 100%;
+  }
+  .astra-message.user {
+    margin-left: 4%;
+  }
+  .astra-composer {
+    padding: 14px;
+  }
+  .astra-composer > div > span {
+    max-width: 180px;
+    font-size: 11px;
+  }
+  .astra-proposal {
+    margin: 0 14px 12px;
+  }
+  .astra-memory {
+    grid-column: auto;
+  }
+  .astra-suggestion {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .astra-log {
+    scroll-behavior: auto;
+  }
+}
+
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.page-heading h1 {
+  margin: 10px 0;
+}
+.astra-layout .card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--highlight);
+}
+.astra-profile .companion {
+  width: 55px;
+  height: 68px;
+  flex-shrink: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 700px) {
+  .page-heading {
+    align-items: flex-start;
+  }
+  .astra-profile .companion {
+    height: 48px;
+    width: 40px;
+  }
+}
+
+.astra-memory label:has(input[type='checkbox']) {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  text-align: left;
+}
+.astra-memory label input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  padding: 0;
+}
+.astra-sessions .astra-profile .companion {
+  overflow: hidden;
+}
+@media (max-width: 700px) {
+  .astra-sessions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .astra-sessions > .astra-profile {
+    margin: 0;
+  }
+  .astra-sessions > .button.primary {
+    width: auto;
+    padding: 8px 12px;
+  }
+  .astra-session-list {
+    grid-column: 1/-1;
+    max-height: 62px;
+    margin: 0;
+  }
+  .astra-sessions > .button.ghost {
+    width: auto;
+    padding: 7px;
+    font-size: 11px;
+  }
+  .astra-log {
+    height: 38vh;
+    min-height: 230px;
+  }
+}
+
+.growth-hero__status .astra-hero-link {
+  margin: 0;
+  white-space: nowrap;
+}

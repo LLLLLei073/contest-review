@@ -129,6 +129,7 @@ watch(
     <div>
       <div class="eyebrow">LEARN / CONNECT / VERIFY</div>
       <h1>知识中心</h1>
+      <RouterLink class="astra-context-link" to="/companion">与星澪讨论知识</RouterLink>
       <p class="subtle">把每次复盘变成下次能用上的经验。</p>
     </div>
   </div>

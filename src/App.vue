@@ -16,7 +16,8 @@ import {
   Sparkles,
 } from 'lucide-vue-next';
 import { growth, growthNotice, growthError, startGrowth, dismissGrowthNotice } from './growth';
-import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
+import { astraSuggestion, checkAstraSuggestion, dismissAstraSuggestion } from './agent';
+import { loadSettings, loadJob, settings, job, toast, browserMode, dataRevision } from './api';
 import { useSpringValues } from './motion';
 const route = useRoute();
 const navElement = ref<HTMLElement | null>(null);
@@ -45,6 +46,7 @@ const navigation = [
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
   { to: '/knowledge', label: '知识中心', icon: Library },
   { to: '/growth', label: '成长收藏', icon: Orbit },
+  { to: '/companion', label: '星澪伙伴', icon: Sparkles },
   { to: '/settings', label: '设置与数据', icon: Settings2 },
 ];
 const initError = ref('');
@@ -83,7 +85,19 @@ watch(
     }
   },
 );
+let suggestionTimer: ReturnType<typeof setTimeout>;
+watch(
+  [() => route.path, dataRevision, () => settings.value.activeHandle, () => settings.value.activeAtcoder],
+  () => {
+    astraSuggestion.value = null;
+    clearTimeout(suggestionTimer);
+    if (route.path === '/' && (settings.value.activeHandle || settings.value.activeAtcoder))
+      suggestionTimer = setTimeout(() => void checkAstraSuggestion(), 1000);
+  },
+  { immediate: true },
+);
 onUnmounted(() => {
+  clearTimeout(suggestionTimer);
   stopGrowth?.();
   clearInterval(poll);
   navObserver?.disconnect();
@@ -158,9 +172,11 @@ onUnmounted(() => {
                       ? '知识中心'
                       : $route.path === '/growth'
                         ? '成长收藏'
-                        : $route.path === '/settings'
-                          ? '设置与数据'
-                          : '今日训练'
+                        : $route.path === '/companion'
+                          ? '星澪伙伴'
+                          : $route.path === '/settings'
+                            ? '设置与数据'
+                            : '今日训练'
           }}</b>
         </div>
         <RouterLink to="/settings?view=accounts" class="profile-chip"
@@ -191,6 +207,16 @@ onUnmounted(() => {
         <div v-if="initError" class="alert error">
           {{ browserMode ? '无法打开浏览器错题库：' : '无法连接本地服务：' }}{{ initError }}
         </div>
+        <aside
+          v-if="astraSuggestion && route.path === '/'"
+          class="astra-suggestion"
+          aria-label="星澪的学习建议"
+        >
+          <Sparkles :size="17" />
+          <p>{{ astraSuggestion.content }}</p>
+          <RouterLink to="/companion">一起聊聊</RouterLink
+          ><button class="button small" @click="dismissAstraSuggestion">关闭建议</button>
+        </aside>
         <RouterView
           v-if="initialized"
           :key="

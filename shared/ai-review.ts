@@ -143,43 +143,40 @@ export type FetchLike = (
 }>;
 
 export class AiReviewer {
-  constructor(private fetchImpl: FetchLike = (url, init) => fetch(url, init as RequestInit)) {}
+  constructor(private fetchImpl?: FetchLike) {}
 
   async complete(config: AiConfig, system: string, user: string, maxTokens = 4000): Promise<string> {
-    let response: Awaited<ReturnType<FetchLike>>;
     try {
-      response = await this.fetchImpl(config.baseUrl.replace(/\/+$/, '') + '/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: config.model,
-          temperature: 0.2,
-          max_tokens: maxTokens,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-        }),
-        signal: AbortSignal.timeout(120000),
-      });
-    } catch (e) {
-      const message = (e as Error).message || '';
-      if (message.includes('abort') || message.includes('timeout') || message.includes('Timeout'))
-        throw new Error('AI 请求超时，请稍后重试');
-      throw new Error('无法连接 AI 服务：' + (message || '网络错误'));
+      const { astraComplete } = await import('./astra-model.js');
+      return await astraComplete(config, system, user, maxTokens, this.fetchImpl);
+    } catch (error) {
+      const e = error as Error & { status?: number };
+      if (e.status === 401 || e.status === 403) throw new Error('API 密钥无效或已过期');
+      if (e.status === 429) throw new Error('AI 服务请求过于频繁，请稍后重试');
+      if (/abort|timeout/i.test(e.message)) throw new Error('AI 请求超时，请稍后重试');
+      throw new Error(e.message || '无法连接 AI 服务');
     }
-    if (response.status === 401 || response.status === 403) throw new Error('API 密钥无效或已过期');
-    if (response.status === 429) throw new Error('AI 服务请求过于频繁，请稍后重试');
-    if (!response.ok) throw new Error(`AI 服务返回错误（HTTP ${response.status}）`);
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error('AI 返回内容为空，请重试');
-    return content;
+  }
+  async capabilities(config: AiConfig): Promise<{ toolCalling: boolean; message: string }> {
+    const { astraModel } = await import('./astra-model.js');
+    const { tool } = await import('langchain');
+    const probe = tool(() => 'ok', {
+      name: 'astra_probe',
+      description: '连接能力测试',
+      schema: z.object({}),
+    });
+    try {
+      const result = await astraModel(config, this.fetchImpl, 80)
+        .bindTools([probe], { tool_choice: 'astra_probe' })
+        .invoke('请调用 astra_probe', { signal: AbortSignal.timeout(30000) });
+      const supported = result.tool_calls?.some((t) => t.name === 'astra_probe') ?? false;
+      return {
+        toolCalling: supported,
+        message: supported ? '工具调用可用' : '当前模型未返回工具调用，结构化任务仍可用',
+      };
+    } catch {
+      return { toolCalling: false, message: '当前模型不支持工具调用或测试未成功，结构化任务仍可用' };
+    }
   }
 
   async review(config: AiConfig, context: AiReviewContext, input: AiReviewInput): Promise<AiReviewResult> {

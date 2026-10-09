@@ -290,6 +290,9 @@ onBeforeRouteUpdate((to) => {
           }}
         </div>
         <h1>{{ data.problem.name }}</h1>
+        <RouterLink class="astra-context-link" :to="{ path: '/companion', query: { problemKey: key } }"
+          >与星澪一起梳理这道题</RouterLink
+        >
         <div class="detail-meta">
           <span class="rating"
             >{{ data.problem.rating ?? '暂无难度'

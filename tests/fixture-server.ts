@@ -96,6 +96,7 @@ const cf: CFClient = {
   },
 };
 const dir = mkdtempSync(join(tmpdir(), 'contest-review-e2e-'));
+let astraFailureSeen = false;
 const { app } = await buildApp(new Store(join(dir, 'review.sqlite')), cf, {
   aiFetch: async (url, init) => {
     if (url.endsWith('/models'))
@@ -105,6 +106,53 @@ const { app } = await buildApp(new Store(join(dir, 'review.sqlite')), cf, {
         json: async () => ({ data: [{ id: 'fixture-model' }, { id: 'learning-fixture' }] }),
       };
     const request = JSON.parse((init as { body: string }).body);
+    if (request.tools) {
+      const user = String(request.messages.findLast((m: { role: string }) => m.role === 'user')?.content);
+      if (user.includes('暂停测试')) await new Promise((resolve) => setTimeout(resolve, 800));
+      if (user.includes('模拟失败') && !astraFailureSeen) {
+        astraFailureSeen = true;
+        throw new Error('Connection error.');
+      }
+      const change = user.includes('修改复盘');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'astra-fixture',
+          object: 'chat.completion',
+          created: 1,
+          model: 'fixture',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              message:
+                request.messages.at(-1)?.role === 'tool'
+                  ? { role: 'assistant', content: '星澪已查询真实学习记录。我们先讲直觉，再讲证明。' }
+                  : {
+                      role: 'assistant',
+                      content: '',
+                      tool_calls: [
+                        {
+                          id: 'snapshot',
+                          type: 'function',
+                          function: {
+                            name: change ? 'propose_change' : 'learning_snapshot',
+                            arguments: change
+                              ? JSON.stringify({
+                                  action: 'review',
+                                  input: { problemKey: '9900:A', patch: { rootCause: '星澪帮助确认边界' } },
+                                })
+                              : '{}',
+                          },
+                        },
+                      ],
+                    },
+            },
+          ],
+        }),
+      };
+    }
     const result = learningReply(request.messages[0].content, JSON.parse(request.messages[1].content));
     return {
       ok: true,

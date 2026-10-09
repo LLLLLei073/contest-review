@@ -55,6 +55,11 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
+  <RouterLink
+    class="astra-context-link"
+    :to="{ path: '/companion', query: { source: 'xcpc', contestId: props.slug } }"
+    >与星澪复盘这场比赛</RouterLink
+  >
   <section class="auto-report" aria-label="XCPC 比赛报告">
     <div class="report-toolbar">
       <h3>XCPC 来源报告</h3>

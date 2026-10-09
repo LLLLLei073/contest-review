@@ -13,6 +13,7 @@ function learningFeedback(path: string, method: string, data: unknown) {
   if (
     method !== 'GET' &&
     !path.startsWith('/growth/') &&
+    !path.startsWith('/agent/') &&
     !['/learning/monthly-report', '/ai/models'].includes(path)
   )
     dataRevision.value++;

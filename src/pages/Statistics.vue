@@ -81,6 +81,7 @@ onBeforeUnmount(() => {
     <div>
       <div class="eyebrow">PROGRESS, NOT PERFECTION</div>
       <h1>训练统计</h1>
+      <RouterLink class="astra-context-link" to="/companion">请星澪分析学习进展</RouterLink>
       <RouterLink to="/statistics?view=diagnosis">生成 AI 学情诊断</RouterLink>
       <p>找到反复出现的问题，让下一次练习更有方向。</p>
     </div>

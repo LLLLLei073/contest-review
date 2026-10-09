@@ -104,6 +104,9 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
+  <RouterLink class="astra-context-link" :to="{ path: '/companion', query: { month, source: props.source } }"
+    >与星澪解读本月报告</RouterLink
+  >
   <section class="panel monthly-report" aria-label="月度算法报告" :aria-busy="loading">
     <div class="section-head">
       <div>

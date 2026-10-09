@@ -11,7 +11,6 @@ import {
   AiReviewer,
   aiConfigSchema,
   aiReviewInputSchema,
-  aiReviewRecordSchema,
   aiReviewNamespace,
   maskApiKey,
   AI_CONFIG_KEY,
@@ -50,7 +49,19 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   });
   let result: unknown;
   try {
-    if (route.startsWith('/growth/'))
+    if (route.startsWith('/agent/')) {
+      const { AgentService } = await import('../../shared/agent-service');
+      result = await new AgentService(store, undefined, () => runtime.flush()).route(
+        route.slice('/agent/'.length),
+        method,
+        body,
+        Object.fromEntries(url.searchParams),
+      );
+    } else if (route === '/ai/capabilities' && method === 'POST') {
+      const config = aiConfig();
+      if (!config) throw new Error('请先保存 AI 配置');
+      result = await aiReviewer.capabilities(config);
+    } else if (route.startsWith('/growth/'))
       result = growthRoute(
         store,
         route.slice('/growth/'.length),
@@ -198,32 +209,12 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const key = decodeURIComponent(route.split('/')[2]);
       result = store.externalAllPrefix(aiReviewNamespace(store.profileForKey(key)), key + ':');
     } else if (/^\/problems\/[^/]+\/ai-reviews$/.test(route) && method === 'POST') {
-      const config = aiConfig();
-      if (!config) throw new Error('请先在「设置与数据」中配置 AI 服务');
-      const key = decodeURIComponent(route.split('/')[2]),
-        profile = store.profileForKey(key),
-        detail = store.detail(profile, key);
-      if (!detail) throw new Error('题目不存在');
-      const input = aiReviewInputSchema.parse(body);
-      const epoch = store.learningEpoch;
-      const review = await aiReviewer.review(
-        config,
-        { problem: detail.problem, submissions: detail.submissions },
-        input,
-      );
-      const record = aiReviewRecordSchema.parse({
-        ...review,
-        id: crypto.randomUUID(),
+      const { AgentService } = await import('../../shared/agent-service');
+      const key = decodeURIComponent(route.split('/')[2]);
+      result = await new AgentService(store, undefined, () => runtime.flush()).task('review', {
+        ...aiReviewInputSchema.parse(body),
         problemKey: key,
-        language: input.language,
-        verdict: input.verdict,
-        model: config.model,
-        createdAt: new Date().toISOString(),
-        code: input.code,
       });
-      if (epoch !== store.learningEpoch) throw new Error('账号或数据已变化，本次 AI 结果已取消');
-      store.externalPut(aiReviewNamespace(profile), key + ':' + record.id, record);
-      result = record;
     } else if (/^\/problems\/[^/]+\/ai-reviews\/[^/]+$/.test(route) && method === 'DELETE') {
       const key = decodeURIComponent(route.split('/')[2]);
       store.externalDelete(

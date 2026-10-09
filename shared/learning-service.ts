@@ -607,7 +607,9 @@ export class LearningService {
       .slice(0, 80);
   }
   async agent(input: unknown) {
-    const { automatic } = z.object({ automatic: z.boolean().default(false) }).parse(input);
+    const { automatic, preview } = z
+      .object({ automatic: z.boolean().default(false), preview: z.boolean().default(false) })
+      .parse(input);
     if (automatic && !this.records().some((r) => r.kind === 'preferences' && r.auto))
       return { message: '自动调整未开启' };
     if (!this.store.weeklyGoal(this.future())) return { message: '请先选择对应周的训练目标，保留规则题单' };
@@ -645,14 +647,18 @@ export class LearningService {
     const previous = this.records()
       .filter((r) => r.kind === 'agent-run' && r.fingerprint === hash)
       .at(-1);
-    if (previous && !(previous.kind === 'agent-run' && previous.status === 'failed' && !automatic))
+    if (
+      !preview &&
+      previous &&
+      !(previous.kind === 'agent-run' && previous.status === 'failed' && !automatic)
+    )
       return { message: previous.kind === 'agent-run' ? previous.message : '', duplicate: true };
     let running = runners.get(this.store);
     if (!running) {
       running = new Map();
       runners.set(this.store, running);
     }
-    const runKey = ns + ':' + hash;
+    const runKey = ns + ':' + hash + ':' + preview;
     if (running.has(runKey)) return running.get(runKey);
     const task = (async () => {
       this.store.combinedTrainingDay(future);
@@ -708,6 +714,7 @@ export class LearningService {
           reverted: false,
           inputSummary: JSON.stringify(data).slice(0, 50000),
         });
+        if (preview) return revision;
         this.store.transaction(() => {
           this.writePlan(after);
           this.save(revision);
@@ -757,6 +764,40 @@ export class LearningService {
       this.save({ ...r, reverted: true });
     });
     return { ok: true };
+  }
+  applyAgentRevision(input: unknown) {
+    const r = revisionSchema.parse(input);
+    const before = dailyPlanSchema.parse(r.before),
+      after = dailyPlanSchema.parse(r.after);
+    if (r.date <= localDay(new Date()) || fingerprint(this.readPlan(r.date)) !== fingerprint(r.before))
+      throw new Error('未来题单已变化，请重新生成方案');
+    const candidates = this.candidates(r.date, before),
+      goal = this.store.weeklyGoal(new Date(r.date + 'T12:00:00+08:00'));
+    if (
+      !goal ||
+      !r.after.newKeys.length ||
+      new Set(r.after.newKeys).size !== r.after.newKeys.length ||
+      r.after.newKeys.some((k) => !candidates.some((p) => p.key === k))
+    )
+      throw new Error('题单候选已变化');
+    const coverage = candidates.filter((p) =>
+      categories(p.tags).some((c) => goal.categories.includes(c)),
+    ).length;
+    if (
+      r.after.newKeys.filter((k) =>
+        categories(candidates.find((p) => p.key === k)!.tags).some((c) => goal.categories.includes(c)),
+      ).length < Math.min(2, coverage)
+    )
+      throw new Error('题单不满足周目标');
+    const reserved = this.records()
+      .filter((x) => x.kind === 'transfer' && x.date === r.date && x.result === 'pending')
+      .map((x) => (x.kind === 'transfer' ? x.targetKey : ''));
+    if (reserved.some((k) => !r.after.newKeys.includes(k))) throw new Error('题单遗漏迁移任务');
+    this.store.transaction(() => {
+      this.writePlan(after);
+      this.save(r);
+    });
+    return r;
   }
   preferences(input: unknown) {
     const { auto } = z.object({ auto: z.boolean() }).parse(input);
@@ -811,7 +852,13 @@ export class LearningService {
     );
   }
   async transfer(input: unknown) {
-    const { problemKey: original } = keyInput.parse(input),
+    const {
+        problemKey: original,
+        preview,
+        expectedTarget,
+      } = keyInput
+        .extend({ preview: z.boolean().default(false), expectedTarget: z.string().optional() })
+        .parse(input),
       d = this.detail(original),
       knowledgeIds = knowledgeFor(d.problem.tags);
     if (!knowledgeIds.length) throw new Error('缺少可匹配知识点，请先补充题目标签');
@@ -842,6 +889,7 @@ export class LearningService {
     );
     const candidate = pool[0];
     if (!candidate) return { message: '没有未做且未分配的相关变式题，请同步题库或稍后再试' };
+    if (expectedTarget && candidate.key !== expectedTarget) throw new Error('迁移候选已变化，请重新生成方案');
     const goal = this.store.weeklyGoal(future)!;
     const catalog = this.store.get<Catalog>('catalog_cache', this.store.active(), 'current')!;
     const goalMatch = (key: string) =>
@@ -867,6 +915,16 @@ export class LearningService {
       date,
       reason,
     });
+    if (preview)
+      return {
+        record: r,
+        before,
+        after: {
+          ...before,
+          newKeys: nextKeys,
+          newReasons: { ...before.newReasons, [candidate.key]: reason },
+        },
+      };
     this.store.transaction(() => {
       this.writePlan({
         ...before,
@@ -969,18 +1027,33 @@ export class LearningService {
     const report = monthlyReport(this.store, query);
     if (report.fingerprint !== query.fingerprint) throw new Error('月度数据已变化，请刷新报告后重试');
     const priority = ['monthly:', 'contest:', 'reason:', 'problem:', 'attempt:'];
-    const evidence = priority.flatMap((prefix) => report.evidence.filter((e) => e.id.startsWith(prefix))).slice(0, 100);
-    const result = monthlyAiSchema.parse(await this.complete(
-      '解读月度算法报告，返回 {findings:[{title,cause,action,evidenceIds}],warnings:[]}。每条建议必须引用给定 evidence 中的 ID。只使用报告中的数量；各平台 Rating 不合并。首次通过须遵守 firstAcceptedLabel。不把 AC 判为掌握，不推断思考时间。XCPC 仅为队伍证据；缺失信息明确说明。给出下月可执行建议，不生成综合评分。',
-      { month: report.month, source: report.source, metrics: report.metrics, comparison: report.comparison,
-        firstAcceptedLabel: report.firstAcceptedLabel, evidence, warnings: report.warnings },
-    ));
+    const evidence = priority
+      .flatMap((prefix) => report.evidence.filter((e) => e.id.startsWith(prefix)))
+      .slice(0, 100);
+    const result = monthlyAiSchema.parse(
+      await this.complete(
+        '解读月度算法报告，返回 {findings:[{title,cause,action,evidenceIds}],warnings:[]}。每条建议必须引用给定 evidence 中的 ID。只使用报告中的数量；各平台 Rating 不合并。首次通过须遵守 firstAcceptedLabel。不把 AC 判为掌握，不推断思考时间。XCPC 仅为队伍证据；缺失信息明确说明。给出下月可执行建议，不生成综合评分。',
+        {
+          month: report.month,
+          source: report.source,
+          metrics: report.metrics,
+          comparison: report.comparison,
+          firstAcceptedLabel: report.firstAcceptedLabel,
+          evidence,
+          warnings: report.warnings,
+        },
+      ),
+    );
     const valid = new Set(evidence.map((e) => e.id));
     if (result.findings.some((f) => f.evidenceIds.some((id) => !valid.has(id))))
       throw new Error('AI 引用了不存在的月度证据，请重试');
     if (monthlyReport(this.store, query).fingerprint !== report.fingerprint)
       throw new Error('月度数据已变化，本次 AI 解读已取消');
-    return { ...result, warnings: [...new Set([...report.warnings, ...result.warnings])], fingerprint: report.fingerprint };
+    return {
+      ...result,
+      warnings: [...new Set([...report.warnings, ...result.warnings])],
+      fingerprint: report.fingerprint,
+    };
   }
   async route(action: string, method: string, input: unknown = {}) {
     if (method === 'GET' && action === 'state') return this.state();

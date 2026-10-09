@@ -118,6 +118,18 @@ async function testAi() {
     aiBusy.value = false;
   }
 }
+async function testTools() {
+  aiBusy.value = true;
+  aiTestResult.value = '';
+  try {
+    const r = await api<{ message: string }>('/ai/capabilities', {});
+    aiTestResult.value = r.message;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    aiBusy.value = false;
+  }
+}
 async function loadAtcoder() {
   const data = await api<{ job: SyncJob | null; verified: boolean; verifiedBy: string }>('/atcoder/binding');
   atcoderJob.value = data.job;
@@ -682,6 +694,9 @@ async function restore() {
                 @click="testAi"
               >
                 {{ aiBusy ? '请求中…' : '保存并测试连接' }}
+              </button>
+              <button type="button" :disabled="aiBusy || !aiConfigured" @click="testTools">
+                测试工具调用能力
               </button>
             </div>
           </form>

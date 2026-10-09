@@ -4,6 +4,8 @@
 
 界面采用二次元科幻终端风，提供原创学习伙伴与成长收藏。首次 AC、重做和有效复盘获得可追溯经验，点亮成就并解锁外观与配色；成长等级与算法掌握度分别记录。规则、接口与素材说明见 [成长系统说明](docs/terminal-growth.md)。
 
+学习伙伴「星澪」通过 LangChain 提供对话、工具调用和学习任务，保留原有 AI 按钮；支持账号隔离的会话与可管理记忆，涉及覆盖或变更的操作先预览再确认。配置、权限、接口和验证说明见 [星澪智能体说明](docs/astra-agent.md)。
+
 ## 在线使用（GitHub Pages）
 
 访问 **https://lllllei073.github.io/contest-review/**，无需安装 Node.js 或启动后端。可绑定 CF handle、XCPC Rating 选手，或同时使用两者。

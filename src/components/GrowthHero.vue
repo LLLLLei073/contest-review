@@ -19,6 +19,8 @@ const progress = computed(() =>
         <div class="growth-hero__status">
           <span class="level-mark">Lv.{{ growth.level }}</span
           ><span>{{ growth.xp }} <small>EXP</small></span
+          ><RouterLink class="astra-hero-link" to="/companion"
+            >星澪对话 <ArrowUpRight :size="14" /></RouterLink
           ><RouterLink to="/growth">成长收藏 <ArrowUpRight :size="15" /></RouterLink>
         </div>
         <div
