@@ -2,6 +2,8 @@
 
 个人使用、本地存储的算法竞赛复盘系统。导入 Codeforces 和 AtCoder 公开提交，保留失败题目并安排重做；也可独立绑定 XCPC Rating 选手，将公开比赛成绩汇入比赛复盘。
 
+界面采用二次元科幻终端风，提供原创学习伙伴与成长收藏。首次 AC、重做和有效复盘获得可追溯经验，点亮成就并解锁外观与配色；成长等级与算法掌握度分别记录。规则、接口与素材说明见 [成长系统说明](docs/terminal-growth.md)。
+
 ## 在线使用（GitHub Pages）
 
 访问 **https://lllllei073.github.io/contest-review/**，无需安装 Node.js 或启动后端。可绑定 CF handle、XCPC Rating 选手，或同时使用两者。

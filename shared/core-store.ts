@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { growthRecordSchema } from './growth-domain.js';
 import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
 import { learningRecordSchema, type LearningRecord } from './learning-domain.js';
 import { knowledgeCards } from './knowledge.js';
@@ -418,8 +419,7 @@ export class CoreStore {
       awaitingEvaluation: old.awaitingEvaluation,
       lastEvaluatedDay: old.lastEvaluatedDay,
     });
-    if (old.firstReflectionRequired && old.firstRedoAt && !old.firstReflectionAt && hasReflection(next))
-      next.firstReflectionAt = new Date().toISOString();
+    if (!old.firstReflectionAt && hasReflection(next)) next.firstReflectionAt = new Date().toISOString();
     this.put('reviews', h, key, next);
     if (next.reasons.length && JSON.stringify(old.reasons) !== JSON.stringify(next.reasons)) {
       const savedAt = new Date().toISOString();
@@ -1735,6 +1735,19 @@ export class CoreStore {
       const id = `${row.namespace}\0${row.key}`;
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
+      if (row.namespace.startsWith('growth:')) {
+        const parts = row.namespace.split(':');
+        if (
+          parts.length !== 3 ||
+          (parts[1] === '-' && parts[2] === '-') ||
+          (parts[1] !== '-' && (parts[1].startsWith('ac~') || !data.profiles.includes(parts[1]))) ||
+          (parts[2] !== '-' && (!parts[2].startsWith('ac~') || !data.profiles.includes(parts[2])))
+        )
+          throw new Error('成长数据账号不一致');
+        const record = growthRecordSchema.parse(row.value);
+        if (row.key !== record.kind) throw new Error('成长记录类型不一致');
+        row.value = record;
+      }
       if (row.namespace.startsWith('weekly:')) {
         const parts = row.namespace.split(':');
         if (
@@ -1853,6 +1866,7 @@ export class CoreStore {
         row.value = atcoderReportSchema.parse(row.value);
       else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('review:'))
         row.value = contestReviewSchema.parse(row.value);
+      else if (row.namespace.startsWith('growth:')) row.value = growthRecordSchema.parse(row.value);
       else row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
     }
     if (data.xcpcActive && !externalKeys.has(`player\0${data.xcpcActive}`))

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { growthRoute } from '../../shared/growth';
 import { LearningService } from '../../shared/learning-service';
 import { monthlyReport } from '../../shared/monthly-report';
 import { listAiModels } from '../../shared/ai-models';
@@ -49,7 +50,15 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   });
   let result: unknown;
   try {
-    if (route.startsWith('/learning/'))
+    if (route.startsWith('/growth/'))
+      result = growthRoute(
+        store,
+        route.slice('/growth/'.length),
+        method,
+        body,
+        Object.fromEntries(url.searchParams),
+      );
+    else if (route.startsWith('/learning/'))
       result = await new LearningService(store, aiReviewer, () => runtime.flush()).route(
         route.slice('/learning/'.length),
         method,

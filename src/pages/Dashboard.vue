@@ -8,6 +8,7 @@ import { useSection } from '../sections';
 import { useLearningState } from '../learningState';
 const LearningActivity = defineAsyncComponent(() => import('../components/LearningActivity.vue'));
 import WeeklyGoalScene from '../components/WeeklyGoalScene.vue';
+import GrowthHero from '../components/GrowthHero.vue';
 
 const section = useSection(['today', 'training', 'transfers'] as const, 'today');
 const learning = useLearningState();
@@ -208,6 +209,7 @@ watch(
 </script>
 
 <template>
+  <GrowthHero />
   <div class="page-head">
     <div>
       <div class="eyebrow">YOUR DAILY PRACTICE</div>
@@ -216,26 +218,28 @@ watch(
     </div>
     <span class="date-chip"><CalendarDays :size="16" />{{ date }}</span>
   </div>
-  <nav class="content-switcher" aria-label="今日训练内容">
-    <button :class="{ active: section === 'today' }" @click="section = 'today'">今日题单</button>
-    <button :class="{ active: section === 'training' }" @click="section = 'training'">次日计划</button>
-    <button :class="{ active: section === 'transfers' }" @click="section = 'transfers'">
-      迁移练习 {{ pendingTransfers }}
-    </button>
-  </nav>
-  <p v-if="section === 'today' && learning.loading.value" role="status">正在读取训练摘要…</p>
-  <div v-show="section === 'today' && !learning.loading.value" class="training-shortcuts">
-    <RouterLink to="/?view=training"
-      >次日计划：{{
-        latestRevision?.kind === 'revision'
-          ? latestRevision.reverted
-            ? '已撤回'
-            : latestRevision.date + ' 已调整'
-          : '沿用规则推荐'
-      }}
-      →</RouterLink
-    >
-    <RouterLink to="/?view=transfers">待验证迁移 {{ pendingTransfers }} 项 →</RouterLink>
+  <div class="training-navigation">
+    <nav class="content-switcher" aria-label="今日训练内容">
+      <button :class="{ active: section === 'today' }" @click="section = 'today'">今日题单</button>
+      <button :class="{ active: section === 'training' }" @click="section = 'training'">次日计划</button>
+      <button :class="{ active: section === 'transfers' }" @click="section = 'transfers'">
+        迁移练习 {{ pendingTransfers }}
+      </button>
+    </nav>
+    <p v-if="section === 'today' && learning.loading.value" role="status">正在读取训练摘要…</p>
+    <div v-show="section === 'today' && !learning.loading.value" class="training-shortcuts">
+      <RouterLink to="/?view=training"
+        >次日计划：{{
+          latestRevision?.kind === 'revision'
+            ? latestRevision.reverted
+              ? '已撤回'
+              : latestRevision.date + ' 已调整'
+            : '沿用规则推荐'
+        }}
+        →</RouterLink
+      >
+      <RouterLink to="/?view=transfers">待验证迁移 {{ pendingTransfers }} 项 →</RouterLink>
+    </div>
   </div>
   <LearningActivity v-if="activityOpened" v-show="section !== 'today'" :mode="section" :session="learning" />
   <div v-show="section === 'today'">

@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { growthRoute } from '../shared/growth.js';
 import { LearningService } from '../shared/learning-service.js';
 import { monthlyReport } from '../shared/monthly-report.js';
 import staticPlugin from '@fastify/static';
@@ -58,6 +59,11 @@ export async function buildApp(
   const training = new TrainingService(store, cf);
   const aiReviewer = new AiReviewer(options.aiFetch);
   const learning = new LearningService(store, aiReviewer);
+  app.route<{ Params: { action: string } }>({
+    method: ['GET', 'PUT'],
+    url: '/api/growth/:action',
+    handler: async (req) => growthRoute(store, req.params.action, req.method, req.body, req.query),
+  });
   app.route<{ Params: { action: string } }>({
     method: ['GET', 'POST'],
     url: '/api/learning/:action',

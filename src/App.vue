@@ -12,7 +12,10 @@ import {
   RefreshCw,
   Check,
   X,
+  Orbit,
+  Sparkles,
 } from 'lucide-vue-next';
+import { growth, growthNotice, growthError, startGrowth, dismissGrowthNotice } from './growth';
 import { loadSettings, loadJob, settings, job, toast, browserMode } from './api';
 import { useSpringValues } from './motion';
 const route = useRoute();
@@ -41,11 +44,13 @@ const navigation = [
   { to: '/contests', label: '比赛复盘', icon: Flag },
   { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
   { to: '/knowledge', label: '知识中心', icon: Library },
+  { to: '/growth', label: '成长收藏', icon: Orbit },
   { to: '/settings', label: '设置与数据', icon: Settings2 },
 ];
 const initError = ref('');
 const initialized = ref(false);
 let poll: ReturnType<typeof setInterval>;
+let stopGrowth: (() => void) | undefined;
 onMounted(async () => {
   await nextTick();
   measureNav(true);
@@ -61,6 +66,7 @@ onMounted(async () => {
     initError.value = (e as Error).message;
   } finally {
     initialized.value = true;
+    stopGrowth = startGrowth();
   }
   poll = setInterval(() => loadJob().catch(() => {}), 2500);
 });
@@ -78,6 +84,7 @@ watch(
   },
 );
 onUnmounted(() => {
+  stopGrowth?.();
   clearInterval(poll);
   navObserver?.disconnect();
   window.removeEventListener('resize', onResize);
@@ -119,10 +126,14 @@ onUnmounted(() => {
         ></RouterLink>
       </nav>
       <div class="sidebar-note">
-        <span class="eyebrow">BUILD UNDERSTANDING.</span>
+        <span class="eyebrow">UNDERSTANDING / ONLINE</span>
         <p>把每一次卡住，<br />变成下一次的思路。</p>
         <div class="note-line"></div>
         <span class="small subtle">记录 · 反思 · 再解</span>
+        <RouterLink v-if="growth" to="/growth" class="sidebar-growth"
+          ><Orbit :size="15" /><span>Lv.{{ growth.level }}</span
+          ><small>{{ growth.xp }} EXP</small></RouterLink
+        >
       </div>
       <div class="sidebar-bottom">
         <div class="local-status">
@@ -145,9 +156,11 @@ onUnmounted(() => {
                     ? '训练统计'
                     : $route.path === '/knowledge'
                       ? '知识中心'
-                      : $route.path === '/settings'
-                        ? '设置与数据'
-                        : '今日训练'
+                      : $route.path === '/growth'
+                        ? '成长收藏'
+                        : $route.path === '/settings'
+                          ? '设置与数据'
+                          : '今日训练'
           }}</b>
         </div>
         <RouterLink to="/settings?view=accounts" class="profile-chip"
@@ -193,6 +206,25 @@ onUnmounted(() => {
       </main>
       <footer><span>回解 / 每一题，都值得真正理解。</span><span>LOCAL FIRST · CONTEST REVIEW</span></footer>
     </div>
+    <Transition name="notice"
+      ><aside v-if="growthNotice" class="growth-reward" aria-label="成长奖励" aria-live="polite">
+        <div class="growth-reward__header">
+          <Sparkles :size="17" /><b>{{ growthNotice.historical ? '历史成长已汇总' : '成长记录已更新' }}</b
+          ><button class="icon-button" aria-label="关闭成长奖励" @click="dismissGrowthNotice">
+            <X :size="16" />
+          </button>
+        </div>
+        <strong>+{{ growthNotice.xp }} <small>EXP</small></strong>
+        <p>
+          {{
+            growthNotice.achievements.length
+              ? '成就点亮：' + growthNotice.achievements.join('、')
+              : '你的学习足迹，已写入成长档案。'
+          }}
+        </p>
+        <p v-if="growthError" class="error" role="alert">{{ growthError }}</p>
+        <RouterLink to="/growth">查看成长收藏 <ArrowUpRight :size="14" /></RouterLink></aside
+    ></Transition>
     <Transition name="notice"
       ><div v-if="toast" class="toast" role="status">
         <Check :size="17" />{{ toast

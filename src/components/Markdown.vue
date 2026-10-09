@@ -10,7 +10,7 @@ import javascript from 'highlight.js/lib/languages/javascript';
 import rust from 'highlight.js/lib/languages/rust';
 import go from 'highlight.js/lib/languages/go';
 import 'katex/dist/katex.min.css';
-import 'highlight.js/styles/github.css';
+import 'highlight.js/styles/github-dark.css';
 const props = defineProps<{ text: string }>();
 Object.entries({ cpp, python, java, javascript, rust, go }).forEach(([name, language]) =>
   hljs.registerLanguage(name, language),

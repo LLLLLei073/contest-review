@@ -4,6 +4,7 @@ import { browserMode } from './api';
 import App from './App.vue';
 import Dashboard from './pages/Dashboard.vue';
 import './style.css';
+import './terminal.css';
 const router = createRouter({
   history: browserMode ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
   scrollBehavior: (_to, _from, saved) => saved || { top: 0 },
@@ -15,6 +16,7 @@ const router = createRouter({
     { path: '/simulation', component: () => import('./pages/Simulation.vue') },
     { path: '/statistics', component: () => import('./pages/Statistics.vue') },
     { path: '/knowledge', component: () => import('./pages/Knowledge.vue') },
+    { path: '/growth', component: () => import('./pages/Growth.vue') },
     { path: '/settings', component: () => import('./pages/Settings.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
