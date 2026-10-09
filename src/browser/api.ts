@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LearningService } from '../../shared/learning-service';
 import { monthlyReport } from '../../shared/monthly-report';
+import { listAiModels } from '../../shared/ai-models';
 import { attemptSchema, reviewSchema } from '../../shared/domain';
 import { contestReviewSchema, localDay } from '../../shared/core-store';
 import { browserRuntime } from './database';
@@ -31,7 +32,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     if (sync.running || analysis.running || hub.isBusy() || atcoder.running)
       throw new Error('请等待当前同步或比赛分析完成');
   };
-  const isWrite = !['GET', 'HEAD'].includes(method);
+  const isWrite = !['GET', 'HEAD'].includes(method) && route !== '/ai/models';
   if (isWrite) runtime.assertWritable();
   const aiReviewer = new AiReviewer();
   const aiConfig = (): AiConfig | null => {
@@ -161,6 +162,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (/^\/xcpc\/contests\/[^/]+\/review$/.test(route) && method === 'PUT')
       result = hub.saveReview(decodeURIComponent(route.split('/')[3]), contestReviewSchema.parse(body));
     else if (route === '/ai/settings' && method === 'GET') result = aiSettingsView(aiConfig());
+    else if (route === '/ai/models' && method === 'POST') result = await listAiModels(body, aiConfig());
     else if (route === '/ai/settings' && method === 'PUT') {
       const input = z
         .object({
@@ -414,7 +416,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const review = contestReviewSchema.parse(body);
       store.put('contest_reviews', h, String(id), review);
       result = review;
-    } else if (route === '/statistics/monthly' && method === 'GET') result = monthlyReport(store, Object.fromEntries(url.searchParams));
+    } else if (route === '/statistics/monthly' && method === 'GET')
+      result = monthlyReport(store, Object.fromEntries(url.searchParams));
     else if (route === '/statistics' && method === 'GET')
       result = store.combinedStatistics(
         z

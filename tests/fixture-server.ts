@@ -97,7 +97,13 @@ const cf: CFClient = {
 };
 const dir = mkdtempSync(join(tmpdir(), 'contest-review-e2e-'));
 const { app } = await buildApp(new Store(join(dir, 'review.sqlite')), cf, {
-  aiFetch: async (_url, init) => {
+  aiFetch: async (url, init) => {
+    if (url.endsWith('/models'))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: 'fixture-model' }, { id: 'learning-fixture' }] }),
+      };
     const request = JSON.parse((init as { body: string }).body);
     const result = learningReply(request.messages[0].content, JSON.parse(request.messages[1].content));
     return {

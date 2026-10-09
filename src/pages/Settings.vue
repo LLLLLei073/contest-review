@@ -13,6 +13,7 @@ import {
 } from 'lucide-vue-next';
 import { useSection } from '../sections';
 import DataHealth from '../components/DataHealth.vue';
+import AiModelPicker from '../components/AiModelPicker.vue';
 import {
   api,
   settings,
@@ -151,18 +152,25 @@ async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume 
     busy.value = false;
   }
 }
-let aiLoaded = false;
+const aiLoaded = ref(false),
+  aiLoading = ref(false);
+async function ensureAiConfiguration() {
+  if (aiLoaded.value || aiLoading.value) return;
+  aiLoading.value = true;
+  error.value = '';
+  try {
+    await loadAi();
+    aiLoaded.value = true;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    aiLoading.value = false;
+  }
+}
 watch(
   settingsSection,
-  async (value) => {
-    if (value === 'ai' && !aiLoaded) {
-      try {
-        await loadAi();
-        aiLoaded = true;
-      } catch (e) {
-        error.value = (e as Error).message;
-      }
-    }
+  (value) => {
+    if (value === 'ai') void ensureAiConfiguration();
   },
   { immediate: true },
 );
@@ -645,7 +653,7 @@ async function restore() {
                 required
                 maxlength="300"
                 placeholder="例如 https://api.deepseek.com/v1"
-                :disabled="aiBusy" /></label
+                :disabled="aiBusy || !aiLoaded" /></label
             ><label
               >API 密钥<input
                 v-model="aiApiKey"
@@ -653,18 +661,26 @@ async function restore() {
                 maxlength="300"
                 placeholder="sk-…（本地服务可留空）"
                 autocomplete="off"
-                :disabled="aiBusy" /></label
-            ><label
-              >模型名称<input
-                v-model="aiModel"
-                required
-                maxlength="120"
-                placeholder="例如 deepseek-chat"
-                :disabled="aiBusy"
+                :disabled="aiBusy || !aiLoaded"
             /></label>
+            <p v-if="aiLoading" role="status">正在读取 AI 配置…</p>
+            <button v-else-if="!aiLoaded" type="button" @click="ensureAiConfiguration">
+              重试读取 AI 配置
+            </button>
+            <AiModelPicker
+              v-if="aiLoaded"
+              v-model="aiModel"
+              :base-url="aiBaseUrl"
+              :api-key="aiApiKey"
+              :disabled="aiBusy"
+            />
             <div class="button-row">
-              <button class="primary" :disabled="aiBusy">保存配置</button
-              ><button type="button" :disabled="aiBusy || !aiBaseUrl || !aiModel" @click="testAi">
+              <button class="primary" :disabled="aiBusy || !aiLoaded">保存配置</button
+              ><button
+                type="button"
+                :disabled="aiBusy || !aiLoaded || !aiBaseUrl || !aiModel"
+                @click="testAi"
+              >
                 {{ aiBusy ? '请求中…' : '保存并测试连接' }}
               </button>
             </div>

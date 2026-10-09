@@ -11,6 +11,7 @@ import { CodeforcesClient, SyncService, type CFClient } from './sync.js';
 import { AnalysisService } from '../shared/analysis-service.js';
 import { ContestHub } from '../shared/contest-hub.js';
 import { TrainingService } from '../shared/training-service.js';
+import { listAiModels } from '../shared/ai-models.js';
 import {
   AiReviewer,
   aiConfigSchema,
@@ -129,6 +130,7 @@ export async function buildApp(
     return { mode: hub.mode() };
   });
   app.get('/api/ai/settings', async () => aiSettingsView(aiConfig()));
+  app.post('/api/ai/models', async (req) => listAiModels(req.body, aiConfig(), options.aiFetch));
   app.put('/api/ai/settings', async (req) => {
     const body = z
       .object({

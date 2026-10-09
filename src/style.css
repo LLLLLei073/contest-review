@@ -1635,6 +1635,14 @@ svg {
   display: flex;
   gap: 10px;
 }
+.ai-model-picker {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+.ai-model-picker select {
+  width: 100%;
+  min-width: 0;
+}
 .profile-switch {
   display: flex;
   align-items: center;

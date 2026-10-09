@@ -10,7 +10,7 @@ export const recentChecks = ref(0);
 let lastLearningSync = '';
 const lastReportSync = new Map<string, string>();
 function learningFeedback(path: string, method: string, data: unknown) {
-  if (method !== 'GET' && path !== '/learning/monthly-report') dataRevision.value++;
+  if (method !== 'GET' && !['/learning/monthly-report', '/ai/models'].includes(path)) dataRevision.value++;
   if (['/atcoder/sync', '/review/batch'].includes(path) && data && typeof data === 'object') {
     const status = data as { id?: string; status?: string; processed?: number };
     const signature = `${status.id}:${status.status}:${status.processed}`;
