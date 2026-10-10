@@ -8,7 +8,12 @@ import './terminal.css';
 import './astra.css';
 const router = createRouter({
   history: browserMode ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
-  scrollBehavior: (_to, _from, saved) => saved || { top: 0 },
+  scrollBehavior: (to, from, saved) => {
+    if (saved) return saved;
+    // Section and tool switches update the query without leaving the page.
+    if (to.path === from.path) return false;
+    return { top: 0 };
+  },
   routes: [
     { path: '/', component: Dashboard },
     { path: '/problems', component: () => import('./pages/Problems.vue') },

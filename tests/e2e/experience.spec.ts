@@ -129,6 +129,49 @@ test('all task destinations fit desktop and mobile with useful empty states', as
   }
 });
 
+test('in-page tool switches retain scroll while navigation and history restore it', async ({
+  page,
+}, info) => {
+  const pages = info.project.name === 'pages';
+  await prepare(page, pages);
+  const settleScroll = () =>
+    page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto(url(pages, '/problems/6000%3AA?view=assistant&tool=code'));
+    const hints = page.getByRole('button', { name: '分步提示', exact: true });
+    await expect(hints).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 100));
+    await settleScroll();
+    const before = await page.evaluate(() => scrollY);
+    expect(before).toBeGreaterThan(80);
+    await hints.click();
+    await expect(page).toHaveURL(/tool=hints/);
+    await settleScroll();
+    expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
+    await page.getByRole('button', { name: '反例对拍', exact: true }).click();
+    await expect(page).toHaveURL(/tool=stress/);
+    await settleScroll();
+    expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/tool=hints/);
+    await expect.poll(async () => Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
+    await page.goForward();
+    await expect(page).toHaveURL(/tool=stress/);
+    await expect.poll(async () => Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
+
+    const settings = page.getByRole('link', { name: '设置与数据 → AI 助手' });
+    await settings.scrollIntoViewIfNeeded();
+    await settings.click();
+    await expect(page.getByRole('heading', { name: 'AI 助手配置' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+  }
+});
+
 test('late statistics response cannot replace the selected source', async ({ page }, info) => {
   test.skip(info.project.name === 'pages', 'Browser storage does not issue local statistics requests.');
   const store = new Store(':memory:');
