@@ -172,6 +172,59 @@ test('in-page tool switches retain scroll while navigation and history restore i
   }
 });
 
+test('fast daily training reads do not flash loading text', async ({ page }, info) => {
+  const pages = info.project.name === 'pages';
+  await prepare(page, pages);
+  await page.addInitScript(() => {
+    const observed = window as unknown as Window & { trainingLoadingFlashes: string[] };
+    observed.trainingLoadingFlashes = [];
+    new MutationObserver(() => {
+      for (const status of document.querySelectorAll('[role="status"]')) {
+        const text = status.textContent ?? '';
+        if (/正在读取(训练摘要|今日安排|公开题库)/.test(text)) observed.trainingLoadingFlashes.push(text);
+      }
+    }).observe(document, { childList: true, subtree: true, characterData: true });
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(url(pages, '/'));
+    await page.reload();
+    await expect(page.locator('.training-shortcuts')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('.daily-panel').first().locator('.daily-task')).toHaveCount(1);
+    expect(
+      await page.evaluate(
+        () => (window as unknown as Window & { trainingLoadingFlashes: string[] }).trainingLoadingFlashes,
+      ),
+    ).toEqual([]);
+  }
+});
+
+test('slow daily training reads keep shortcuts visible and show delayed feedback', async ({ page }, info) => {
+  test.skip(info.project.name === 'pages', 'Browser storage does not issue local API requests.');
+  await prepare(page, false);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/\/api\/(learning\/state|training\/day)$/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto('/');
+    await expect(page.locator('.training-shortcuts')).toBeVisible();
+    await expect(page.getByText('正在读取训练摘要…', { exact: true })).toBeVisible();
+    await expect(page.getByText('正在读取今日安排…', { exact: true })).toBeVisible();
+    await expect(page.getByText('正在读取公开题库…', { exact: true })).toBeVisible();
+    release();
+    await expect(page.locator('.training-shortcuts')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByText('正在读取今日安排…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('正在读取训练摘要…', { exact: true })).toHaveCount(0);
+  } finally {
+    release();
+  }
+});
+
 test('late statistics response cannot replace the selected source', async ({ page }, info) => {
   test.skip(info.project.name === 'pages', 'Browser storage does not issue local statistics requests.');
   const store = new Store(':memory:');

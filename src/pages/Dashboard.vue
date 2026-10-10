@@ -27,6 +27,21 @@ const day = ref<TrainingDay | null>(null);
 const error = ref('');
 const recentError = ref('');
 const loading = ref(false);
+const planLoadingNotice = ref(false);
+const summaryLoadingNotice = ref(false);
+let planNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+let summaryNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+watch(loading, (pending) => {
+  clearTimeout(planNoticeTimer);
+  planLoadingNotice.value = false;
+  if (pending && !day.value) planNoticeTimer = setTimeout(() => (planLoadingNotice.value = true), 300);
+});
+watch(learning.loading, (pending) => {
+  clearTimeout(summaryNoticeTimer);
+  summaryLoadingNotice.value = false;
+  if (pending && !learning.state.value)
+    summaryNoticeTimer = setTimeout(() => (summaryLoadingNotice.value = true), 300);
+});
 const checking = ref(false);
 const busy = ref(false);
 const activeKey = ref('');
@@ -184,6 +199,8 @@ watch(section, (value) => {
 });
 onUnmounted(() => {
   goalSerial++;
+  clearTimeout(planNoticeTimer);
+  clearTimeout(summaryNoticeTimer);
   clearTimeout(revealTimer);
   clearInterval(atcoderTimer);
 });
@@ -226,8 +243,8 @@ watch(
         迁移练习 {{ pendingTransfers }}
       </button>
     </nav>
-    <p v-if="section === 'today' && learning.loading.value" role="status">正在读取训练摘要…</p>
-    <div v-show="section === 'today' && !learning.loading.value" class="training-shortcuts">
+    <p v-if="section === 'today' && summaryLoadingNotice" role="status">正在读取训练摘要…</p>
+    <div v-show="section === 'today'" class="training-shortcuts" :aria-busy="learning.loading.value">
       <RouterLink to="/?view=training"
         >次日计划：{{
           latestRevision?.kind === 'revision'
@@ -319,7 +336,10 @@ watch(
               ></span>
             </div>
           </div>
-          <div v-if="loading && !day" class="quiet-empty">正在读取今日安排…</div>
+          <div v-if="loading && !day" class="quiet-empty" role="status">
+            <span v-if="planLoadingNotice">正在读取今日安排…</span
+            ><span v-else aria-hidden="true">&nbsp;</span>
+          </div>
           <div v-else-if="!day?.review.length" class="quiet-empty">
             今天没有到期或待复盘题目。<RouterLink to="/problems">查看错题库</RouterLink>
           </div>
@@ -418,7 +438,10 @@ watch(
               ></span>
             </div>
           </div>
-          <div v-if="loading && !day" class="quiet-empty">正在读取公开题库…</div>
+          <div v-if="loading && !day" class="quiet-empty" role="status">
+            <span v-if="planLoadingNotice">正在读取公开题库…</span
+            ><span v-else aria-hidden="true">&nbsp;</span>
+          </div>
           <div v-else-if="!day?.catalogCount" class="quiet-empty">
             {{ settings.activeHandle ? '尚无完整公开题库。' : '新知题仅从 Codeforces 选择。'
             }}<RouterLink to="/settings?view=sync">请先绑定并同步 Codeforces</RouterLink
