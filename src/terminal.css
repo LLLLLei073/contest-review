@@ -272,7 +272,7 @@ button:disabled {
   box-shadow: 0 0 9px var(--highlight);
 }
 .growth-hero {
-  margin-bottom: 20px;
+  margin-bottom: 32px;
   min-height: 310px;
   position: relative;
   isolation: isolate;
@@ -769,7 +769,7 @@ button:disabled {
   }
   .growth-hero {
     min-height: 128px;
-    margin-bottom: 14px;
+    margin-bottom: 2px;
   }
   .growth-hero__content {
     width: 81%;
