@@ -13,7 +13,9 @@ export async function refreshGrowth() {
     scope = scopeKey();
   growthLoading.value = true;
   try {
-    const value = await api<GrowthSummary>('/growth/summary');
+    const value = await api<GrowthSummary>('/growth/weekly/activate', {
+      scope: `growth:${settings.value.activeHandle || '-'}:${settings.value.activeAtcoder ? 'ac~' + settings.value.activeAtcoder.toLowerCase() : '-'}`,
+    });
     if (request !== read || scope !== scopeKey()) return;
     growth.value = value;
     growthError.value = '';
@@ -75,4 +77,5 @@ export const growthKindLabel = {
   independent: '独立重做',
   hint: '借助提示',
   reflection: '有效复盘',
+  weekly: '每周任务',
 };

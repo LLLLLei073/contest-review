@@ -38,7 +38,11 @@ const progress = computed(() =>
           ><span>{{ growth.xp - growth.levelStart }} / {{ growth.nextLevel - growth.levelStart }}</span>
         </div>
         <div class="hero-achievements">
-          <Trophy :size="14" /><span>{{
+          <Trophy :size="14" /><span v-if="growth.nextStage" class="next-growth-condition"
+            >{{ growth.nextStage.name }} · {{ growth.nextStage.conditions.find((c) => !c.met)?.label }}
+            {{ growth.nextStage.conditions.find((c) => !c.met)?.progress }} /
+            {{ growth.nextStage.conditions.find((c) => !c.met)?.target }}</span
+          ><span>{{
             growth.achievements
               .filter((a) => a.unlocked)
               .slice(-2)

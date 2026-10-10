@@ -10,6 +10,10 @@ const images: Record<GrowthEquipment['appearance'], string> = {
   signal,
   orbit: new URL('../assets/companion/orbit.png', import.meta.url).href,
   nova: new URL('../assets/companion/nova.png', import.meta.url).href,
+  atlas: new URL('../assets/companion/atlas.png', import.meta.url).href,
+  observatory: new URL('../assets/companion/observatory.png', import.meta.url).href,
+  aurora: new URL('../assets/companion/aurora.png', import.meta.url).href,
+  voyager: new URL('../assets/companion/voyager.png', import.meta.url).href,
 };
 </script>
 <template>

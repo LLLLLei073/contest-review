@@ -100,7 +100,7 @@ test('explicit long term memory is manageable, can be disabled and survives back
     memories = (await f.service.route('memories', 'GET')) as typeof memories;
     assert.equal(memories.length, 1);
     const b = f.store.backup();
-    assert.equal(b.version, 9);
+    assert.equal(b.version, 10);
     f.store.restore(b);
     assert.equal(((await f.service.route('memories', 'GET')) as typeof memories)[0].content, '先讲直觉');
     await f.service.route('memory', 'DELETE', { id: memories[0].id });

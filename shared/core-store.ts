@@ -177,6 +177,7 @@ const backupSchema = z.object({
     z.literal(7),
     z.literal(8),
     z.literal(9),
+    z.literal(10),
   ]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
@@ -683,7 +684,28 @@ export class CoreStore {
     const week = weekStart(now);
     const goal = weeklyGoalSchema.parse({ ...(input as object), week, updatedAt: now.toISOString() });
     this.externalPut(this.weeklyNamespace(), week, goal);
+    this.activateGrowthWeek(now);
     return goal;
+  }
+  activateGrowthWeek(now = new Date()) {
+    if (now.getTime() > Date.now()) return null;
+    if (!this.active() && !this.activeAtcoder()) return null;
+    const goal = this.weeklyGoal(now);
+    if (!goal) return null;
+    const scope = `growth:${this.active() || '-'}:${this.activeAtcoder() ? 'ac~' + this.activeAtcoder().toLowerCase() : '-'}`;
+    const key = 'weekly:' + goal.week;
+    const saved = this.externalGet(scope, key);
+    if (saved) return growthRecordSchema.parse(saved);
+    const record = growthRecordSchema.parse({
+      kind: 'weekly',
+      version: 1,
+      week: goal.week,
+      scope,
+      activatedAt: now.toISOString(),
+      goal,
+    });
+    this.externalPut(scope, key, record);
+    return record;
   }
   weeklyProgress(now = new Date()) {
     const goal = this.weeklyGoal(now),
@@ -1662,7 +1684,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 9,
+      version: 10,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
@@ -1788,7 +1810,15 @@ export class CoreStore {
         )
           throw new Error('成长数据账号不一致');
         const record = growthRecordSchema.parse(row.value);
-        if (row.key !== record.kind) throw new Error('成长记录类型不一致');
+        if (row.key !== (record.kind === 'weekly' ? 'weekly:' + record.week : record.kind))
+          throw new Error('成长记录类型不一致');
+        if (
+          record.kind === 'weekly' &&
+          (record.scope !== row.namespace ||
+            weekStart(new Date(record.activatedAt)) !== record.week ||
+            Date.parse(record.activatedAt) > Date.now())
+        )
+          throw new Error('成长周任务快照不一致');
         row.value = record;
       }
       if (row.namespace.startsWith('weekly:')) {

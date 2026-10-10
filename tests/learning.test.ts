@@ -262,7 +262,7 @@ test('v8 backup validates AI archives and learning references and restores legac
   await l.draft({ problemKey: key });
   await l.hint({ problemKey: key, statement: '题面', level: 1 });
   const backup = s.backup();
-  assert.equal(backup.version, 9);
+  assert.equal(backup.version, 10);
   s.restore(backup);
   assert.equal(l.records().length, 2);
   const broken = structuredClone(backup);

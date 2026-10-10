@@ -20,9 +20,9 @@ export const weeklyGoalSchema = z
 export type WeeklyGoal = z.infer<typeof weeklyGoalSchema>;
 
 export function weekStart(date: Date): string {
-  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
-  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  const day = new Date(date.getTime() + 8 * 3600000);
+  day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+  return day.toISOString().slice(0, 10);
 }
 
 function hash(value: string): number {

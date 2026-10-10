@@ -12,6 +12,19 @@ import {
 } from '../growth';
 import { growthCosmetics, type GrowthEquipment } from '../../shared/growth-domain';
 import Companion from '../components/Companion.vue';
+import GrowthWeekly from '../components/GrowthWeekly.vue';
+const group = ref('all');
+const groups = [
+  ['all', '全部'],
+  ['ac', '首次 AC'],
+  ['independent', '独立重做'],
+  ['reflection', '有效复盘'],
+  ['days', '训练足迹'],
+  ['weeks', '周任务'],
+];
+const visibleAchievements = computed(
+  () => growth.value?.achievements.filter((a) => group.value === 'all' || a.group === group.value) ?? [],
+);
 const history = ref<GrowthHistory | null>(null),
   page = ref(1),
   error = ref(''),
@@ -136,35 +149,75 @@ onBeforeUnmount(() => {
         >
       </div>
     </section>
+    <GrowthWeekly />
+    <section class="growth-section growth-route panel" aria-label="成长阶段路线">
+      <div class="section-head">
+        <h2>当前阶段 · {{ growth.currentStage.name }}</h2>
+        <span class="small subtle">{{
+          growth.nextStage ? '下一阶段 · ' + growth.nextStage.name : '已完成全部收藏阶段'
+        }}</span>
+      </div>
+      <ol class="stage-route">
+        <li
+          v-for="stage in growth.stages"
+          :key="stage.appearance"
+          :class="{ unlocked: stage.unlocked, current: stage.appearance === growth.currentStage.appearance }"
+        >
+          <b>Lv.{{ stage.level }}</b
+          ><span>{{ stage.name }}</span
+          ><small>{{ stage.unlocked ? '已解锁' : '等待研习成果' }}</small>
+        </li>
+      </ol>
+      <div v-if="growth.nextStage" class="stage-conditions">
+        <span
+          v-for="condition in growth.nextStage.conditions"
+          :key="condition.key"
+          :class="{ met: condition.met }"
+          >{{ condition.label }} {{ condition.progress }} / {{ condition.target
+          }}{{ condition.met ? ' ✓' : '' }}</span
+        >
+      </div>
+    </section>
     <section class="growth-section">
       <div class="section-heading">
         <span class="eyebrow">01 / COLLECTION</span>
         <h2>终端与伙伴</h2>
-        <span class="small subtle">Lv.3 / Lv.5 解锁新收藏</span>
+        <span class="small subtle">Lv.1—30 · 等级与研习成果共同解锁</span>
       </div>
       <div class="cosmetic-grid">
         <article
-          v-for="item in growthCosmetics"
+          v-for="(item, index) in growthCosmetics"
           :key="item.appearance"
           class="cosmetic-card"
-          :class="{ locked: growth.level < item.level }"
+          :class="{ locked: !growth.stages[index]!.unlocked }"
         >
           <div class="cosmetic-card__art" :data-preview-palette="item.palette">
-            <Companion :appearance="item.appearance" /><span class="cosmetic-card__number"
-              >0{{ item.level === 1 ? 1 : item.level === 3 ? 2 : 3 }}</span
-            ><span v-if="growth.level < item.level" class="cosmetic-lock"
+            <Companion :appearance="item.appearance" /><span class="cosmetic-card__number">{{
+              String(index + 1).padStart(2, '0')
+            }}</span
+            ><span v-if="!growth.stages[index]!.unlocked" class="cosmetic-lock"
               ><LockKeyhole :size="14" /> Lv.{{ item.level }}</span
             >
           </div>
           <div class="cosmetic-card__info">
             <span class="eyebrow">{{ item.subtitle }}</span>
             <h3>{{ item.name }}</h3>
+            <ul class="collection-conditions">
+              <li
+                v-for="condition in growth.stages[index]!.conditions"
+                :key="condition.key"
+                :class="{ met: condition.met }"
+              >
+                {{ condition.label }} {{ condition.progress }} / {{ condition.target
+                }}{{ condition.met ? ' ✓' : '' }}
+              </li>
+            </ul>
             <div class="cosmetic-actions">
               <button
                 :disabled="
                   busy ||
                   !growth.profiles.length ||
-                  growth.level < item.level ||
+                  !growth.stages[index]!.unlocked ||
                   growth.equipment.appearance === item.appearance
                 "
                 @click="equip('appearance', item.appearance)"
@@ -176,7 +229,7 @@ onBeforeUnmount(() => {
                 :disabled="
                   busy ||
                   !growth.profiles.length ||
-                  growth.level < item.level ||
+                  !growth.stages[index]!.unlocked ||
                   growth.equipment.palette === item.palette
                 "
                 @click="equip('palette', item.palette)"
@@ -197,9 +250,14 @@ onBeforeUnmount(() => {
           {{ growth.achievements.length }} 已点亮</span
         >
       </div>
+      <div class="achievement-filters" aria-label="成就分类">
+        <button v-for="[id, label] in groups" :key="id" :aria-pressed="group === id" @click="group = id!">
+          {{ label }}
+        </button>
+      </div>
       <div class="achievement-grid">
         <article
-          v-for="a in growth.achievements"
+          v-for="a in visibleAchievements"
           :key="a.id"
           class="achievement-card"
           :class="{ unlocked: a.unlocked }"
@@ -233,7 +291,8 @@ onBeforeUnmount(() => {
     </div>
     <p class="growth-rules">
       首次 AC +20 · 独立重做 +30 · 借助提示 +10 · 首次有效复盘 +15。首次 AC
-      当日不叠加重做奖励；同题同日取最高奖励。缺少可靠时间的历史记录不补奖。
+      当日不叠加重做奖励；同题同日取最高奖励。缺少可靠时间的历史记录不补奖。周任务额外最多
+      +180，不增加训练天数。
     </p>
     <div v-if="historyLoading" class="quiet-empty" role="status">正在读取经验记录…</div>
     <div v-else-if="!history?.items.length" class="quiet-empty">
@@ -249,6 +308,14 @@ onBeforeUnmount(() => {
           ><a v-else-if="event.url" :href="event.url" target="_blank" rel="noreferrer">{{ event.title }} ↗</a
           ><span v-else>{{ event.title }}</span
           ><small>{{ event.profile.replace(/^ac~/, 'AtCoder · ') }} · {{ event.day }}</small>
+          <details v-if="event.kind === 'weekly'" class="weekly-event-proof">
+            <summary>{{ event.condition }} · 查看关联题目</summary>
+            <ul>
+              <li v-for="proof in event.evidence" :key="proof.profile + proof.problemKey">
+                {{ proof.profile }} · {{ proof.title }}（{{ proof.problemKey }}）
+              </li>
+            </ul>
+          </details>
         </div>
         <strong>+{{ event.xp }} <small>EXP</small></strong>
       </li>

@@ -88,6 +88,9 @@ export async function buildApp(
     url: '/api/growth/:action',
     handler: async (req) => growthRoute(store, req.params.action, req.method, req.body, req.query),
   });
+  app.post('/api/growth/weekly/activate', async (req) =>
+    growthRoute(store, 'weekly/activate', 'POST', req.body),
+  );
   app.route<{ Params: { action: string } }>({
     method: ['GET', 'POST'],
     url: '/api/learning/:action',
