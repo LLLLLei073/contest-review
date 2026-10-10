@@ -272,7 +272,7 @@ button:disabled {
   box-shadow: 0 0 9px var(--highlight);
 }
 .growth-hero {
-  margin-bottom: 32px;
+  margin-bottom: 20px;
   min-height: 310px;
   position: relative;
   isolation: isolate;
