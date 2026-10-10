@@ -131,6 +131,7 @@ test('weekly goal scene keeps today fixed and supports cancel, keyboard and redu
   });
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await expect(page.locator('.profile-chip')).toContainText('goal_scene_tester');
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
 
   await page.getByRole('button', { name: '选择目标' }).click();
