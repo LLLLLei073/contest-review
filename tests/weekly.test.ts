@@ -69,6 +69,22 @@ test('Monday waits for goal; focus quota, fixed plan, no next-day duplicates and
   s.close();
 });
 
+test('Sunday goal cannot authorize Monday new problems until the new week is selected', () => {
+  const s = fixture();
+  const sunday = new Date('2026-10-18T12:00:00+08:00');
+  const monday = new Date('2026-10-19T12:00:00+08:00');
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, sunday);
+  const first = s.trainingDay('alice', sunday);
+  assert.equal(first.newProblems.length, 5);
+  assert.equal(s.weeklyGoal(monday), null);
+  assert.equal(s.trainingDay('alice', monday).newProblems.length, 0);
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, monday);
+  const next = s.trainingDay('alice', monday);
+  assert.equal(next.newProblems.length, 5);
+  assert.ok(next.newProblems.every((p) => !first.newProblems.some((old) => old.key === p.key)));
+  s.close();
+});
+
 test('balanced goal counts two total; shortages and profile isolation are explicit', () => {
   const s = fixture();
   s.saveWeeklyGoal({ mode: 'balanced', categories: ['数学', '动态规划'] }, monday);
@@ -157,7 +173,7 @@ test('upsolve AC, reason snapshots, quality hints, simulation evidence and v7 ba
   s.ingest('alice', [sub(2, '3000:A', 'OK')]);
   assert.ok(s.simulations()[0].events.some((e) => e.source === 'cf' && e.verdict === 'OK'));
   const backup = s.backup();
-  assert.equal(backup.version, 10);
+  assert.equal(backup.version, 11);
   const restored = new Store(':memory:');
   restored.restore(backup);
   assert.equal(restored.upsolveItems()[0].completed, true);

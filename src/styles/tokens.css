@@ -1,0 +1,103 @@
+/* One semantic palette for the workspace, reports and companion surfaces. */
+:root {
+  color-scheme: light;
+  font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-synthesis: none;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--canvas);
+  --mobile-nav-height: 104px;
+  --canvas: #f3f5f7;
+  --paper: #ffffff;
+  --surface-raised: #edf1f5;
+  --wash: var(--surface-raised);
+  --ink: #203044;
+  --muted: #5f7083;
+  --line: #dce3eb;
+  --highlight: #146a83;
+  --highlight-hover: #10536a;
+  --on-highlight: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--highlight) 9%, var(--paper));
+  --green: var(--highlight);
+  --green-dark: var(--highlight-hover);
+  --reward: #8a5b18;
+  --reward-soft: #fbf2df;
+  --accent: var(--reward);
+  --danger: #b63d50;
+  --danger-soft: #fcebef;
+  --shadow-color: #192e4520;
+  --code-surface: #f0f3f7;
+  --sidebar-surface: #f8fafc;
+  --motion-fast: 160ms;
+  --motion-standard: 260ms;
+  --motion-land: linear(0, 0.32 8%, 0.79 20%, 1.03 30%, 1.01 46%, 1);
+  --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+:root[data-palette='gold'] {
+  --highlight: #80571b;
+  --highlight-hover: #624210;
+}
+:root[data-palette='coral'] {
+  --highlight: #a8483d;
+  --highlight-hover: #87382f;
+}
+:root[data-palette='ice'] {
+  --highlight: #24659b;
+  --highlight-hover: #194c77;
+}
+:root[data-palette='violet'] {
+  --highlight: #7052a4;
+  --highlight-hover: #573b85;
+}
+:root[data-palette='teal'] {
+  --highlight: #16765f;
+  --highlight-hover: #105c49;
+}
+:root[data-palette='silver'] {
+  --highlight: #4e6076;
+  --highlight-hover: #38495c;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #0d1520;
+  --paper: #152131;
+  --surface-raised: #203044;
+  --ink: #e4ecf5;
+  --muted: #a6b5c8;
+  --line: #35475c;
+  --highlight: #7bd8e2;
+  --highlight-hover: #acebf0;
+  --on-highlight: #102533;
+  --accent-soft: color-mix(in srgb, var(--highlight) 12%, var(--paper));
+  --reward: #edc477;
+  --reward-soft: #3a3122;
+  --danger: #ff9eaf;
+  --danger-soft: #402635;
+  --shadow-color: #00000038;
+  --code-surface: #101a28;
+  --sidebar-surface: #111c2a;
+}
+:root[data-theme='dark'][data-palette='gold'] {
+  --highlight: #edc477;
+  --highlight-hover: #ffe1aa;
+}
+:root[data-theme='dark'][data-palette='coral'] {
+  --highlight: #ffaaa0;
+  --highlight-hover: #ffcdc6;
+}
+:root[data-theme='dark'][data-palette='ice'] {
+  --highlight: #a5d9ff;
+  --highlight-hover: #d0ecff;
+}
+:root[data-theme='dark'][data-palette='violet'] {
+  --highlight: #c5afff;
+  --highlight-hover: #e4d9ff;
+}
+:root[data-theme='dark'][data-palette='teal'] {
+  --highlight: #89e6c7;
+  --highlight-hover: #c4f9e7;
+}
+:root[data-theme='dark'][data-palette='silver'] {
+  --highlight: #d3e4f6;
+  --highlight-hover: #ffffff;
+}

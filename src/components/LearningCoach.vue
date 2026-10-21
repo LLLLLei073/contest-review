@@ -34,12 +34,14 @@ watch(() => props.source + props.contestId, load);
 <template>
   <section class="learning-stack">
     <h2>AI 比赛教练</h2>
+    <p class="badge">{{ source.toUpperCase() }} · {{ contestId }}</p>
     <p class="subtle">基于已保存的成绩、时间线与笔记提出策略；建议用于制定次日计划，不改变官方成绩。</p>
     <button class="small-button" :disabled="busy" @click="generate">
       {{ busy ? '分析中…' : '生成比赛策略建议' }}
     </button>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
     <RouterLink to="/?view=training">进入次日计划</RouterLink>
+    <RouterLink to="/contests?view=upsolve">查看赛后补题清单 →</RouterLink>
     <article v-for="r in records" :key="r.id" class="learning-card">
       <template v-if="r.kind === 'coach'"
         ><p v-for="w in r.warnings" :key="w" class="small subtle">{{ w }}</p>

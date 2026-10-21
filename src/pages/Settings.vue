@@ -1,19 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
-import {
-  Download,
-  Upload,
-  RefreshCw,
-  Link2,
-  Database,
-  ShieldCheck,
-  ArrowRight,
-  Search,
-  Sparkles,
-} from 'lucide-vue-next';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { RefreshCw, Link2, ShieldCheck, ArrowRight, Search } from 'lucide-vue-next';
 import { useSection } from '../sections';
 import DataHealth from '../components/DataHealth.vue';
-import AiModelPicker from '../components/AiModelPicker.vue';
+import AiConfiguration from '../components/settings/AiConfiguration.vue';
+import AccountConnections from '../components/settings/AccountConnections.vue';
+import SyncStatus from '../components/settings/SyncStatus.vue';
+import BackupPanel from '../components/settings/BackupPanel.vue';
 import {
   api,
   settings,
@@ -43,23 +36,24 @@ const accountPlatform = useSection(
 );
 const handle = ref(settings.value.activeHandle),
   busy = ref(false),
-  error = ref(''),
-  restoreFile = ref<File | null>(null),
-  restoreInput = ref<HTMLInputElement | null>(null),
-  restoreResult = ref('');
+  error = ref('');
 const xcpcName = ref(''),
   candidates = ref<XcpcCandidate[]>([]),
   xcpcBusy = ref(false);
-const aiBaseUrl = ref(''),
-  aiApiKey = ref(''),
-  aiModel = ref(''),
-  aiConfigured = ref(false),
-  aiBusy = ref(false),
-  aiTestResult = ref('');
 const atcoderHandle = ref(settings.value.activeAtcoder ?? ''),
   atcoderJob = ref<SyncJob | null>(null),
   atcoderVerified = ref(false),
   atcoderVerifiedBy = ref('submissions');
+const handleError = computed(() =>
+  handle.value && !/^[a-zA-Z0-9_.-]{1,64}$/.test(handle.value)
+    ? '请输入 1–64 位字母、数字、下划线、点或连字符。'
+    : '',
+);
+const atcoderHandleError = computed(() =>
+  atcoderHandle.value && !/^[A-Za-z0-9_]{1,64}$/.test(atcoderHandle.value)
+    ? '请输入 1–64 位字母、数字或下划线。'
+    : '',
+);
 let atcoderTimer: ReturnType<typeof setInterval> | undefined;
 watch(settingsSection, (value) => sessionStorage.setItem('contest-review:settings-section', value));
 watch(accountPlatform, (value) => sessionStorage.setItem('contest-review:account-platform', value));
@@ -75,61 +69,6 @@ watch(
     if (!atcoderHandle.value || atcoderHandle.value === previous) atcoderHandle.value = value ?? '';
   },
 );
-async function loadAi() {
-  const data = await api<{ configured: boolean; baseUrl: string; model: string; apiKey: string }>(
-    '/ai/settings',
-  );
-  aiConfigured.value = data.configured;
-  aiBaseUrl.value = data.baseUrl;
-  aiModel.value = data.model;
-  aiApiKey.value = data.apiKey;
-}
-async function saveAi() {
-  aiBusy.value = true;
-  aiTestResult.value = '';
-  error.value = '';
-  try {
-    const data = await api<{ configured: boolean; apiKey: string }>(
-      '/ai/settings',
-      { baseUrl: aiBaseUrl.value.trim(), apiKey: aiApiKey.value.trim(), model: aiModel.value.trim() },
-      'PUT',
-    );
-    aiConfigured.value = data.configured;
-    aiApiKey.value = data.apiKey;
-    notify('AI 配置已保存');
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    aiBusy.value = false;
-  }
-}
-async function testAi() {
-  aiBusy.value = true;
-  aiTestResult.value = '';
-  error.value = '';
-  try {
-    await saveAi();
-    if (error.value) return;
-    const data = await api<{ ok: boolean; message: string }>('/ai/test', {});
-    aiTestResult.value = data.message;
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    aiBusy.value = false;
-  }
-}
-async function testTools() {
-  aiBusy.value = true;
-  aiTestResult.value = '';
-  try {
-    const r = await api<{ message: string }>('/ai/capabilities', {});
-    aiTestResult.value = r.message;
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    aiBusy.value = false;
-  }
-}
 async function loadAtcoder() {
   const data = await api<{ job: SyncJob | null; verified: boolean; verifiedBy: string }>('/atcoder/binding');
   atcoderJob.value = data.job;
@@ -164,28 +103,6 @@ async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume 
     busy.value = false;
   }
 }
-const aiLoaded = ref(false),
-  aiLoading = ref(false);
-async function ensureAiConfiguration() {
-  if (aiLoaded.value || aiLoading.value) return;
-  aiLoading.value = true;
-  error.value = '';
-  try {
-    await loadAi();
-    aiLoaded.value = true;
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    aiLoading.value = false;
-  }
-}
-watch(
-  settingsSection,
-  (value) => {
-    if (value === 'ai') void ensureAiConfiguration();
-  },
-  { immediate: true },
-);
 onMounted(() => {
   void loadAtcoder().catch((e) => (error.value = (e as Error).message));
   atcoderTimer = setInterval(() => {
@@ -249,49 +166,6 @@ async function sync(mode = 'incremental', resume = false) {
     busy.value = false;
   }
 }
-async function download(previous = false) {
-  busy.value = true;
-  error.value = '';
-  try {
-    const data = await api(previous ? '/backup/previous' : '/backup');
-    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `contest-review-${previous ? 'before-restore-' : ''}${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    if (!previous) await api('/training/backup-exported', {});
-    notify('备份已导出');
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    busy.value = false;
-  }
-}
-function selectFile(e: Event) {
-  restoreFile.value = (e.target as HTMLInputElement).files?.[0] || null;
-}
-async function restore() {
-  if (!restoreFile.value) return;
-  if (!confirm('恢复将替换全部本地账号的数据。当前数据会先自动备份。确认恢复所选文件？')) return;
-  busy.value = true;
-  error.value = '';
-  try {
-    if (restoreFile.value.size > 100 * 1024 * 1024) throw new Error('备份文件超过 100 MB 限制');
-    const data = JSON.parse(await restoreFile.value.text());
-    const result = await api<{ backupPath: string }>('/backup/restore', data);
-    restoreResult.value = result.backupPath;
-    await loadSettings();
-    await loadJob();
-    restoreFile.value = null;
-    if (restoreInput.value) restoreInput.value.value = '';
-    notify('备份恢复完成');
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    busy.value = false;
-  }
-}
 </script>
 <template>
   <div class="page-head">
@@ -307,6 +181,8 @@ async function restore() {
   <div v-if="browserMode" class="alert">
     在线版的数据保存在当前浏览器中，不会上传到
     GitHub。清除网站数据或更换浏览器前，请导出备份；导入历史时请保持页面打开。
+    已加载的页面和已缓存记录可离线使用；同步与 AI
+    需要网络。遇到多标签页占用提示时，关闭其他工作台标签，再刷新当前页面。
   </div>
   <nav class="content-switcher" aria-label="设置分类">
     <button :class="{ active: settingsSection === 'accounts' }" @click="settingsSection = 'accounts'">
@@ -330,6 +206,12 @@ async function restore() {
   <div>
     <div class="settings-layout">
       <div>
+        <AccountConnections
+          v-if="settingsSection === 'accounts'"
+          :platform="accountPlatform"
+          @select="accountPlatform = $event"
+        />
+        <SyncStatus v-if="settingsSection === 'sync'" :atcoder="atcoderJob" />
         <section
           v-show="settingsSection === 'accounts' && accountPlatform === 'atcoder'"
           class="panel settings-card"
@@ -348,6 +230,8 @@ async function restore() {
             <label
               >AtCoder 用户名<input
                 v-model="atcoderHandle"
+                :aria-invalid="!!atcoderHandleError"
+                aria-describedby="ac-handle-error"
                 required
                 pattern="[A-Za-z0-9_]+"
                 maxlength="64"
@@ -357,6 +241,9 @@ async function restore() {
               绑定 AtCoder <ArrowRight :size="16" />
             </button>
           </form>
+          <p id="ac-handle-error" v-if="atcoderHandleError" class="field-error" role="alert">
+            {{ atcoderHandleError }}
+          </p>
           <div v-if="settings.atcoderHandles?.length" class="profile-switch">
             <span class="small subtle">AtCoder 账号分区</span
             ><button
@@ -418,6 +305,8 @@ async function restore() {
             <label
               >Codeforces Handle<input
                 v-model="handle"
+                :aria-invalid="!!handleError"
+                aria-describedby="cf-handle-error"
                 required
                 pattern="[a-zA-Z0-9_.\-]+"
                 maxlength="64"
@@ -427,6 +316,7 @@ async function restore() {
               {{ busy ? '处理中…' : '绑定用户名' }}<ArrowRight :size="16" />
             </button>
           </form>
+          <p id="cf-handle-error" v-if="handleError" class="field-error" role="alert">{{ handleError }}</p>
           <div v-if="settings.handles.length > 1" class="profile-switch">
             <span class="small subtle">本机账号分区</span
             ><button
@@ -599,114 +489,10 @@ async function restore() {
           </p>
         </section>
         <DataHealth v-if="settingsSection === 'sync'" />
-        <section v-show="settingsSection === 'backup'" class="panel settings-card">
-          <div class="section-head">
-            <div class="section-title">
-              <span class="section-icon"><Database :size="20" /></span>
-              <div>
-                <h2>备份与恢复</h2>
-                <p>备份包含全部账号分区、笔记、代码和复习记录。</p>
-              </div>
-            </div>
-          </div>
-          <div class="backup-actions">
-            <div>
-              <h3>导出完整备份</h3>
-              <p>建议定期备份到其他磁盘。文件格式为 JSON。</p>
-              <button :disabled="recentChecks > 0 || busy || job?.status === 'running'" @click="download()">
-                <Download :size="16" />导出备份
-              </button>
-            </div>
-            <div>
-              <h3>从备份恢复</h3>
-              <p>校验通过后替换现有数据，并自动保存恢复前备份。</p>
-              <label class="file-picker"
-                ><Upload :size="16" />选择备份文件<input
-                  ref="restoreInput"
-                  type="file"
-                  accept=".json,application/json"
-                  aria-label="选择备份文件"
-                  :disabled="recentChecks > 0 || busy || job?.status === 'running'"
-                  @change="selectFile"
-              /></label>
-              <div v-if="restoreFile" class="restore-confirm">
-                <span>{{ restoreFile.name }}</span
-                ><button :disabled="recentChecks > 0 || busy || job?.status === 'running'" @click="restore">
-                  恢复此备份
-                </button>
-              </div>
-            </div>
-          </div>
-          <p v-if="restoreResult" class="alert success">恢复成功。原数据备份：{{ restoreResult }}</p>
-          <button
-            v-if="browserMode"
-            class="text-link"
-            :disabled="recentChecks > 0 || busy || job?.status === 'running'"
-            @click="download(true)"
-          >
-            下载最近一次恢复前的备份
-          </button>
-        </section>
-        <section v-show="settingsSection === 'ai'" class="panel settings-card">
-          <div class="section-head">
-            <div class="section-title">
-              <span class="section-icon"><Sparkles :size="20" /></span>
-              <div>
-                <h2>AI 助手配置</h2>
-                <p>配置任意 OpenAI 兼容接口后，可在题目详情页让 AI 分析错误代码。</p>
-              </div>
-            </div>
-            <span v-if="aiConfigured" class="badge mastered">已配置</span>
-          </div>
-          <form class="handle-form ai-form" @submit.prevent="saveAi">
-            <label
-              >接口地址 Base URL<input
-                v-model="aiBaseUrl"
-                required
-                maxlength="300"
-                placeholder="例如 https://api.deepseek.com/v1"
-                :disabled="aiBusy || !aiLoaded" /></label
-            ><label
-              >API 密钥<input
-                v-model="aiApiKey"
-                type="password"
-                maxlength="300"
-                placeholder="sk-…（本地服务可留空）"
-                autocomplete="off"
-                :disabled="aiBusy || !aiLoaded"
-            /></label>
-            <p v-if="aiLoading" role="status">正在读取 AI 配置…</p>
-            <button v-else-if="!aiLoaded" type="button" @click="ensureAiConfiguration">
-              重试读取 AI 配置
-            </button>
-            <AiModelPicker
-              v-if="aiLoaded"
-              v-model="aiModel"
-              :base-url="aiBaseUrl"
-              :api-key="aiApiKey"
-              :disabled="aiBusy"
-            />
-            <div class="button-row">
-              <button class="primary" :disabled="aiBusy || !aiLoaded">保存配置</button
-              ><button
-                type="button"
-                :disabled="aiBusy || !aiLoaded || !aiBaseUrl || !aiModel"
-                @click="testAi"
-              >
-                {{ aiBusy ? '请求中…' : '保存并测试连接' }}
-              </button>
-              <button type="button" :disabled="aiBusy || !aiConfigured" @click="testTools">
-                测试工具调用能力
-              </button>
-            </div>
-          </form>
-          <p v-if="aiTestResult" class="alert success">{{ aiTestResult }}</p>
-          <p class="small subtle">
-            密钥只保存在本地数据库，并随备份导出。兼容 OpenAI 格式的服务均可使用，例如
-            DeepSeek（https://api.deepseek.com/v1）、Kimi（https://api.moonshot.cn/v1）或本地
-            Ollama（http://127.0.0.1:11434/v1）。AI 分析结果仅供参考，请以评测与独立重做为准。
-          </p>
-        </section>
+        <div v-show="settingsSection === 'backup'"><BackupPanel /></div>
+        <div v-show="settingsSection === 'ai'">
+          <AiConfiguration :visible="settingsSection === 'ai'" />
+        </div>
       </div>
       <aside class="settings-note">
         <ShieldCheck :size="30" />

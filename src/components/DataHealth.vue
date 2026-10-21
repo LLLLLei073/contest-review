@@ -59,6 +59,13 @@ watch(dataRevision, load);
       </p>
     </div>
     <RouterLink to="/settings?view=backup" class="small-button">导出备份</RouterLink>
+    <div class="button-row">
+      <RouterLink v-if="health.cf.handle" to="/settings?view=sync&platform=cf"
+        >修复 CF 提交与目录 →</RouterLink
+      ><RouterLink v-if="health.atcoder.handle" to="/settings?view=sync&platform=atcoder"
+        >修复 AtCoder 提交与目录 →</RouterLink
+      ><RouterLink to="/?view=path">查看算法版本与规划偏好 →</RouterLink>
+    </div>
   </section>
   <button class="small-button" @click="load">刷新健康状态</button>
 </template>

@@ -118,6 +118,7 @@ test('learning loop: draft, confirm, RAG, graph, diagnosis, next-day agent, hint
   await expect(page.getByLabel('自动调整次日计划（仅在应用运行时触发）')).not.toBeChecked();
   await page.getByRole('button', { name: '生成次日计划' }).click();
   await expect(page.getByText('调整后：', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '确认采用讲解方案' }).click();
   await page.getByRole('button', { name: '撤回此版本' }).click();
   await expect(page.getByRole('heading', { name: /已撤回/ })).toBeVisible();
   await page.goto(info.project.name === 'pages' ? './#/problems/2000%3AA' : '/problems/2000%3AA');

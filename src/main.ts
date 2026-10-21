@@ -3,9 +3,12 @@ import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router
 import { browserMode } from './api';
 import App from './App.vue';
 import Dashboard from './pages/Dashboard.vue';
-import './style.css';
-import './terminal.css';
-import './astra.css';
+import './styles/tokens.css';
+import './styles/layout.css';
+import './styles/growth.css';
+import './styles/astra.css';
+import { initializeAppearance } from './composables/useAppearance';
+initializeAppearance();
 const router = createRouter({
   history: browserMode ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
   scrollBehavior: (to, from, saved) => {

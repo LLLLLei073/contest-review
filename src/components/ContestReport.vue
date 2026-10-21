@@ -141,6 +141,32 @@ onBeforeUnmount(() => {
           >
         </div>
       </div>
+      <h3>下一场的行动建议</h3>
+      <p v-if="!current.advice.length" class="subtle">目前没有足够证据触发具体建议。</p>
+      <article v-for="(advice, i) in current.advice" :key="advice.id" class="advice-card">
+        <span class="eyebrow">{{ String(i + 1).padStart(2, '0') }} / ACTION</span>
+        <p>
+          <strong>{{ advice.evidence }}</strong>
+        </p>
+        <p class="subtle">{{ advice.possibility }}</p>
+        <p>{{ advice.action }}</p>
+        <div class="evidence-links">
+          <a
+            v-for="id in advice.submissionIds"
+            :key="id"
+            :href="`https://codeforces.com/contest/${contestId}/submission/${id}`"
+            target="_blank"
+            rel="noopener noreferrer"
+            >#{{ id }}</a
+          ><a
+            v-if="advice.problemIndex"
+            :href="`https://codeforces.com/contest/${contestId}/problem/${advice.problemIndex}`"
+            target="_blank"
+            rel="noopener noreferrer"
+            >查看题目 {{ advice.problemIndex }}</a
+          >
+        </div>
+      </article>
       <details class="report-context performance-details">
         <summary>预估表现分的依据 · 算法 v{{ current.performanceRating.version }}</summary>
         <p>{{ current.performanceRating.reason }}</p>
@@ -159,24 +185,27 @@ onBeforeUnmount(() => {
         <p v-if="current.performanceRating.bound">结果超出 0–4000 的显示范围，仅显示边界。</p>
       </details>
       <p v-for="warning in current.warnings" :key="warning" class="small subtle">{{ warning }}</p>
-      <div :key="current.session.key" class="score-parts">
-        <article v-for="part in current.parts" :key="part.id" class="score-part">
-          <div class="report-toolbar">
-            <strong>{{ part.label }}</strong
-            ><span>{{ part.weight }}%</span>
-          </div>
-          <b class="part-number">{{ part.score === null ? '—' : part.score.toFixed(1) }}</b>
-          <div class="score-track">
-            <span :style="{ transform: `scaleX(${(part.score ?? 0) / 100})` }"></span>
-          </div>
-          <p>{{ part.reason }}</p>
-          <details>
-            <summary>公式与样本</summary>
-            <p>{{ part.formula }}</p>
-            <p>有效样本：{{ part.samples }}；分数限制在 0–100。缺失项不按零分计算。</p>
-          </details>
-        </article>
-      </div>
+      <details class="report-context">
+        <summary>评分构成与样本依据</summary>
+        <div :key="current.session.key" class="score-parts">
+          <article v-for="part in current.parts" :key="part.id" class="score-part">
+            <div class="report-toolbar">
+              <strong>{{ part.label }}</strong
+              ><span>{{ part.weight }}%</span>
+            </div>
+            <b class="part-number">{{ part.score === null ? '—' : part.score.toFixed(1) }}</b>
+            <div class="score-track">
+              <span :style="{ transform: `scaleX(${(part.score ?? 0) / 100})` }"></span>
+            </div>
+            <p>{{ part.reason }}</p>
+            <details>
+              <summary>公式与样本</summary>
+              <p>{{ part.formula }}</p>
+              <p>有效样本：{{ part.samples }}；分数限制在 0–100。缺失项不按零分计算。</p>
+            </details>
+          </article>
+        </div>
+      </details>
       <div v-if="current.official" class="report-context">
         <strong>官方成绩与对照</strong>
         <p>
@@ -235,32 +264,6 @@ onBeforeUnmount(() => {
           </ol>
         </article>
       </details>
-      <h3>下一场的行动建议</h3>
-      <p v-if="!current.advice.length" class="subtle">目前没有足够证据触发具体建议。</p>
-      <article v-for="(advice, i) in current.advice" :key="advice.id" class="advice-card">
-        <span class="eyebrow">{{ String(i + 1).padStart(2, '0') }} / ACTION</span>
-        <p>
-          <strong>{{ advice.evidence }}</strong>
-        </p>
-        <p class="subtle">{{ advice.possibility }}</p>
-        <p>{{ advice.action }}</p>
-        <div class="evidence-links">
-          <a
-            v-for="id in advice.submissionIds"
-            :key="id"
-            :href="`https://codeforces.com/contest/${contestId}/submission/${id}`"
-            target="_blank"
-            rel="noopener noreferrer"
-            >#{{ id }}</a
-          ><a
-            v-if="advice.problemIndex"
-            :href="`https://codeforces.com/contest/${contestId}/problem/${advice.problemIndex}`"
-            target="_blank"
-            rel="noopener noreferrer"
-            >查看题目 {{ advice.problemIndex }}</a
-          >
-        </div>
-      </article>
     </template>
     <p v-else-if="report" class="alert">仅练习或没有可识别的参赛记录，不生成比赛表现分。</p>
     <p v-else class="subtle">正在读取比赛数据…</p>

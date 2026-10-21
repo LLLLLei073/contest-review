@@ -57,6 +57,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   await expect(page.getByText('分析已更新', { exact: true })).toBeVisible({ timeout: 20000 });
   await expect(page.locator('.score-value')).toContainText('1400');
   await expect(page.locator('.score-secondary')).toContainText('62 / 100');
+  await page.getByText('评分构成与样本依据', { exact: true }).click();
   await expect(page.locator('.score-part').first()).toContainText('20 人');
   await page.locator('.report-deep-dive').first().locator('summary').click();
   await expect(page.locator('.timeline-problem').nth(1)).toContainText('未尝试');
@@ -104,7 +105,7 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   await page.getByRole('button', { name: '导出备份', exact: true }).click();
   const path = (await (await downloaded).path())!;
   const result = JSON.parse(readFileSync(path, 'utf8'));
-  expect(result.version).toBe(10);
+  expect(result.version).toBe(11);
   expect(result.tables.analysis_cache).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path);
   page.once('dialog', (d) => d.accept());

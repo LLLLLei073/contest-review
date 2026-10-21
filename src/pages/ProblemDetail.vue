@@ -1,20 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
-import {
-  ArrowLeft,
-  ExternalLink,
-  Save,
-  RotateCcw,
-  Eye,
-  EyeOff,
-  Clock3,
-  Sparkles,
-  Trash2,
-} from 'lucide-vue-next';
+import { ArrowLeft, ExternalLink, EyeOff, Clock3, Sparkles, Trash2 } from 'lucide-vue-next';
 import { api, notify, statusLabels, resultLabels, fullDate, localDate } from '../api';
 import {
-  reasonOptions,
   verdictLabel,
   emptyReview,
   type ProblemRow,
@@ -24,13 +13,29 @@ import {
 } from '../../shared/domain';
 import type { AiReviewRecord } from '../../shared/ai-review';
 import Markdown from '../components/Markdown.vue';
+import ReviewEditor from '../components/review/ReviewEditor.vue';
+import GuidedReview from '../components/review/GuidedReview.vue';
+import ReviewProgress from '../components/review/ReviewProgress.vue';
+import EvidenceTimeline from '../components/review/EvidenceTimeline.vue';
+import { learningEvidence } from '../../shared/learning-evidence';
+import { useLearningState } from '../learningState';
 import { useSection } from '../sections';
 import LearningProblem from '../components/LearningProblem.vue';
-import { categoryNames } from '../../shared/training';
-import { reviewQualityHints } from '../../shared/training-extras';
+import { problemReturnLocation } from '../../shared/problem-filters';
 const route = useRoute(),
   key = String(route.params.key);
-const tab = useSection(['notes', 'submissions', 'attempts', 'assistant'] as const, 'notes');
+const tab = useSection(
+  ['notes', 'submissions', 'attempts', 'assistant', 'evidence', 'guided'] as const,
+  'notes',
+);
+const evidenceState = useLearningState();
+watch(
+  tab,
+  (value) => {
+    if (value === 'evidence') void evidenceState.load();
+  },
+  { immediate: true },
+);
 const tool = useSection(['code', 'hints', 'stress', 'experience', 'transfer'] as const, 'code', 'tool');
 const showSharedCode = ref(false);
 const evaluationCard = ref<HTMLElement | null>(null);
@@ -49,15 +54,23 @@ watch([tab, tool], () => {
 const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[] } | null>(null),
   draft = ref<Review>(emptyReview()),
   snapshot = ref(''),
-  preview = ref(false),
   error = ref(''),
-  busy = ref(false),
-  customReason = ref('');
+  busy = ref(false);
 const attempt = ref<{ result: 'independent' | 'hint' | 'failed'; minutes: number; note: string }>({
   result: 'independent',
   minutes: 0,
   note: '',
 });
+const evidence = computed(() =>
+  data.value
+    ? learningEvidence({
+        problemKey: key,
+        ...data.value,
+        review: data.value.problem.review,
+        records: evidenceState.state.value?.records ?? [],
+      })
+    : [],
+);
 const aiReviews = ref<AiReviewRecord[]>([]),
   aiConfigured = ref(false),
   aiBusy = ref(false),
@@ -74,19 +87,7 @@ const aiVerdictOptions = [
   'COMPILATION_ERROR',
   'OK',
 ];
-const fields = [
-  { key: 'wrongIdea', label: '当时的思路', hint: '当时怎么想的？卡在了哪里？' },
-  { key: 'rootCause', label: '根本原因', hint: '为什么会错？是知识缺口，还是实现偏差？' },
-  {
-    key: 'solution',
-    label: '正确解法',
-    hint: '描述关键观察、算法步骤与正确性。支持 $行内公式$ 和 $$ 独立公式。',
-  },
-  { key: 'complexity', label: '复杂度分析', hint: '时间复杂度与空间复杂度' },
-  { key: 'counterexample', label: '关键反例与边界', hint: '留下一个最小反例，提醒未来的自己。' },
-] as const;
 const dirty = computed(() => Boolean(data.value) && JSON.stringify(draft.value) !== snapshot.value);
-const qualityHints = computed(() => reviewQualityHints(draft.value));
 const nextDate = computed({
   get: () => (draft.value.nextReview ? localDate(draft.value.nextReview) : ''),
   set: (v) => (draft.value.nextReview = v ? new Date(v + 'T09:00:00').toISOString() : null),
@@ -197,7 +198,9 @@ function fillNote(field: 'rootCause' | 'counterexample' | 'wrongIdea', content: 
   const current = draft.value[field].trim();
   draft.value[field] = current ? current + '\n\n---\n\n' + content.trim() : content.trim();
   tab.value = 'notes';
-  notify('已填入笔记，确认后请保存');
+  notify(
+    `已填入${{ rootCause: '根本原因', counterexample: '关键反例与边界', wrongIdea: '当时的思路' }[field]}，确认后请保存`,
+  );
 }
 function fillReasons(points: string[]) {
   for (const p of points) if (!draft.value.reasons.includes(p)) draft.value.reasons.push(p);
@@ -232,11 +235,6 @@ async function saveInner(action: string) {
     busy.value = false;
   }
 }
-function addReason() {
-  const r = customReason.value.trim();
-  if (r && !draft.value.reasons.includes(r)) draft.value.reasons.push(r);
-  customReason.value = '';
-}
 async function toggleIgnore() {
   draft.value.ignored = !draft.value.ignored;
   await save();
@@ -262,9 +260,21 @@ function unload(e: BeforeUnloadEvent) {
   }
 }
 onMounted(() => {
-  void load();
+  void load().then(async () => {
+    await nextTick();
+    if (route.query.focus === 'evaluation') focusEvaluation();
+  });
   window.addEventListener('beforeunload', unload);
 });
+watch(
+  () => route.query.focus,
+  async (focus) => {
+    if (focus === 'evaluation') {
+      await nextTick();
+      focusEvaluation();
+    }
+  },
+);
 onUnmounted(() => window.removeEventListener('beforeunload', unload));
 async function confirmLeave() {
   if (inFlightSave) await inFlightSave;
@@ -276,7 +286,9 @@ onBeforeRouteUpdate((to) => {
 });
 </script>
 <template>
-  <RouterLink class="back-link" to="/problems"><ArrowLeft :size="15" />返回错题库</RouterLink>
+  <RouterLink class="back-link" :to="problemReturnLocation(route.query.returnTo)"
+    ><ArrowLeft :size="15" />返回错题库</RouterLink
+  >
   <div v-if="error" class="alert error" role="alert">{{ error }}</div>
   <template v-if="data"
     ><div class="page-head detail-head">
@@ -322,6 +334,8 @@ onBeforeRouteUpdate((to) => {
               { id: 'submissions', label: '提交记录' },
               { id: 'attempts', label: '重做历史' },
               { id: 'assistant', label: '解题助手' },
+              { id: 'evidence', label: '学习证据' },
+              { id: 'guided', label: '引导复盘' },
             ]"
             :key="t.id"
             :class="{ active: tab === t.id }"
@@ -332,91 +346,38 @@ onBeforeRouteUpdate((to) => {
           </button>
         </div>
         <div>
-          <div v-show="tab === 'notes'" class="editor-body">
-            <div class="editor-toolbar">
-              <span class="subtle small">支持 Markdown · LaTeX · 代码高亮</span
-              ><button class="small-button" @click="preview = !preview">
-                <Eye :size="14" />{{ preview ? '继续编辑' : '预览笔记' }}
-              </button>
-            </div>
-            <label class="field-title">错因归类</label>
-            <div class="reason-picker">
-              <label
-                v-for="r in [...new Set([...reasonOptions, ...draft.reasons])]"
-                :key="r"
-                :class="{ picked: draft.reasons.includes(r) }"
-                ><input v-model="draft.reasons" type="checkbox" :value="r" />{{ r }}</label
-              >
-            </div>
-            <div class="inline-input">
-              <input
-                v-model="customReason"
-                maxlength="80"
-                aria-label="自定义错因"
-                placeholder="添加自定义错因"
-                @keydown.enter.prevent="addReason"
-              /><button @click="addReason">添加</button>
-            </div>
-            <template v-if="data.problem.source === 'atcoder'">
-              <label class="field-title">算法领域（手动标注，可多选）</label>
-              <div class="reason-picker">
-                <label
-                  v-for="category in categoryNames"
-                  :key="category"
-                  :class="{ picked: draft.categories.includes(category) }"
-                  ><input v-model="draft.categories" type="checkbox" :value="category" />{{ category }}</label
-                >
-              </div>
-            </template>
-            <div v-for="(field, i) in fields" :key="field.key" class="note-field">
-              <label :for="field.key"
-                ><span>0{{ i + 1 }}</span
-                >{{ field.label }}</label
-              ><Markdown v-if="preview && draft[field.key]" :text="draft[field.key]" />
-              <p v-else-if="preview" class="subtle small">暂未填写</p>
-              <textarea
-                v-else
-                :id="field.key"
-                v-model="draft[field.key]"
-                :rows="field.key === 'solution' ? 6 : 3"
-                :placeholder="field.hint"
-              ></textarea>
-            </div>
-            <div class="note-field">
-              <label for="code"><span>06</span>代码留档</label
-              ><select v-model="draft.language" aria-label="代码语言">
-                <option value="cpp">C++</option>
-                <option value="python">Python</option>
-                <option value="java">Java</option>
-                <option value="javascript">JavaScript</option>
-                <option value="rust">Rust</option>
-                <option value="go">Go</option></select
-              ><Markdown
-                v-if="preview"
-                :text="'```' + draft.language + '\n' + draft.code + '\n```'"
-              /><textarea
-                v-else
-                id="code"
-                v-model="draft.code"
-                class="code-input"
-                rows="10"
-                spellcheck="false"
-                placeholder="粘贴你的代码，不会自动执行"
-              ></textarea>
-            </div>
-            <div class="editor-actions">
-              <span :class="['small', dirty ? 'unsaved' : 'subtle']">{{
-                dirty ? '有未保存的修改' : '内容已保存'
-              }}</span
-              ><button :disabled="busy" @click="save()"><Save :size="15" />保存笔记</button>
-            </div>
-            <details v-if="qualityHints.length" class="review-quality small">
-              <summary>复盘质量提示（可跳过）</summary>
-              <p v-for="hint in qualityHints" :key="hint">{{ hint }}</p>
-            </details>
-          </div>
+          <GuidedReview
+            v-if="tab === 'guided'"
+            :context="{ kind: 'problem', problemKey: key }"
+            @skip="tab = 'assistant'"
+            @updated="!dirty && load()"
+          />
+          <EvidenceTimeline v-if="tab === 'evidence'" :events="evidence" />
+          <p v-if="tab === 'evidence' && evidenceState.error.value" role="alert" class="alert">
+            学习工具记录暂时无法读取：{{ evidenceState.error.value
+            }}<button @click="evidenceState.load">重试</button>
+          </p>
+          <ReviewEditor
+            v-show="tab === 'notes'"
+            v-model="draft"
+            :dirty="dirty"
+            :busy="busy"
+            :atcoder="data.problem.source === 'atcoder'"
+            @save="save()"
+          />
           <div v-if="tab === 'submissions'" class="editor-body">
             <p class="subtle small">AC 表示通过评测；是否真正掌握，由你的独立重做记录决定。</p>
+            <p class="small">
+              获取源码受平台登录和跨域限制。获取失败时，可<button
+                class="text-link"
+                @click="
+                  tab = 'assistant';
+                  tool = 'code';
+                "
+              >
+                粘贴代码继续分析</button
+              >。
+            </p>
             <div v-if="!data.submissions.length" class="quiet-empty">暂无提交记录，这是手动添加的题目。</div>
             <div v-for="s in data.submissions" :key="s.id" class="timeline-row">
               <span :class="['verdict', s.verdict === 'OK' ? 'ok' : '']">{{
@@ -547,6 +508,7 @@ onBeforeRouteUpdate((to) => {
               :language="aiForm.language"
               :statement="aiForm.statement"
               :ai-reviews="aiReviews"
+              :latest-attempt-id="data.attempts[0]?.id"
             />
             <div v-show="tool === 'code'">
               <div class="editor-actions">
@@ -582,6 +544,12 @@ onBeforeRouteUpdate((to) => {
                   </button>
                 </div>
                 <template v-if="aiExpanded === r.id">
+                  <details class="ai-section">
+                    <summary>
+                      本次分析的代码快照 · {{ r.language }} · {{ r.code.split('\n').length }} 行
+                    </summary>
+                    <pre>{{ r.code }}</pre>
+                  </details>
                   <section class="ai-section">
                     <div class="ai-section-head">
                       <h3>错误原因</h3>
@@ -658,39 +626,13 @@ onBeforeRouteUpdate((to) => {
         </div>
       </section>
       <aside class="detail-side">
-        <section class="panel side-card">
-          <span class="eyebrow">SPACED PRACTICE</span>
-          <h2>理解，需要再验证</h2>
-          <div class="stage-track">
-            <span v-for="n in 5" :key="n" :class="{ done: n <= draft.stage }">{{
-              n <= draft.stage ? '✓' : n
-            }}</span>
-          </div>
-          <p class="small subtle">
-            {{ draft.status === 'mastered' ? '五轮独立重做已完成。' : '依次独立重做，逐步拉长复习间隔。'
-            }}<br />次日 → 3 天 → 7 天 → 14 天 → 30 天
-          </p>
-          <p v-if="draft.awaitingEvaluation" class="small">
-            当天 AC 已确认重做完成；请评价是否独立做对。评价前不安排下次复习。
-          </p>
-          <p
-            v-if="draft.firstReflectionRequired && draft.firstRedoAt && !draft.firstReflectionAt"
-            class="small"
-          >
-            首次重做后，请在左侧至少填写一项分析并保存，完成今天的复盘步骤。
-          </p>
-          <p v-if="draft.status === 'pending' && !draft.firstRedoAt" class="small">
-            先打开原题重做；当天 CF AC 会自动确认重做完成。未 AC 时也可记录一次尝试。
-          </p>
-          <label v-if="draft.status === 'reviewing'"
-            >下次复习日期<input v-model="nextDate" type="date" /></label
-          ><button v-if="draft.status === 'reviewing'" class="wide" :disabled="busy" @click="save()">
-            保存日期与笔记</button
-          ><button v-if="draft.status === 'mastered'" class="wide" :disabled="busy" @click="save('restart')">
-            <RotateCcw :size="15" />重新加入复习
-          </button>
-          <div v-if="draft.ignored" class="alert">此题已忽略，不会出现在复习队列中。</div>
-        </section>
+        <ReviewProgress
+          :review="draft"
+          :busy="busy"
+          :attempt-result="attempt.result"
+          v-model:next-date="nextDate"
+          @save="save"
+        />
         <section
           ref="evaluationCard"
           v-if="draft.status !== 'mastered' && !draft.ignored"

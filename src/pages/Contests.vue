@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
-import { Flag, ArrowUpRight, Search, Save, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-vue-next';
+import { Flag, ArrowUpRight, Save, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 import type { ContestReview, CFRating } from '../../shared/domain';
 import type { BatchJob } from '../../shared/xcpc';
 import { api, notify, job, settings, loadSettings } from '../api';
 import ContestReport from '../components/ContestReport.vue';
+import ContestFilters from '../components/contests/ContestFilters.vue';
+import BatchProgress from '../components/contests/BatchProgress.vue';
 import XcpcReport from '../components/XcpcReport.vue';
 import AtcoderReport from '../components/AtcoderReport.vue';
 import { useSection } from '../sections';
 import UpsolveList from '../components/UpsolveList.vue';
 import type { UpsolveItem } from '../../shared/training-extras';
 import LearningCoach from '../components/LearningCoach.vue';
+import GuidedReview from '../components/review/GuidedReview.vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 type ContestView = {
   source: 'cf' | 'xcpc' | 'atcoder';
@@ -35,7 +38,7 @@ type ContestView = {
 const route = useRoute(),
   router = useRouter();
 const section = useSection(['reports', 'upsolve'] as const, 'reports');
-const reportView = useSection(['analysis', 'notes', 'coach'] as const, 'analysis', 'report');
+const reportView = useSection(['analysis', 'notes', 'coach', 'guided'] as const, 'analysis', 'report');
 const upsolve = ref<UpsolveItem[]>([]);
 const upsolveLoading = ref(false);
 let upsolveSerial = 0;
@@ -64,6 +67,7 @@ const rows = ref<ContestView[]>([]),
   sourceFilter = ref(routeValue('source') || 'all'),
   yearFilter = ref(routeValue('year') || 'all'),
   typeFilter = ref(routeValue('type') || 'all'),
+  reportStatus = ref(routeValue('status') || 'all'),
   page = ref(Math.max(1, Number(routeValue('page')) || 1)),
   mobileShowingReport = ref(Boolean(routeValue('contest'))),
   batch = ref<BatchJob | null>(null),
@@ -87,6 +91,7 @@ const filtered = computed(() =>
     (c) =>
       (c.name + ' ' + c.id).toLowerCase().includes(query.value.toLowerCase()) &&
       (sourceFilter.value === 'all' || c.source === sourceFilter.value) &&
+      (reportStatus.value === 'all' || c.analysisStatus === reportStatus.value) &&
       (yearFilter.value === 'all' ||
         (c.startTimeSeconds ? new Date(c.startTimeSeconds * 1000).getFullYear().toString() : 'unknown') ===
           yearFilter.value) &&
@@ -116,6 +121,7 @@ function syncLocation(overrides: Record<string, string> = {}) {
           source: sourceFilter.value === 'all' ? undefined : sourceFilter.value,
           year: yearFilter.value === 'all' ? undefined : yearFilter.value,
           type: typeFilter.value === 'all' ? undefined : typeFilter.value,
+          status: reportStatus.value === 'all' ? undefined : reportStatus.value,
           q: query.value || undefined,
           page: page.value === 1 ? undefined : String(page.value),
           contest: contestKey || undefined,
@@ -125,7 +131,7 @@ function syncLocation(overrides: Record<string, string> = {}) {
     .catch(() => {});
 }
 watch(
-  [query, sourceFilter, yearFilter, typeFilter],
+  [query, sourceFilter, yearFilter, typeFilter, reportStatus],
   () => {
     page.value = 1;
     syncLocation();
@@ -329,6 +335,7 @@ watch(
     sourceFilter.value = routeValue('source') || 'all';
     yearFilter.value = routeValue('year') || 'all';
     typeFilter.value = routeValue('type') || 'all';
+    reportStatus.value = routeValue('status') || 'all';
     page.value = Math.max(1, Number(routeValue('page')) || 1);
     const key = routeValue('contest');
     if (key !== (selected.value?.key ?? '')) {
@@ -380,14 +387,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
   />
   <div v-if="error" class="alert error">{{ error }}</div>
   <div v-show="section === 'reports'">
-    <div v-if="batch" :class="['alert', { error: batch.status === 'failed' }]" role="status">
-      {{ batch.phase }} · 已处理 {{ batch.processed }} / {{ batch.total }} · 成功 {{ batch.succeeded }} · 失败
-      {{ batch.failed }} <button v-if="batch.status === 'running'" @click="stopBatch">停止</button>
-      <details v-if="batch.errors.length">
-        <summary>查看失败项</summary>
-        <p v-for="e in batch.errors" :key="e">{{ e }}</p>
-      </details>
-    </div>
+    <BatchProgress :batch="batch" :busy="batchBusy" @stop="stopBatch" @resume="oneClick" />
     <div v-if="settings.xcpcPlayer" class="contest-filter">
       <label
         >XCPC 表现分口径
@@ -402,50 +402,18 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
     </div>
     <div class="contest-layout" :class="{ 'mobile-report-open': mobileShowingReport && selected }">
       <section class="panel contest-list" aria-label="比赛列表">
-        <div class="filter-top">
-          <label class="search-field"
-            ><Search :size="17" /><input
-              v-model="query"
-              aria-label="搜索比赛"
-              placeholder="搜索比赛名称或编号"
-          /></label>
-        </div>
-        <div class="contest-source-tabs" role="group" aria-label="比赛平台">
-          <button
-            v-for="source in [
-              { value: 'all', label: '全部' },
-              { value: 'cf', label: 'CF' },
-              { value: 'atcoder', label: 'AtCoder' },
-              { value: 'xcpc', label: 'XCPC' },
-            ]"
-            :key="source.value"
-            type="button"
-            :aria-pressed="sourceFilter === source.value"
-            :class="{ active: sourceFilter === source.value }"
-            @click="sourceFilter = source.value"
-          >
-            {{ source.label }}
-          </button>
-        </div>
-        <div class="contest-filter contest-filter-grid">
-          <select v-model="yearFilter" aria-label="比赛年份">
-            <option value="all">所有年份</option>
-            <option v-for="year in years" :key="year" :value="year">
-              {{ year === 'unknown' ? '时间待补全' : year + ' 年' }}
-            </option>
-          </select>
-          <select v-model="typeFilter" aria-label="参赛类型">
-            <option value="all">所有类型</option>
-            <option value="CONTESTANT">正式参赛</option>
-            <option value="VIRTUAL">虚拟参赛</option>
-            <option value="practice">仅练习 / 无参赛记录</option>
-          </select>
-        </div>
-        <p class="contest-result-count" aria-live="polite">
-          找到 {{ filtered.length }} 场<span v-if="filtered.length">
-            · 第 {{ page }} / {{ pageCount }} 页</span
-          >
-        </p>
+        <ContestFilters
+          v-model:query="query"
+          v-model:source="sourceFilter"
+          v-model:year="yearFilter"
+          v-model:type="typeFilter"
+          v-model:status="reportStatus"
+          :years="years"
+          :statuses="[...new Set(rows.map((r) => r.analysisStatus))]"
+          :count="filtered.length"
+          :page="page"
+          :page-count="pageCount"
+        />
         <div class="contest-list-results">
           <div v-if="loading && !filtered.length" class="empty-state" role="status">
             <Flag :size="28" />
@@ -573,6 +541,9 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
               </button>
             </div>
             <nav class="content-switcher report-switcher" aria-label="比赛报告内容">
+              <button :class="{ active: reportView === 'guided' }" @click="reportView = 'guided'">
+                引导复盘
+              </button>
               <button :class="{ active: reportView === 'coach' }" @click="reportView = 'coach'">
                 AI 教练
               </button>
@@ -584,6 +555,11 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
               </button>
             </nav>
             <div class="editor-body">
+              <GuidedReview
+                v-if="reportView === 'guided'"
+                :context="{ kind: 'contest', source: selected.source, contestId: String(selected.id) }"
+                @skip="reportView = 'coach'"
+              />
               <LearningCoach
                 v-if="reportView === 'coach'"
                 :source="selected.source"

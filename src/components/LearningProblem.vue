@@ -5,6 +5,7 @@ import { downloadFiles } from '../learning';
 import type { LearningRecord } from '../../shared/learning-domain';
 import type { AiReviewRecord } from '../../shared/ai-review';
 import Markdown from './Markdown.vue';
+import { localDay } from '../../shared/core-store';
 const props = defineProps<{
   tool: string;
   problemKey: string;
@@ -12,6 +13,7 @@ const props = defineProps<{
   language: string;
   statement: string;
   aiReviews: AiReviewRecord[];
+  latestAttemptId?: string;
 }>();
 const records = ref<LearningRecord[]>([]),
   busy = ref(false),
@@ -19,6 +21,15 @@ const records = ref<LearningRecord[]>([]),
   message = ref(''),
   idea = ref(''),
   sourceId = ref('');
+const createdCard = ref('');
+const currentHints = computed(() =>
+  hints.value.filter(
+    (r) => r.kind === 'hint' && r.session === localDay(new Date()) + ':' + (props.latestAttemptId ?? 'first'),
+  ),
+);
+const hintLevel = computed(() =>
+  Math.max(0, ...currentHints.value.map((r) => (r.kind === 'hint' ? r.level : 0))),
+);
 const statement = computed(() => props.statement);
 let alive = true,
   loadSerial = 0;
@@ -49,9 +60,10 @@ async function run(action: string, input: unknown) {
   error.value = '';
   message.value = '';
   try {
-    const r = await api<{ message?: string }>('/learning/' + action, input);
+    const r = await api<{ message?: string; id?: string }>('/learning/' + action, input);
     if (!alive) return;
     message.value = r.message || '已完成';
+    if (action === 'draft') createdCard.value = r.id ?? '';
     await load();
   } catch (e) {
     error.value = (e as Error).message;
@@ -107,19 +119,30 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
         生成经验卡草稿
       </button>
       <p class="small subtle">AI 分析先转成草稿，在知识中心核对确认后才能参与检索。</p>
+      <RouterLink
+        v-if="createdCard"
+        :to="{ path: '/knowledge', query: { experience: createdCard } }"
+        class="small-button"
+        >核对刚生成的经验草稿 →</RouterLink
+      >
     </section>
     <section v-show="tool === 'hints'" class="learning-stack">
       <h2>渐进式提示</h2>
+      <p role="status">
+        本次练习已使用 {{ hintLevel }} / 4 级提示{{
+          hintLevel ? ' · 本次完成需标记为借助提示' : ' · 先尝试独立推导'
+        }}
+      </p>
       <label>我目前的思路<textarea v-model="idea" rows="2" maxlength="2000" /></label>
       <div class="button-row">
         <button
           v-for="(label, i) in ['方向提示', '关键观察', '算法思路', '完整题解']"
           :key="label"
           class="small-button"
-          :disabled="busy"
+          :disabled="busy || i + 1 > hintLevel + 1"
           @click="run('hint', { problemKey, statement, idea, level: i + 1 })"
         >
-          {{ i + 1 }}. {{ label }}
+          {{ i + 1 }}. {{ label }}{{ i + 1 <= hintLevel ? ' · 已获取' : '' }}
         </button>
       </div>
       <p class="small subtle">提示按顺序解锁。本次练习使用提示后，评价采用“借助提示”，不推进独立完成阶段。</p>
@@ -132,6 +155,11 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
     </section>
     <section v-show="tool === 'stress'" class="learning-stack">
       <h2>反例与对拍</h2>
+      <ol class="verification-steps">
+        <li>生成测试包，检查参考解和数据范围。</li>
+        <li>下载 ZIP，按包内说明在本机运行。</li>
+        <li>导入运行产生的 report.json，核对反例。</li>
+      </ol>
       <p class="small subtle">
         使用上方共用代码、语言和题目上下文生成对拍包。支持 C++17 / Python
         3；下载后审阅代码，在本机执行，再导入 report.json。生成内容尚未验证。

@@ -17,6 +17,27 @@ function setup() {
   s.activate('grow');
   return s;
 }
+test('experience history filtering happens before pagination without changing earned XP', () => {
+  const s = setup();
+  try {
+    s.ingest('grow', [sub(1), sub(2, 'B')]);
+    const xp = growthSummary(s).xp;
+    const all = growthRoute(s, 'history', 'GET', undefined, { kind: 'ac', page: 1, pageSize: 1 }) as {
+      items: { kind: string }[];
+      total: number;
+    };
+    assert.equal(all.total, 2);
+    assert.equal(all.items.length, 1);
+    assert.equal(all.items[0].kind, 'ac');
+    assert.equal(
+      (growthRoute(s, 'history', 'GET', undefined, { kind: 'reflection' }) as { total: number }).total,
+      0,
+    );
+    assert.equal(growthSummary(s).xp, xp);
+  } finally {
+    s.close();
+  }
+});
 function sub(id: number, index = 'A', at = '2020-10-01T00:00:00Z', verdict = 'OK'): CFSubmission {
   return {
     id,

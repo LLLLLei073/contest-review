@@ -115,7 +115,7 @@ test('historical growth, unlocks, equipment persistence, pagination, account iso
   ).toBeDisabled();
   expect(errors).toEqual([]);
 });
-test('terminal routes remain readable and contained at desktop and mobile, keyboard focus and loading failures recover', async ({
+test('workbench routes remain readable and contained at desktop and mobile, keyboard focus and loading failures recover', async ({
   page,
 }, info) => {
   const pages = info.project.name === 'pages';
@@ -130,7 +130,7 @@ test('terminal routes remain readable and contained at desktop and mobile, keybo
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
         .toBe(true);
       const bg = await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
-      expect(bg).toBe('rgb(9, 15, 29)');
+      expect(bg).toBe('rgb(243, 245, 247)');
       if (path === '/')
         await page.screenshot({ path: info.outputPath(`terminal-home-${width}.png`), fullPage: true });
     }

@@ -225,20 +225,20 @@ test('Agent changes only future plan; same inputs dedupe concurrent calls; rever
   l.revert({ id: revision.id });
   await l.agent({ automatic: true });
   assert.equal(calls(), 1);
-  assert.deepEqual(
-    s.get<DailyPlan>('daily_plans', 'alice', localDay(tomorrow))!.newKeys,
-    revision.before.newKeys,
-  );
+  assert.equal(s.get<DailyPlan>('daily_plans', 'alice', localDay(tomorrow)), undefined);
   s.close();
 });
-test('Agent invalid model selection falls back; disabled auto never calls AI', async () => {
+test('Agent model cannot override deterministic selection; disabled auto never calls AI', async () => {
   const { s, l, calls } = setup(() => ({ keys: ['999999:X'], reason: 'bad' }));
   preparePlans(s);
   await l.agent({ automatic: true });
   assert.equal(calls(), 0);
-  const r = (await l.agent({ automatic: false })) as { fallback: boolean };
-  assert.equal(r.fallback, true);
-  assert.ok(l.records().some((r) => r.kind === 'agent-run' && r.status === 'failed'));
+  const r = (await l.agent({ automatic: false })) as Extract<LearningRecord, { kind: 'revision' }>;
+  assert.equal(r.kind, 'revision');
+  assert.equal(r.after.newKeys.length, 5);
+  assert.equal(r.after.newKeys.includes('999999:X'), false);
+  assert.ok(r.planningDecisionId);
+  assert.ok(l.records().some((r) => r.kind === 'agent-run' && r.status === 'completed'));
   s.close();
 });
 test('migration occupies existing new slot; no repeated assignment; AC required and feedback recorded once', async () => {
@@ -262,7 +262,7 @@ test('v8 backup validates AI archives and learning references and restores legac
   await l.draft({ problemKey: key });
   await l.hint({ problemKey: key, statement: '题面', level: 1 });
   const backup = s.backup();
-  assert.equal(backup.version, 10);
+  assert.equal(backup.version, 11);
   s.restore(backup);
   assert.equal(l.records().length, 2);
   const broken = structuredClone(backup);

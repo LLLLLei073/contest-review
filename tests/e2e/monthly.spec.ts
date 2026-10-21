@@ -144,6 +144,12 @@ test('monthly report: month/source switches, evidence, AI, reload and mobile lay
   await expect(page.locator('.switch-surface__veil, .page-scene')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('monthly-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await page.getByRole('button', { name: '切换为深色模式' }).click();
+  await page.emulateMedia({ media: 'print' });
+  await expect(page.locator('.sidebar')).toBeHidden();
+  await expect(page.getByRole('button', { name: '打印月报' })).toBeHidden();
+  await expect(page.locator('.monthly-report')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await page.emulateMedia({ media: 'screen' });
   expect(errors).toEqual([]);
 });
 test('monthly empty state and unconfigured AI retain rule analysis', async ({ page }, info) => {

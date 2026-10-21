@@ -259,13 +259,14 @@ export function growthRoute(
   }
   if (action === 'summary' && method === 'GET') return growthSummary(store);
   if (action === 'history' && method === 'GET') {
-    const { page, pageSize } = z
+    const { page, pageSize, kind } = z
       .object({
         page: z.coerce.number().int().min(1).max(100000).default(1),
         pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        kind: z.enum(['all', 'ac', 'independent', 'hint', 'reflection', 'weekly']).default('all'),
       })
       .parse(query);
-    const all = growthEvents(store);
+    const all = growthEvents(store).filter((e) => kind === 'all' || e.kind === kind);
     return { items: all.slice((page - 1) * pageSize, page * pageSize), total: all.length, page, pageSize };
   }
   if (action === 'equipment' && method === 'PUT') {

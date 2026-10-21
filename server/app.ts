@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { AgentService } from '../shared/agent-service.js';
 import { growthRoute } from '../shared/growth.js';
 import { LearningService } from '../shared/learning-service.js';
+import { PlanningService } from '../shared/planning-service.js';
 import { monthlyReport } from '../shared/monthly-report.js';
 import staticPlugin from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { AnalysisService } from '../shared/analysis-service.js';
 import { ContestHub } from '../shared/contest-hub.js';
 import { TrainingService } from '../shared/training-service.js';
 import { listAiModels } from '../shared/ai-models.js';
+import { resolveAiConfiguration } from '../shared/ai-configuration.js';
 import {
   AiReviewer,
   aiConfigSchema,
@@ -60,7 +62,19 @@ export async function buildApp(
   const training = new TrainingService(store, cf);
   const aiReviewer = new AiReviewer(options.aiFetch);
   const learning = new LearningService(store, aiReviewer);
+  const planning = new PlanningService(store);
+  app.route<{ Params: { action: string } }>({
+    method: ['GET', 'POST', 'PUT'],
+    url: '/api/planning/:action',
+    handler: async (req) => planning.route(req.params.action, req.method, req.body),
+  });
   const agent = new AgentService(store, options.aiFetch);
+  app.route<{ Params: { '*': string } }>({
+    method: ['GET', 'POST'],
+    url: '/api/agent/review/*',
+    handler: async (req) =>
+      agent.route('review/' + req.params['*'], req.method, req.body, req.query as Record<string, string>),
+  });
   app.post('/api/agent/run', (req, reply) =>
     reply
       .type('application/x-ndjson')
@@ -172,21 +186,16 @@ export async function buildApp(
         model: z.string().trim().min(1).max(120),
       })
       .parse(req.body);
-    const previous = aiConfig();
-    const apiKey =
-      previous && body.apiKey && body.apiKey === maskApiKey(previous.apiKey) ? previous.apiKey : body.apiKey;
-    const config = aiConfigSchema.parse({ baseUrl: body.baseUrl, apiKey, model: body.model });
+    const config = resolveAiConfiguration(body, aiConfig());
     store.externalPut(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY, config);
     return aiSettingsView(config);
   });
-  app.post('/api/ai/test', async () => {
-    const config = aiConfig();
-    if (!config) throw new Error('请先保存 AI 配置');
+  app.post('/api/ai/test', async (req) => {
+    const config = resolveAiConfiguration(req.body, aiConfig());
     return { ok: true, message: await aiReviewer.test(config) };
   });
-  app.post('/api/ai/capabilities', async () => {
-    const config = aiConfig();
-    if (!config) throw new Error('请先保存 AI 配置');
+  app.post('/api/ai/capabilities', async (req) => {
+    const config = resolveAiConfiguration(req.body, aiConfig());
     return aiReviewer.capabilities(config);
   });
   app.get('/api/review/contests', async () =>

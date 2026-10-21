@@ -118,10 +118,22 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
 });
 
 test('entry and navigation are immediately interactive without blocking scenes', async ({ page }, info) => {
+  let release = () => {};
+  const opening = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  if (info.project.name !== 'pages')
+    await page.route('**/api/settings', async (route) => {
+      await opening;
+      await route.continue();
+    });
   await page.goto(info.project.name === 'pages' ? './#/' : '/');
   await expect(page.locator('.opening-intro, .page-scene, .switch-surface__veil')).toHaveCount(0);
   await expect(page.locator('.app-shell')).not.toHaveAttribute('inert', '');
   await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await expect(page).toHaveURL(/statistics/);
+  if (info.project.name !== 'pages') await expect(page.getByText('正在打开训练空间…')).toBeVisible();
+  release();
   await expect(page.getByRole('heading', { name: '训练统计', exact: true })).toBeFocused();
   await page.getByRole('button', { name: '练习趋势', exact: true }).click();
   await expect(page).toHaveURL(/view=activity/);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PlanningService } from './planning-service.js';
 import { CoreStore, localDay, problemKey } from './core-store.js';
 import { AiReviewer, aiConfigSchema, aiReviewNamespace, type AiReviewRecord } from './ai-review.js';
 import { failures, type CFSubmission } from './domain.js';
@@ -641,6 +642,7 @@ export class LearningService {
         .filter((r) => r.kind === 'transfer' && r.date === date && r.result === 'pending')
         .map((r) => (r.kind === 'transfer' ? r.targetKey : '')),
       catalog: fingerprint(this.store.get('catalog_cache', this.store.active(), 'current')),
+      planning: new PlanningService(this.store).options(),
       model: this.store.externalGet<{ model: string }>('ai', 'config')?.model ?? '',
     };
     const hash = fingerprint(data);
@@ -661,62 +663,51 @@ export class LearningService {
     const runKey = ns + ':' + hash + ':' + preview;
     if (running.has(runKey)) return running.get(runKey);
     const task = (async () => {
-      this.store.combinedTrainingDay(future);
-      const before = this.readPlan(date)!;
-      const candidates = this.candidates(date, before);
-      const startHash = fingerprint(before);
+      const planner = new PlanningService(this.store);
       try {
-        if (!candidates.length) throw new Error('无可用候选题，继续使用规则题单');
-        const result = z
-          .object({ keys: z.array(z.string()).max(5), reason: z.string().min(1).max(2000) })
-          .parse(
+        const decision = planner.preview({ date, ...planner.options() });
+        if (!decision.result.feasible) throw new Error(decision.result.conflicts.join('；'));
+        const before =
+          decision.before ??
+          dailyPlanSchema.parse({
+            date,
+            review: [],
+            newKeys: [],
+            catalogReady: false,
+            createdAt: decision.createdAt,
+          });
+        const after = decision.after;
+        let reason = '依据学习证据、先修关系、周目标和时间预算生成。';
+        if (aiConfigSchema.safeParse(this.store.externalGet('ai', 'config')).success) {
+          const result = z.object({ reason: z.string().min(1).max(2000) }).parse(
             await this.complete(
-              '你是训练计划 Agent。结合周目标、训练证据和比赛建议，从 candidates 中选择至多五题，必须保留 reserved 已安排迁移题，至少两题属于周目标（候选不足除外）。返回 {keys:题目key数组,reason:调整原因}。',
-              { ...data, candidates },
+              '你是学习规划讲解员。解释确定性引擎已选的任务与用户目标的关系，不能更改题目、时长、预算或配额。返回 {reason:解释}，不承诺学习收益。',
+              {
+                ...data,
+                candidates: decision.candidates,
+                selected: decision.result.selected,
+                constraints: decision.result,
+                path: decision.path,
+              },
             ),
           );
+          reason = result.reason;
+        }
         check();
-        if (date <= localDay(new Date()) || fingerprint(this.evidence('30')) !== fingerprint(data.evidence))
-          throw new Error('训练反馈或日期已变化，请重新生成未来计划');
-        if (fingerprint(this.readPlan(date)) !== startHash) throw new Error('未来题单已变化，请刷新后重试');
-        if (
-          !result.keys.length ||
-          new Set(result.keys).size !== result.keys.length ||
-          result.keys.some((k) => !candidates.some((c) => c.key === k))
-        )
-          throw new Error('AI 候选题无效，继续使用规则题单');
-        if (result.keys.some((k) => !this.candidates(date, before).some((c) => c.key === k)))
-          throw new Error('候选题状态已变化，继续使用规则题单');
-        if (data.reserved.some((k) => !result.keys.includes(k)))
-          throw new Error('AI 遗漏已安排的迁移任务，继续使用现有题单');
-        const goal = this.store.weeklyGoal(future)!;
-        const goalCount = candidates.filter((p) =>
-          categories(p.tags).some((c) => goal.categories.includes(c)),
-        ).length;
-        const selectedGoal = result.keys.filter((k) =>
-          categories(candidates.find((c) => c.key === k)!.tags).some((c) => goal.categories.includes(c)),
-        ).length;
-        if (selectedGoal < Math.min(2, goalCount)) throw new Error('AI 未满足周目标覆盖，继续使用规则题单');
-        const after = dailyPlanSchema.parse({
-          ...before,
-          newKeys: result.keys,
-          newReasons: Object.fromEntries(result.keys.map((k) => [k, result.reason.slice(0, 500)])),
-          newShortage: result.keys.length < 5 ? '候选不足或 Agent 建议减少新知题量' : null,
-        });
         const revision = revisionSchema.parse({
           ...nowBase(),
           kind: 'revision',
           date,
           fingerprint: hash,
-          reason: result.reason,
+          reason,
+          planningDecisionId: decision.id,
           before,
           after,
           reverted: false,
           inputSummary: JSON.stringify(data).slice(0, 50000),
         });
         if (preview) return revision;
-        this.store.transaction(() => {
-          this.writePlan(after);
+        planner.apply({ id: decision.id }, () => {
           this.save(revision);
           this.save(
             agentRunSchema.parse({
@@ -757,6 +748,12 @@ export class LearningService {
     const { id } = z.object({ id: z.string() }).parse(input),
       r = this.records().find((r) => r.id === id);
     if (!r || r.kind !== 'revision' || r.reverted) throw new Error('计划版本不可撤回');
+    if (r.planningDecisionId) {
+      new PlanningService(this.store).revert({ id: r.planningDecisionId }, () => {
+        this.save({ ...r, reverted: true });
+      });
+      return { ok: true };
+    }
     if (r.date <= localDay(new Date()) || fingerprint(this.readPlan(r.date)) !== fingerprint(r.after))
       throw new Error('该题单已开始或已被后续版本修改');
     this.store.transaction(() => {
@@ -767,37 +764,17 @@ export class LearningService {
   }
   applyAgentRevision(input: unknown) {
     const r = revisionSchema.parse(input);
-    const before = dailyPlanSchema.parse(r.before),
-      after = dailyPlanSchema.parse(r.after);
-    if (r.date <= localDay(new Date()) || fingerprint(this.readPlan(r.date)) !== fingerprint(r.before))
-      throw new Error('未来题单已变化，请重新生成方案');
-    const candidates = this.candidates(r.date, before),
-      goal = this.store.weeklyGoal(new Date(r.date + 'T12:00:00+08:00'));
-    if (
-      !goal ||
-      !r.after.newKeys.length ||
-      new Set(r.after.newKeys).size !== r.after.newKeys.length ||
-      r.after.newKeys.some((k) => !candidates.some((p) => p.key === k))
-    )
-      throw new Error('题单候选已变化');
-    const coverage = candidates.filter((p) =>
-      categories(p.tags).some((c) => goal.categories.includes(c)),
-    ).length;
-    if (
-      r.after.newKeys.filter((k) =>
-        categories(candidates.find((p) => p.key === k)!.tags).some((c) => goal.categories.includes(c)),
-      ).length < Math.min(2, coverage)
-    )
-      throw new Error('题单不满足周目标');
-    const reserved = this.records()
-      .filter((x) => x.kind === 'transfer' && x.date === r.date && x.result === 'pending')
-      .map((x) => (x.kind === 'transfer' ? x.targetKey : ''));
-    if (reserved.some((k) => !r.after.newKeys.includes(k))) throw new Error('题单遗漏迁移任务');
-    this.store.transaction(() => {
-      this.writePlan(after);
-      this.save(r);
-    });
-    return r;
+    if (r.planningDecisionId) {
+      const planner = new PlanningService(this.store);
+      const record = planner.records().find((x) => x.id === r.planningDecisionId);
+      if (!record || record.kind !== 'decision' || fingerprint(record.after) !== fingerprint(r.after))
+        throw new Error('规划提案与原始预览不一致');
+      planner.apply({ id: record.id }, () => {
+        this.save(r);
+      });
+      return r;
+    }
+    throw new Error('旧版计划预览需要重新生成，才能应用当前预算与先修约束');
   }
   preferences(input: unknown) {
     const { auto } = z.object({ auto: z.boolean() }).parse(input);
@@ -1070,6 +1047,7 @@ export class LearningService {
       if (action === 'hint') return this.hint(input);
       if (action === 'preferences') return this.preferences(input);
       if (action === 'agent') return this.agent(input);
+      if (action === 'agent-apply') return this.applyAgentRevision(input);
       if (action === 'revert') return this.revert(input);
       if (action === 'bundle') return this.bundle(input);
       if (action === 'files') return this.files(input);

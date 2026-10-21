@@ -63,7 +63,7 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
   await page.getByRole('dialog').getByRole('button', { name: '确定' }).click();
   await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
   await page.locator('.recommendation-detail summary').first().click();
-  await expect(page.locator('.recommendation-detail').first().locator('p')).toContainText('本周目标');
+  await expect(page.locator('.recommendation-detail').first().locator('p').first()).toContainText('本周目标');
   expect(
     (await page.locator('.daily-panel').nth(1).locator('.daily-task').last().boundingBox())!.y,
   ).toBeLessThan(1000);
@@ -92,10 +92,10 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
   await expect(page.getByText(/剩余 \d+:/)).toBeVisible();
   await page.getByRole('button', { name: '手记 AC' }).first().click();
   await page.locator('.report-deep-dive summary').click();
-  await expect(page.getByText(/手动记录/).last()).toBeVisible();
+  await expect(page.locator('.report-deep-dive .upsolve-row').filter({ hasText: '手动记录' })).toBeVisible();
   await page.reload();
   await page.locator('.report-deep-dive summary').click();
-  await expect(page.getByText(/手动记录/).last()).toBeVisible();
+  await expect(page.locator('.report-deep-dive .upsolve-row').filter({ hasText: '手动记录' })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.sidebar nav').getByRole('link', { name: '设置与数据' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

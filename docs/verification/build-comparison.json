@@ -1,0 +1,34 @@
+{
+  "baselineCommit": "863e922",
+  "scope": "同一项目构建日志中 Vite 报告的资源；不包括拷贝的 public 静态文件。耗时受环境影响，不作速度结论。",
+  "baseline": {
+    "log": "refactor-baseline-build.log",
+    "entryJs": {
+      "name": "dist/assets/index-B_sa8PHB.js",
+      "kb": 259.2,
+      "gzip": 90.69
+    },
+    "globalCss": {
+      "name": "dist/assets/index-CT1Gl6HY.css",
+      "kb": 81.38,
+      "gzip": 16.32
+    },
+    "reportedAssetCount": 99,
+    "reportedTotalKb": 20604.57
+  },
+  "current": {
+    "log": "refactor-final-build.log",
+    "entryJs": {
+      "name": "dist/assets/index-Ba_GGl7Z.js",
+      "kb": 280,
+      "gzip": 99.26
+    },
+    "globalCss": {
+      "name": "dist/assets/index-DKmH0cvE.css",
+      "kb": 80.83,
+      "gzip": 16.26
+    },
+    "reportedAssetCount": 110,
+    "reportedTotalKb": 20726.21
+  }
+}

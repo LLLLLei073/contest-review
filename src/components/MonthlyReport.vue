@@ -78,6 +78,9 @@ async function explain() {
 const evidenceFor = (ids: string[]) => report.value?.evidence.filter((e) => ids.includes(e.id)) ?? [];
 const external = (e: MonthlyEvidence) => /^https:\/\//.test(e.url);
 const date = (v: string) => new Date(v).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+function printReport() {
+  window.print();
+}
 watch(
   [
     month,
@@ -123,6 +126,7 @@ onBeforeUnmount(() => {
             :max="beijingDay(new Date()).slice(0, 7)"
             aria-label="报告月份" /></label
         ><button class="small-button" :disabled="loading" @click="load">刷新报告</button>
+        <button class="small-button" :disabled="!report || loading" @click="printReport">打印月报</button>
       </div>
     </div>
     <p v-if="loading" role="status">正在读取月度报告…</p>
@@ -149,6 +153,29 @@ onBeforeUnmount(() => {
       <p v-if="!report.metrics.submissions && !report.metrics.contests" class="quiet-empty">
         本月尚无已保存的提交或确认参赛记录。同步账号后可刷新报告。
       </p>
+      <div class="section-head">
+        <h3>综合考量与下月建议</h3>
+        <button class="small-button" :disabled="thinking || loading" @click="explain">
+          {{ thinking ? '正在生成 AI 解读…' : 'AI 解读' }}
+        </button>
+      </div>
+      <p v-if="aiError" role="alert" class="alert error">{{ aiError }}</p>
+      <div v-for="(findings, index) in [report.findings, ...(ai ? [ai.findings] : [])]" :key="index">
+        <h4>{{ index === 0 ? '规则分析' : 'AI 解读（本次生成）' }}</h4>
+        <article v-for="(finding, i) in findings" :key="i" class="monthly-finding">
+          <strong>{{ finding.title }}</strong>
+          <p>{{ finding.cause }}</p>
+          <p>下一步：{{ finding.action }}</p>
+          <details>
+            <summary>查看依据（{{ finding.evidenceIds.length }}）</summary>
+            <div v-for="e in evidenceFor(finding.evidenceIds)" :key="e.id">
+              <p>{{ e.text }}</p>
+              <a v-if="external(e)" :href="e.url" target="_blank" rel="noreferrer">打开原始记录</a
+              ><RouterLink v-else-if="e.url" :to="e.url">查看关联记录</RouterLink>
+            </div>
+          </details>
+        </article>
+      </div>
       <h3>与 {{ report.comparison.month }} {{ report.current ? '同期' : '完整月份' }}比较</h3>
       <p v-if="!report.comparison.hasBaseline" class="subtle">没有可用比较基准，不生成增长率。</p>
       <div v-else class="monthly-comparison">
@@ -214,29 +241,6 @@ onBeforeUnmount(() => {
           }}{{ contest.rating.performance ?? '未知' }}
         </p>
       </article>
-      <div class="section-head">
-        <h3>综合考量与下月建议</h3>
-        <button class="small-button" :disabled="thinking || loading" @click="explain">
-          {{ thinking ? '正在生成 AI 解读…' : 'AI 解读' }}
-        </button>
-      </div>
-      <p v-if="aiError" role="alert" class="alert error">{{ aiError }}</p>
-      <div v-for="(findings, index) in [report.findings, ...(ai ? [ai.findings] : [])]" :key="index">
-        <h4>{{ index === 0 ? '规则分析' : 'AI 解读（本次生成）' }}</h4>
-        <article v-for="(finding, i) in findings" :key="i" class="monthly-finding">
-          <strong>{{ finding.title }}</strong>
-          <p>{{ finding.cause }}</p>
-          <p>下一步：{{ finding.action }}</p>
-          <details>
-            <summary>查看依据（{{ finding.evidenceIds.length }}）</summary>
-            <div v-for="e in evidenceFor(finding.evidenceIds)" :key="e.id">
-              <p>{{ e.text }}</p>
-              <a v-if="external(e)" :href="e.url" target="_blank" rel="noreferrer">打开原始记录</a
-              ><RouterLink v-else-if="e.url" :to="e.url">查看关联记录</RouterLink>
-            </div>
-          </details>
-        </article>
-      </div>
       <details>
         <summary>题目与训练证据（{{ report.evidence.length }}）</summary>
         <div v-for="e in report.evidence" :key="e.id" class="monthly-evidence">

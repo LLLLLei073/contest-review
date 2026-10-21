@@ -32,6 +32,7 @@ const contests = ref<CFContest[]>([]),
 const route = useRoute();
 const view = useSection(['choose', 'session', 'history'] as const, 'choose');
 const query = ref(''),
+  resultLimit = ref(40),
   error = ref(''),
   busy = ref(false),
   now = ref(Date.now());
@@ -39,7 +40,7 @@ let timer: ReturnType<typeof setInterval> | undefined;
 const available = computed(() =>
   contests.value
     .filter((c) => `${c.name} ${c.id}`.toLowerCase().includes(query.value.toLowerCase()))
-    .slice(0, 80),
+    .slice(0, resultLimit.value),
 );
 const ended = computed(
   () =>
@@ -181,8 +182,14 @@ onUnmounted(() => clearInterval(timer));
           >
             {{ contest.name }} · #{{ contest.id }} ·
             {{ Math.round((contest.durationSeconds ?? 0) / 60) }} 分钟
+            <span v-if="sessions.some((s) => s.contestId === contest.id)">
+              · 曾模拟 {{ sessions.filter((s) => s.contestId === contest.id).length }} 次</span
+            >
           </button>
         </div>
+        <button v-if="available.length === resultLimit" class="small-button" @click="resultLimit += 40">
+          加载更多比赛
+        </button>
       </section>
       <section v-if="selected" v-show="view === 'session'" class="panel training-extra-panel">
         <div class="section-head">
@@ -199,6 +206,21 @@ onUnmounted(() => clearInterval(timer));
             <button class="small-button" :disabled="busy" @click="checkSubmissions">检查 CF 提交</button>
             <button v-if="!ended" class="small-button" :disabled="busy" @click="finish">提前结束</button>
           </div>
+        </div>
+        <div v-if="!ended" class="simulation-clock">
+          <span>剩余时间</span><strong aria-label="剩余时间">{{ remaining }}</strong
+          ><span>离开页面仍继续计时</span>
+        </div>
+        <div v-else class="button-row">
+          <RouterLink
+            :to="{ path: '/contests', query: { contest: 'cf:' + selected.contestId, source: 'cf' } }"
+            class="small-button"
+            >打开比赛复盘</RouterLink
+          ><RouterLink
+            :to="{ path: '/problems', query: { contestId: selected.contestId } }"
+            class="small-button"
+            >复盘相关错题</RouterLink
+          >
         </div>
         <p class="small subtle">
           CF 提交仅取本次计时窗口内的当前判定；手动结果会单独标注。此处不是官方排名或 Rating。
@@ -246,6 +268,14 @@ onUnmounted(() => clearInterval(timer));
       </section>
       <section v-if="sessions.length" v-show="view === 'history'" class="panel training-extra-panel">
         <h2>历史模拟赛</h2>
+        <p>
+          {{ sessions.length }} 场记录 ·
+          {{
+            sessions.filter((s) => s.ended || now >= Date.parse(s.startedAt) + s.durationSeconds * 1000)
+              .length
+          }}
+          场已结束。AC 数包含明确标注的手动记录。
+        </p>
         <div class="simulation-contests">
           <button
             v-for="session in sessions"
@@ -264,3 +294,23 @@ onUnmounted(() => clearInterval(timer));
     </div>
   </template>
 </template>
+<style scoped>
+.simulation-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px;
+  margin: 20px 0;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+}
+.simulation-clock strong {
+  font-size: clamp(40px, 8vw, 68px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+</style>

@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-20",
+  "route": "/statistics",
+  "scope": "同一预览页、空统计数据、默认训练概览；浏览器视口 503 × 706，未展开说明",
+  "viewport": {
+    "width": 503,
+    "height": 706
+  },
+  "before": {
+    "pageHeight": 1781,
+    "masteryTop": 598.5416870117188,
+    "navHeight": 116,
+    "navContentHeight": 128
+  },
+  "after": {
+    "pageHeight": 1047,
+    "masteryTop": 379.0625,
+    "navHeight": 104,
+    "navContentHeight": 103
+  },
+  "comparison": {
+    "pageHeightReductionPercent": 41.2,
+    "scrollableDistanceBefore": 1075,
+    "scrollableDistanceAfter": 341,
+    "scrollableDistanceReductionPercent": 68.3
+  },
+  "limit": "滚轮次数取决于设备与滚动设置，未直接测量；其他数据量与展开状态的页面高度会不同。"
+}

@@ -1,28 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Search, Plus, ArrowLeft, ArrowRight, X, Filter } from 'lucide-vue-next';
 import { api, notify, settings, job } from '../api';
 import type { ProblemRow } from '../../shared/domain';
 import ProblemTable from '../components/ProblemTable.vue';
+import { useProblemFilters } from '../composables/useProblemFilters';
+import { defaultProblemFilters, type ProblemFilters } from '../../shared/problem-filters';
 const route = useRoute(),
   router = useRouter();
-const filters = ref({
-  q: '',
-  source: 'all',
-  tag: '',
-  reason: '',
-  status: String(route.query.status || ''),
-  solved: '',
-  ignored: 'no',
-  min: '',
-  max: '',
-  due: String(route.query.due || ''),
-  contestId: String(route.query.contestId || ''),
-});
+const { filters, page, reset } = useProblemFilters();
 const items = ref<ProblemRow[]>([]),
   total = ref(0),
-  page = ref(1),
   loading = ref(false),
   error = ref(''),
   tags = ref<string[]>([]),
@@ -30,12 +19,81 @@ const items = ref<ProblemRow[]>([]),
   showAdd = ref(false),
   saving = ref(false);
 const manual = ref({ contestId: '', index: '', name: '', rating: '', tags: '' });
+const addDialog = ref<HTMLDialogElement>();
+const existingProblem = ref<ProblemRow>();
+const manualErrors = computed(() => ({
+  contestId:
+    manual.value.contestId &&
+    (!Number.isSafeInteger(Number(manual.value.contestId)) || Number(manual.value.contestId) <= 0)
+      ? '比赛 ID 需要为正整数'
+      : '',
+  index:
+    manual.value.index && !/^[A-Za-z][0-9]*$/.test(manual.value.index.trim())
+      ? '请输入 A、C 或 A1 这样的题号'
+      : '',
+  rating:
+    manual.value.rating &&
+    (!Number.isSafeInteger(Number(manual.value.rating)) || Number(manual.value.rating) < 0)
+      ? '难度需要为非负整数'
+      : '',
+}));
+const manualKey = computed(() =>
+  !manualErrors.value.contestId &&
+  !manualErrors.value.index &&
+  manual.value.contestId &&
+  manual.value.index.trim()
+    ? `${Number(manual.value.contestId)}:${manual.value.index.trim().toUpperCase()}`
+    : '',
+);
+let manualLookup = 0,
+  manualTimer: ReturnType<typeof setTimeout> | undefined;
+watch(showAdd, async (open) => {
+  await nextTick();
+  if (open) {
+    error.value = '';
+    addDialog.value?.showModal();
+  } else addDialog.value?.close();
+});
+watch([showAdd, manualKey], ([open, key]) => {
+  clearTimeout(manualTimer);
+  const token = ++manualLookup;
+  existingProblem.value = undefined;
+  if (!open || !key) return;
+  manualTimer = setTimeout(async () => {
+    try {
+      const result = await api<{ problem: ProblemRow }>('/problems/' + encodeURIComponent(key));
+      if (token === manualLookup) existingProblem.value = result.problem;
+    } catch {}
+  }, 250);
+});
+const filterLabels: Record<keyof ProblemFilters, string> = {
+  q: '搜索',
+  source: '平台',
+  tag: '算法',
+  reason: '错因',
+  status: '状态',
+  solved: 'AC',
+  ignored: '已忽略',
+  min: '最低难度',
+  max: '最高难度',
+  due: '到期',
+  contestId: '比赛',
+};
+const activeFilters = computed(() =>
+  Object.entries(filters.value)
+    .filter(([key, value]) => value !== defaultProblemFilters[key as keyof ProblemFilters])
+    .map(([key, value]) => ({
+      key: key as keyof ProblemFilters,
+      label: filterLabels[key as keyof ProblemFilters],
+      value,
+    })),
+);
 const advancedCount = computed(
   () =>
     [filters.value.tag, filters.value.reason, filters.value.min, filters.value.max].filter(Boolean).length,
 );
-let request = 0,
-  timer: ReturnType<typeof setTimeout>;
+let request = 0;
+let alive = true;
 async function load() {
   const token = ++request;
   loading.value = true;
@@ -58,31 +116,22 @@ async function load() {
 }
 async function options() {
   const data = await api<{ tags: string[]; reasons: string[] }>('/tags');
+  if (!alive) return;
   tags.value = data.tags;
   reasons.value = data.reasons;
 }
 watch(
-  filters,
+  () => route.fullPath,
   () => {
-    page.value = 1;
-    clearTimeout(timer);
-    timer = setTimeout(load, 200);
+    if (route.path === '/problems') void load();
   },
-  { deep: true },
 );
-watch(page, load);
 onUnmounted(() => {
   request++;
-  clearTimeout(timer);
+  alive = false;
+  manualLookup++;
+  clearTimeout(manualTimer);
 });
-watch(
-  () => route.query,
-  (query) => {
-    filters.value.status = typeof query.status === 'string' ? query.status : '';
-    filters.value.due = typeof query.due === 'string' ? query.due : '';
-    filters.value.contestId = typeof query.contestId === 'string' ? query.contestId : '';
-  },
-);
 watch(
   () => job.value?.status,
   (s, p) => {
@@ -97,6 +146,14 @@ onMounted(() => {
   options().catch((e) => (error.value = e.message));
 });
 async function add() {
+  if (Object.values(manualErrors.value).some(Boolean)) return;
+  if (existingProblem.value) {
+    await router.push({
+      path: '/problems/' + encodeURIComponent(existingProblem.value.key),
+      query: { returnTo: route.fullPath },
+    });
+    return;
+  }
   saving.value = true;
   try {
     const data = await api<{ key: string }>('/problems', {
@@ -110,7 +167,10 @@ async function add() {
         .filter(Boolean),
     });
     notify('题目已加入错题库');
-    await router.push('/problems/' + encodeURIComponent(data.key));
+    await router.push({
+      path: '/problems/' + encodeURIComponent(data.key),
+      query: { returnTo: route.fullPath },
+    });
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -132,6 +192,26 @@ async function add() {
     </button>
   </div>
   <div v-if="error" class="alert error" role="alert">{{ error }}</div>
+  <nav class="button-row notebook-presets" aria-label="常用题目视图">
+    <button class="small-button" @click="reset({ due: 'yes' })">到期复习</button>
+    <button class="small-button" @click="reset({ status: 'pending' })">待写复盘</button>
+    <button class="small-button" @click="reset({ solved: 'no' })">尚未通过</button>
+    <button class="small-button" @click="reset({ ignored: 'yes' })">找回已忽略题目</button>
+  </nav>
+  <div v-if="activeFilters.length" class="active-filter-chips" aria-label="已启用的筛选">
+    <button
+      v-for="filter in activeFilters"
+      :key="filter.key"
+      class="small-button"
+      @click="filters[filter.key] = defaultProblemFilters[filter.key]"
+    >
+      {{ filter.label }}：{{ filter.value }} <X :size="12" />
+    </button>
+    <button class="text-link" @click="reset()">清空全部筛选</button>
+  </div>
+  <p v-if="filters.ignored === 'yes'" class="alert">
+    忽略只会移出训练队列，笔记和历史仍然保留。打开题目后点击“恢复此题”即可重新加入。
+  </p>
   <section class="panel">
     <div class="filter-top">
       <label class="search-field"
@@ -199,7 +279,7 @@ async function add() {
       </div>
     </details>
     <div v-if="loading" class="loading-line" aria-label="加载中"></div>
-    <ProblemTable v-if="items.length" :items="items" />
+    <ProblemTable v-if="items.length" :items="items" :return-to="route.fullPath" />
     <div v-else class="empty-state">
       <div class="empty-symbol"><Search :size="26" /></div>
       <h3>{{ loading ? '正在查找题目…' : '这里还没有匹配的题目' }}</h3>
@@ -229,11 +309,23 @@ async function add() {
       </div>
     </div>
   </section>
-  <div v-if="showAdd" class="modal-backdrop" @click.self="showAdd = false">
-    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="add-title">
+  <dialog
+    ref="addDialog"
+    class="manual-dialog"
+    aria-labelledby="add-title"
+    @close="showAdd = false"
+    @cancel="
+      (event) => {
+        if (saving) event.preventDefault();
+      }
+    "
+  >
+    <section class="modal">
       <div class="section-head">
         <h2 id="add-title">添加一道题</h2>
-        <button class="icon-button" aria-label="关闭" @click="showAdd = false"><X :size="20" /></button>
+        <button class="icon-button" aria-label="关闭" :disabled="saving" @click="showAdd = false">
+          <X :size="20" />
+        </button>
       </div>
       <p class="subtle">用于补充未提交过、但希望复盘的 Codeforces 题目。</p>
       <form @submit.prevent="add">
@@ -244,10 +336,19 @@ async function add() {
               required
               type="number"
               min="1"
-              placeholder="例如 2000" /></label
-          ><label
-            >题目编号<input v-model="manual.index" required pattern="[A-Za-z][0-9]*" placeholder="例如 C"
-          /></label>
+              :aria-invalid="!!manualErrors.contestId"
+              placeholder="例如 2000"
+            /><small v-if="manualErrors.contestId" class="unsaved">{{ manualErrors.contestId }}</small></label
+          >
+          <label
+            >题目编号<input
+              v-model="manual.index"
+              required
+              pattern="[A-Za-z][0-9]*"
+              :aria-invalid="!!manualErrors.index"
+              placeholder="例如 C"
+            /><small v-if="manualErrors.index" class="unsaved">{{ manualErrors.index }}</small></label
+          >
         </div>
         <label
           >题目名称<input v-model="manual.name" required maxlength="1000" placeholder="题目标题"
@@ -258,12 +359,50 @@ async function add() {
               v-model="manual.rating"
               type="number"
               min="0"
-              placeholder="例如 1600" /></label
-          ><label>算法标签（英文逗号分隔）<input v-model="manual.tags" placeholder="dp, greedy" /></label>
+              :aria-invalid="!!manualErrors.rating"
+              placeholder="例如 1600"
+            /><small v-if="manualErrors.rating" class="unsaved">{{ manualErrors.rating }}</small></label
+          >
+          <label>算法标签（英文逗号分隔）<input v-model="manual.tags" placeholder="dp, greedy" /></label>
         </div>
         <div v-if="error" class="alert error">{{ error }}</div>
-        <button class="primary" :disabled="saving">{{ saving ? '正在添加…' : '加入错题库' }}</button>
+        <p v-if="existingProblem" class="alert">
+          这道题已存在：{{ existingProblem.name }}。已有笔记与历史将保留，可直接打开继续。
+        </p>
+        <button v-if="existingProblem" type="button" class="primary" @click="add">打开已有题目</button>
+        <button v-else class="primary" :disabled="saving || Object.values(manualErrors).some(Boolean)">
+          {{ saving ? '正在添加…' : '加入错题库' }}
+        </button>
       </form>
     </section>
-  </div>
+  </dialog>
 </template>
+<style scoped>
+.manual-dialog {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  width: min(620px, calc(100vw - 28px));
+  max-height: calc(100dvh - 36px);
+}
+.manual-dialog::backdrop {
+  background: #101a2b88;
+}
+.manual-dialog .modal {
+  width: 100%;
+  max-width: none;
+  border: 0;
+  max-height: none;
+}
+.active-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.notebook-presets {
+  margin: 0 0 16px;
+}
+</style>

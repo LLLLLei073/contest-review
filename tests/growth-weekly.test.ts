@@ -207,7 +207,7 @@ test('v10 backup keeps snapshots, legacy backup creates none, invalid ownership/
   const s = setup(true);
   evidence(s);
   const backup = s.backup();
-  assert.equal(backup.version, 10);
+  assert.equal(backup.version, 11);
   const restored = new Store(':memory:');
   restored.restore(backup);
   assert.equal(growthSummary(restored).weekly.earned, 180);

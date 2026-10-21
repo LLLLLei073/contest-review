@@ -84,10 +84,10 @@ test('difficulty band honors official Rating, unique AC fallback and strict boun
     new Set(['4001:A', '4002:A', '4003:A']),
   );
 });
-function store() {
+function store(goalDate = now) {
   const s = new Store(':memory:');
   s.activate('tester');
-  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, now);
+  s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, goalDate);
   return s;
 }
 
@@ -130,7 +130,11 @@ test('daily lanes select overdue first, then pending; shortage stays below five 
 });
 
 test('new lane is never-submitted, fixed all day and responds to AC, pending and rejudge', () => {
-  const s = store();
+  // Keep this same-week scenario independent of the day the suite runs.
+  // The Sunday/Monday reset is covered separately in weekly.test.ts.
+  const now = new Date('2026-10-14T12:00:00+08:00');
+  const tomorrow = new Date('2026-10-15T12:00:00+08:00');
+  const s = store(now);
   s.enrich('tester', [], [], catalog());
   s.manualProblem('tester', { contestId: 2001, index: 'A', name: 'Seen manually', tags: [], rating: 800 });
   const first = s.trainingDay('tester', now);
@@ -392,7 +396,7 @@ test('catalog and daily plan survive backup; legacy v3 has no catalog and needs 
   s.enrich('tester', [], [], catalog());
   const original = s.trainingDay('tester', now);
   const backup = s.backup();
-  assert.equal(backup.version, 10);
+  assert.equal(backup.version, 11);
   s.restore(backup);
   assert.deepEqual(
     s.trainingDay('tester', now).newProblems.map((p) => p.key),

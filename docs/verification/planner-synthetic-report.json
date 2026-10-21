@@ -1,0 +1,38 @@
+{
+  "format": "contest-review-planner-evaluation",
+  "version": 1,
+  "source": "D:\\Desktop\\contest analysis\\docs\\verification\\planner-synthetic-fixture.json",
+  "asOf": "2026-10-14T04:00:00.000Z",
+  "comparison": {
+    "comparable": true,
+    "scope": "仅在给定已保存历史快照上比较，未重建快照之间的状态",
+    "date": "2026-10-15",
+    "budget": 90,
+    "old": {
+      "review": [],
+      "newKeys": ["7013:A", "7005:A", "7009:A", "7015:A", "7007:A"],
+      "estimatedMinutes": 175,
+      "overBudget": true,
+      "knowledgeCoverage": ["simulation"]
+    },
+    "proposed": {
+      "feasible": true,
+      "conflicts": [],
+      "review": [],
+      "newKeys": ["7000:A", "7001:A"],
+      "allocatedMinutes": 70,
+      "overBudget": false,
+      "knowledgeCoverage": ["simulation"]
+    },
+    "costLimit": "旧规则计划使用明确的默认估时；与按个人样本估时的计划比较时不得解释为实际耗时差"
+  },
+  "predictions": {
+    "asOf": "2026-10-14T04:00:00.000Z",
+    "samples": 0,
+    "brier": null,
+    "insufficient": true,
+    "rows": [],
+    "conclusion": "描述性回放，不证明学习效率的因果提升；参数尚未校准"
+  },
+  "learningEffect": "待持续使用数据观察；完成率、提示依赖、逾期积压和单位时间独立完成数仅作描述性指标"
+}

@@ -8,6 +8,7 @@ import type { CFClient } from '../server/sync.js';
 import type { CFSubmission } from '../shared/domain.js';
 import { fixtureNewProblems } from './cf-fixtures.js';
 import { learningReply } from './learning-fixture.js';
+import { guidedReply } from './guided-fixture.js';
 const names = [
   'Two Screens',
   'Turtle and a MEX Problem',
@@ -107,6 +108,18 @@ const { app } = await buildApp(new Store(join(dir, 'review.sqlite')), cf, {
       };
     const request = JSON.parse((init as { body: string }).body);
     if (request.tools) {
+      if (request.tools.some((t: { function: { name: string } }) => t.function.name === 'review_context'))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'guided-fixture',
+            object: 'chat.completion',
+            created: 1,
+            model: 'fixture',
+            choices: [{ index: 0, finish_reason: 'stop', message: guidedReply(request) }],
+          }),
+        };
       const user = String(request.messages.findLast((m: { role: string }) => m.role === 'user')?.content);
       if (user.includes('暂停测试')) await new Promise((resolve) => setTimeout(resolve, 800));
       if (user.includes('模拟失败') && !astraFailureSeen) {

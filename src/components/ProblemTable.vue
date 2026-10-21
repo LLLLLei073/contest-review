@@ -2,7 +2,11 @@
 import { ArrowUpRight } from 'lucide-vue-next';
 import type { ProblemRow } from '../../shared/domain';
 import { dateLabel, statusLabels } from '../api';
-defineProps<{ items: ProblemRow[] }>();
+const props = defineProps<{ items: ProblemRow[]; returnTo?: string }>();
+const destination = (key: string) => ({
+  path: '/problems/' + encodeURIComponent(key),
+  query: props.returnTo ? { returnTo: props.returnTo } : undefined,
+});
 </script>
 <template>
   <div class="table-wrap">
@@ -20,7 +24,7 @@ defineProps<{ items: ProblemRow[] }>();
       <tbody>
         <tr v-for="p in items" :key="p.key">
           <td>
-            <RouterLink class="problem-name" :to="'/problems/' + encodeURIComponent(p.key)"
+            <RouterLink class="problem-name" :to="destination(p.key)"
               ><span class="problem-index">{{
                 p.source === 'atcoder' ? 'AtCoder · ' + p.index : p.contestId + p.index
               }}</span
@@ -49,7 +53,7 @@ defineProps<{ items: ProblemRow[] }>();
           </td>
           <td class="mono subtle">{{ dateLabel(p.review.nextReview) }}</td>
           <td>
-            <RouterLink :to="'/problems/' + encodeURIComponent(p.key)" :aria-label="'复盘 ' + p.name"
+            <RouterLink :to="destination(p.key)" :aria-label="'复盘 ' + p.name"
               ><ArrowUpRight :size="17"
             /></RouterLink>
           </td>

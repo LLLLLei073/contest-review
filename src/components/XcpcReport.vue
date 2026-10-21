@@ -137,8 +137,19 @@ onBeforeUnmount(() => {
           来源提供队伍汇总和题目统计，没有完整的个人提交日志；这里不推测逐题做题顺序或失败次数。
         </p>
       </div>
+      <h3>下一场的行动建议</h3>
+      <p v-if="!data.report?.advice.length" class="subtle">暂无足够证据生成具体建议。</p>
+      <article v-for="(a, i) in data.report?.advice" :key="i" class="advice-card">
+        <span class="eyebrow">{{ String(i + 1).padStart(2, '0') }} / ACTION</span>
+        <p>
+          <strong>{{ a.evidence }}</strong>
+        </p>
+        <p class="subtle">{{ a.issue }}</p>
+        <p>{{ a.action }}</p>
+      </article>
       <details v-if="data.report?.detail.problems?.length" class="report-deep-dive">
         <summary>本场题目与全场统计 · {{ data.report.detail.problems.length }} 题</summary>
+        <p class="alert">以下是全场题目统计，队伍成绩见上方。无法据此判断你本人完成了哪一道题。</p>
         <article v-for="p in data.report.detail.problems" :key="p.alias" class="timeline-problem">
           <div class="report-toolbar">
             <a v-if="p.problemUrl" :href="p.problemUrl" target="_blank" rel="noopener noreferrer"
@@ -155,16 +166,6 @@ onBeforeUnmount(() => {
           </p>
         </article>
       </details>
-      <h3>下一场的行动建议</h3>
-      <p v-if="!data.report?.advice.length" class="subtle">暂无足够证据生成具体建议。</p>
-      <article v-for="(a, i) in data.report?.advice" :key="i" class="advice-card">
-        <span class="eyebrow">{{ String(i + 1).padStart(2, '0') }} / ACTION</span>
-        <p>
-          <strong>{{ a.evidence }}</strong>
-        </p>
-        <p class="subtle">{{ a.issue }}</p>
-        <p>{{ a.action }}</p>
-      </article>
     </template>
   </section>
 </template>

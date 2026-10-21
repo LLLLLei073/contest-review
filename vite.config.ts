@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 export default defineConfig(({ mode }) => ({
   plugins: [vue()],
+  // Opt in only for restricted Windows environments where realpath raises EPERM.
+  resolve: { preserveSymlinks: process.env.VITE_PRESERVE_SYMLINKS === '1' },
   base: mode === 'pages' ? process.env.PAGES_BASE_PATH || '/contest-review/' : '/',
   define: { 'import.meta.env.VITE_STORAGE_MODE': JSON.stringify(mode === 'pages' ? 'browser' : 'server') },
   build: { outDir: mode === 'pages' ? 'dist-pages' : 'dist' },

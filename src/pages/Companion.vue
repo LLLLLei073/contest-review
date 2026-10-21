@@ -7,10 +7,16 @@ import { streamAgent } from '../agent';
 import { growth } from '../growth';
 import Companion from '../components/Companion.vue';
 import Markdown from '../components/Markdown.vue';
+import ProposalCard from '../components/agent/ProposalCard.vue';
+import SessionList from '../components/agent/SessionList.vue';
+import MemoryPanel from '../components/agent/MemoryPanel.vue';
+import GuidedReview from '../components/review/GuidedReview.vue';
 import type { AgentContext, AgentRecord, AgentEvent } from '../../shared/agent-domain';
 type Session = Extract<AgentRecord, { kind: 'session' }>;
 type Memory = Extract<AgentRecord, { kind: 'memory' }>;
 const route = useRoute();
+const guided = ref(false),
+  guidanceBusy = ref(false);
 const sessions = ref<Session[]>([]),
   records = ref<AgentRecord[]>([]),
   memories = ref<Memory[]>([]),
@@ -35,14 +41,6 @@ const proposals = computed(() =>
   records.value.filter((r): r is Extract<AgentRecord, { kind: 'proposal' }> => r.kind === 'proposal'),
 );
 const current = computed(() => sessions.value.find((s) => s.id === selected.value));
-const labels: Record<string, string> = {
-  review: '保存复盘笔记',
-  card: '修改或确认经验卡',
-  delete: '删除学习记录',
-  weekly: '更新本周目标',
-  transfer: '安排迁移任务',
-  agent: '调整未来题单',
-};
 function context(): AgentContext {
   if (typeof route.query.problemKey === 'string')
     return { kind: 'problem', problemKey: route.query.problemKey };
@@ -100,7 +98,7 @@ async function load() {
   }
 }
 async function create() {
-  if (busy.value) return;
+  if (busy.value || guidanceBusy.value) return;
   error.value = '';
   try {
     const s = await api<Session>('/agent/sessions', { context: context() });
@@ -116,7 +114,7 @@ async function create() {
   }
 }
 async function choose(id: string) {
-  if (busy.value) return;
+  if (busy.value || guidanceBusy.value) return;
   selected.value = id;
   draft.value = '';
   activity.value = [];
@@ -228,7 +226,7 @@ async function removeMemory(id: string) {
   }
 }
 async function removeSession() {
-  if (busy.value || !selected.value) return;
+  if (busy.value || guidanceBusy.value || !selected.value) return;
   if (!window.confirm('删除此会话及其消息？已保存的学习记录和长期记忆会保留。')) return;
   try {
     await api('/agent/session', { id: selected.value }, 'DELETE');
@@ -287,26 +285,16 @@ onBeforeUnmount(() => {
         <Companion :appearance="growth?.equipment.appearance" />
         <div><strong>星澪 / ASTRA</strong><span class="subtle small">温柔理性的学习搭档</span></div>
       </div>
-      <button class="button primary" :disabled="busy" @click="create"><Plus :size="16" /> 新建会话</button>
-      <div class="astra-session-list" aria-label="会话列表">
-        <button
-          v-for="s in sessions.slice().reverse()"
-          :key="s.id"
-          class="button"
-          :class="{ active: selected === s.id }"
-          :disabled="busy"
-          @click="choose(s.id)"
-        >
-          {{
-            s.context.kind === 'problem'
-              ? s.context.problemKey
-              : s.context.kind === 'contest'
-                ? s.context.contestId
-                : s.title
-          }}<small>{{ new Date(s.createdAt).toLocaleDateString('zh-CN') }}</small>
-        </button>
-      </div>
-      <button v-if="selected" class="button ghost small" :disabled="busy" @click="removeSession">
+      <button class="button primary" :disabled="busy || guidanceBusy" @click="create">
+        <Plus :size="16" /> 新建会话
+      </button>
+      <SessionList :sessions="sessions" :selected="selected" :busy="busy || guidanceBusy" @select="choose" />
+      <button
+        v-if="selected"
+        class="button ghost small"
+        :disabled="busy || guidanceBusy"
+        @click="removeSession"
+      >
         <Trash2 :size="14" /> 删除当前会话
       </button>
       <RouterLink class="subtle small" to="/settings?view=ai"
@@ -324,108 +312,96 @@ onBeforeUnmount(() => {
               : '学习伙伴'
         }}</span>
       </header>
-      <div ref="log" class="astra-log" tabindex="0" aria-label="对话消息">
-        <div v-if="!messages.length && !busy" class="astra-welcome">
-          <span class="terminal-tag">READY WHEN YOU ARE</span>
-          <h2>未知，也可以成为起点。</h2>
-          <p>我可以陪你梳理思路、检索知识、复盘比赛。学习状态来自真实记录，重要修改会先展示给你。</p>
-          <div class="astra-prompts">
-            <button class="button" @click="input = '结合最近的学习证据，我接下来应该关注什么？'">
-              看看下一步</button
-            ><button class="button" @click="input = '请记住：我更喜欢先讲直觉，再讲证明。'">
-              告诉我你的偏好
-            </button>
+      <div v-if="current && ['problem', 'contest'].includes(current.context.kind)" class="button-row">
+        <button class="small-button" :disabled="busy || guidanceBusy" @click="guided = !guided">
+          {{ guided ? '返回直接对话' : '切换到引导复盘' }}</button
+        ><span class="small subtle">{{
+          current.context.kind === 'problem'
+            ? current.context.problemKey
+            : current.context.kind === 'contest'
+              ? current.context.source.toUpperCase() + ' · ' + current.context.contestId
+              : ''
+        }}</span>
+      </div>
+      <GuidedReview
+        v-if="guided && current"
+        :context="current.context"
+        :session-id="current.id"
+        @skip="guided = false"
+        @busy="guidanceBusy = $event"
+        @updated="loadHistory"
+      />
+      <template v-if="!guided">
+        <div ref="log" class="astra-log" tabindex="0" aria-label="对话消息">
+          <div v-if="!messages.length && !busy" class="astra-welcome">
+            <span class="terminal-tag">READY WHEN YOU ARE</span>
+            <h2>未知，也可以成为起点。</h2>
+            <p>我可以陪你梳理思路、检索知识、复盘比赛。学习状态来自真实记录，重要修改会先展示给你。</p>
+            <div class="astra-prompts">
+              <button class="button" @click="input = '结合最近的学习证据，我接下来应该关注什么？'">
+                看看下一步</button
+              ><button class="button" @click="input = '请记住：我更喜欢先讲直觉，再讲证明。'">
+                告诉我你的偏好
+              </button>
+            </div>
+          </div>
+          <article v-for="m in messages" :key="m.id" class="astra-message" :class="m.role">
+            <span class="terminal-tag">{{ m.role === 'user' ? '你' : '星澪 / ASTRA' }}</span
+            ><Markdown :text="m.content" />
+            <details v-if="m.citations.length">
+              <summary>本轮检索依据</summary>
+              <div v-for="c in m.citations" :key="c.id">
+                <RouterLink v-if="c.url.startsWith('/')" :to="c.url">{{ c.title }}</RouterLink
+                ><a v-else :href="c.url" target="_blank" rel="noopener noreferrer">{{ c.title }}</a>
+                <p class="subtle small">{{ c.excerpt }}</p>
+              </div>
+            </details>
+          </article>
+          <article v-if="draft" class="astra-message assistant">
+            <span class="terminal-tag">星澪 / ASTRA</span><Markdown :text="draft" />
+          </article>
+          <div v-if="busy" class="astra-working" role="status">
+            {{
+              activity.at(-1)?.type === 'tool-start' ? '正在' + activity.at(-1)?.name + '…' : '正在整理回答…'
+            }}
           </div>
         </div>
-        <article v-for="m in messages" :key="m.id" class="astra-message" :class="m.role">
-          <span class="terminal-tag">{{ m.role === 'user' ? '你' : '星澪 / ASTRA' }}</span
-          ><Markdown :text="m.content" />
-          <details v-if="m.citations.length">
-            <summary>本轮检索依据</summary>
-            <div v-for="c in m.citations" :key="c.id">
-              <RouterLink v-if="c.url.startsWith('/')" :to="c.url">{{ c.title }}</RouterLink
-              ><a v-else :href="c.url" target="_blank" rel="noopener noreferrer">{{ c.title }}</a>
-              <p class="subtle small">{{ c.excerpt }}</p>
-            </div>
-          </details>
-        </article>
-        <article v-if="draft" class="astra-message assistant">
-          <span class="terminal-tag">星澪 / ASTRA</span><Markdown :text="draft" />
-        </article>
-        <div v-if="busy" class="astra-working" role="status">
-          {{
-            activity.at(-1)?.type === 'tool-start' ? '正在' + activity.at(-1)?.name + '…' : '正在整理回答…'
-          }}
-        </div>
-      </div>
-      <details v-if="activity.some((a) => a.type === 'tool-end')" class="astra-task-log">
-        <summary>本轮执行摘要</summary>
-        <p v-for="(a, i) in activity.filter((a) => a.type === 'tool-end')" :key="i">
-          {{ a.name }} · {{ a.text }}
-        </p>
-      </details>
-      <div v-for="p in proposals" :key="p.id" class="astra-proposal">
-        <span class="terminal-tag"
-          >{{ labels[p.action] }} /
-          {{
-            p.status === 'pending'
-              ? '待确认'
-              : p.status === 'applied'
-                ? '已执行'
-                : p.status === 'expired'
-                  ? '已失效'
-                  : '已拒绝'
-          }}</span
-        >
-        <pre>{{ p.preview }}</pre>
-        <div v-if="p.status === 'pending'">
-          <button class="button primary" :disabled="busy" @click="decide(p.id, true)">确认执行</button
-          ><button class="button" :disabled="busy" @click="decide(p.id, false)">拒绝</button>
-        </div>
-        <details v-if="p.result">
-          <summary>执行结果</summary>
-          <pre>{{ p.result }}</pre>
+        <details v-if="activity.some((a) => a.type === 'tool-end')" class="astra-task-log">
+          <summary>本轮执行摘要</summary>
+          <p v-for="(a, i) in activity.filter((a) => a.type === 'tool-end')" :key="i">
+            {{ a.name }} · {{ a.text }}
+          </p>
         </details>
-      </div>
-      <form class="astra-composer" @submit.prevent="send">
-        <label class="sr-only" for="astra-input">发送给星澪的消息</label
-        ><textarea
-          id="astra-input"
-          ref="composer"
-          v-model="input"
-          rows="3"
-          maxlength="10000"
-          placeholder="说说你卡住的地方，或今天想达成的目标…"
-          @keydown.ctrl.enter.prevent="send"
-          @keydown.meta.enter.prevent="send"
-        ></textarea>
-        <div>
-          <span class="subtle small">Ctrl / ⌘ + Enter 发送 · 解题帮助会计入提示记录</span
-          ><button v-if="busy" type="button" class="button" @click="stop">
-            <Square :size="14" /> 停止生成</button
-          ><button v-else class="button primary" :disabled="!input.trim()"><Send :size="15" /> 发送</button>
-        </div>
-      </form>
+        <ProposalCard v-for="p in proposals" :key="p.id" :proposal="p" :busy="busy" @decide="decide" />
+        <form class="astra-composer" @submit.prevent="send">
+          <label class="sr-only" for="astra-input">发送给星澪的消息</label
+          ><textarea
+            id="astra-input"
+            ref="composer"
+            v-model="input"
+            rows="3"
+            maxlength="10000"
+            placeholder="说说你卡住的地方，或今天想达成的目标…"
+            @keydown.ctrl.enter.prevent="send"
+            @keydown.meta.enter.prevent="send"
+          ></textarea>
+          <div>
+            <span class="subtle small">Ctrl / ⌘ + Enter 发送 · 解题帮助会计入提示记录</span
+            ><button v-if="busy" type="button" class="button" @click="stop">
+              <Square :size="14" /> 停止生成</button
+            ><button v-else class="button primary" :disabled="!input.trim()"><Send :size="15" /> 发送</button>
+          </div>
+        </form>
+      </template>
     </section>
-    <aside v-if="panel" class="astra-memory card">
-      <h2>记忆与偏好</h2>
-      <p class="subtle small">只记住你明确表达的目标与习惯。成绩和掌握度每次从真实记录读取。</p>
-      <label
-        ><input v-model="preferences.memory" type="checkbox" @change="savePreferences" /> 使用长期记忆</label
-      ><label
-        ><input v-model="preferences.proactive" type="checkbox" @change="savePreferences" />
-        开启站内主动建议</label
-      >
-      <p class="subtle small">主动建议每天最多两次，仅在应用打开时运行。</p>
-      <div v-for="m in memories" :key="m.id" class="astra-memory-item">
-        <label :for="'memory-' + m.id">已记住的偏好</label
-        ><textarea :id="'memory-' + m.id" v-model="m.content" rows="3" maxlength="2000"></textarea>
-        <div>
-          <button class="button small" :disabled="memoryBusy || busy" @click="saveMemory(m)">保存记忆</button
-          ><button class="button small" @click="removeMemory(m.id)">删除记忆</button>
-        </div>
-      </div>
-      <p v-if="!memories.length" class="subtle">还没有长期记忆。可以说“请记住：……”告诉我。</p>
-    </aside>
+    <MemoryPanel
+      v-model="panel"
+      v-model:memories="memories"
+      v-model:preferences="preferences"
+      :busy="memoryBusy || busy || guidanceBusy"
+      @save="saveMemory"
+      @remove="removeMemory"
+      @settings="savePreferences"
+    />
   </div>
 </template>

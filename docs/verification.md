@@ -1,5 +1,50 @@
 # 验证记录
 
+## 2026-10-20 紧凑布局调整
+
+- 压缩通用页头和卡片间距；统计摘要并排、手机图表/领域明细切换、趋势分区、每日题单折叠；账号摘要并排，学习路径详细要求按需展开。
+- 修复手机底部导航的内部滚动，全部八入口完整显示；保存栏采用共用导航高度。
+- 同一 503 × 706 空统计页面，高度从 1781 降至 1047px（约减少 41%），可滚动距离从 1075 降至 341px（约减少 68%）。图表提前约 220px。滚轮次数取决于设备，未直接测量。见 [测量口径](verification/compact-layout-measurements.json)。
+- 类型检查及双端构建通过。完整本地浏览器 **31 通过**；Pages **30 通过、4 项既有模式限定跳过**。新增用例验证四宽度布局、八入口、分区刷新/返回及按需明细；既有十页面三宽度双主题检查通过。
+- 本轮没有业务规则变更，未重复执行核心算法测试；完整回归涵盖原有训练、规划、复盘、设置、备份与离线流程。
+- [当前预览截图](verification/screenshots/compact-statistics-live.png)、[桌面统计](verification/screenshots/compact-statistics-desktop.png)、[手机设置](verification/screenshots/compact-settings-mobile.png)。设计与实现记录见 [紧凑布局](plans/2026-10-20-compact-layout.md)。日志为 `layout-check.log`、`layout-build.log`、`layout-pages-build.log`、`layout-e2e.log`、`layout-pages-e2e.log`。
+- 已更新本地 4174 预览；未提交、推送或发布。
+
+## 2026-10-19 训练工作台重构
+
+范围与逐项文件/用例对应关系见 [F01–F57 验收索引](verification/workbench-matrix.md)，使用方法见 [训练工作台说明](workbench.md)。以下检查使用内存、临时数据库或隔离浏览器存储，不写入用户的正式数据。
+
+### 构建与核心规则
+
+- 类型检查通过。核心测试 171 项中 170 通过、1 跳过、0 失败。跳过项需要显式提供 `LEARNING_TEST_PYTHON`，用于实际执行下载的 Python/C++ 对拍脚本；材料生成、报告导入用例通过，但不称为执行器验收完成。
+- BKT 手算及证据筛选、先修图闭包与非法依赖、预算 DP 随机穷举对照、计划预览/采纳/撤回、ReAct 工具循环和 v1–v11 备份兼容均通过。知识缓存额外验证返回值不可污染后续结果、时间截断和账号切换；恢复 epoch 参与缓存失效。
+- 正常权限下两种生产构建通过，无需启用受限 Windows 兼容选项。Pages 成功下载 AtCoder 6581 场比赛、9801 道题、5183 条难度模型，生成 116 个离线资源文件。目录数量仅为当次快照。保留第三方大分块及 Zod 注释警告。
+- 自动审批容量错误与受限环境 EPERM 曾阻止执行；用户检查后重试成功。`VITE_PRESERVE_SYMLINKS=1` 仍是默认关闭的受限 Windows 构建兼容选项，正常构建未使用。
+
+### 浏览器与视觉
+
+- 本地完整回归：**30 通过，0 失败**（2.0 分钟）。
+- Pages 完整回归：**29 通过，4 跳过，0 失败**（2.8 分钟）。跳过项依赖本地服务的数据竞态或故障拦截，不适用于浏览器数据库模式；Pages 自身的离线、持久化、AtCoder 和重做场景均已执行。
+- 初始化导航焦点修复后的这轮完整回归已经通过；验收不依赖修改超时或放宽焦点断言。
+
+覆盖 ReAct 六阶段与刷新续接、计划换题/采纳/撤回、账号切换、旧链接和草稿、成长奖励幂等、AI 配置竞态、备份失败无写入、IndexedDB 离线重载及多标签占用。测试使用固定模型，真实执行工具循环并观察工具反馈，不调用用户的模型服务。
+
+十个页面分别在 1440、768、390px 和明暗两主题生成截图；每端 60 张，检查页面没有横向溢出，并人工查看关键页面与子视图。另验证完整图谱超过 40 节点仍可检索、键盘焦点、减少动画、深色月报打印为白底。视觉审查中修复了多根组件导致的设置/补题分区显示错误、手机学习路径排版，以及初始化未结束便导航时的焦点丢失；后者加入延迟打开数据的回归场景。
+
+保留的隔离测试截图：[今日训练](verification/screenshots/today-desktop.png)、[手机学习路径](verification/screenshots/learning-path-mobile.png)、[手机引导复盘](verification/screenshots/guided-review-mobile.png)、[手机设置](verification/screenshots/settings-mobile.png)。完整截图在忽略提交的 `test-results/` 与 `test-results-pages/` 中。
+
+### 体积与算法回放
+
+- [构建比较](verification/build-comparison.json)：首页入口 JS 从 259.20 kB（gzip 90.69）到 280.00 kB（gzip 99.26）；全局 CSS 从 81.38 kB（gzip 16.32）到 80.83 kB（gzip 16.26）。新增算法与交互增加入口体积，不宣称性能提升。Vite 报告资源合计包含字体、图片等，不包括复制的 public 文件；没有把构建耗时作为性能结论。
+- 同一周目标夹具下，首页第五项新知任务仍位于 1000px 高度以内，推荐理由展开时也保留该断言。
+- [合成回放报告](verification/planner-synthetic-report.json) 可由 `scripts/create-planner-fixture.ts` 与 `scripts/evaluate-planner.ts` 重建。固定 90 分钟预算下，旧规则估计 175 分钟，新计划分配 70 分钟；无真实训练观察，Brier 为 null。这只证明约束处理，不证明学习效率改善。
+
+### 边界与交付
+
+真实 AI 服务兼容性、真实手机、下载脚本的实际执行及长期学习效果尚未验证。未提交、推送或部署。本地预览可执行 `npm run preview:pages`；本次另在 [4174 端口](http://127.0.0.1:4174/contest-review/) 提供已构建预览，进程停止后需重新启动。
+
+本次日志：`refactor-final-core.log`、`refactor-final-check.log`、`refactor-final-build.log`、`refactor-final-pages-build.log`、`refactor-final-e2e.log`、`refactor-final-pages-e2e.log`。日志被 Git 忽略，稳定结论保存在本页。
+
 ## 2026-09-19 自动比赛复盘
 
 - 核心测试 27 / 27，覆盖四项公式、并列排名、虚拟场次、零提交正式参赛、赛后补题排除、重判、个人历史时间隔离、缓存保护和 v1/v2 迁移。

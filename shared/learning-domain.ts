@@ -81,6 +81,7 @@ export const revisionSchema = z.object({
   after: plan,
   reverted: z.boolean().default(false),
   inputSummary: text,
+  planningDecisionId: id.optional(),
 });
 export const agentRunSchema = z.object({
   ...base,

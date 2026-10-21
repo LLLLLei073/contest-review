@@ -81,7 +81,7 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   const path = await download.path();
   const backup = JSON.parse(readFileSync(path!, 'utf8'));
   expect(backup.format).toBe('contest-review');
-  expect(backup.version).toBe(10);
+  expect(backup.version).toBe(11);
   expect(
     backup.tables.catalog_cache.filter((row: { profile: string }) => row.profile === 'review_tester'),
   ).toHaveLength(1);
@@ -134,12 +134,28 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
   await page.getByRole('link', { name: '2100D My unsolved problem', exact: true }).click();
   await page.getByRole('button', { name: '恢复此题' }).click();
   await page.getByRole('link', { name: '返回错题库' }).click();
+  await page.getByRole('button', { name: '我的错题', exact: true }).click();
   await page.locator('.advanced-filters summary').click();
   await page.getByLabel('算法标签', { exact: true }).selectOption('dp');
   await page.getByLabel('最低难度').fill('1900');
   await expect(page.getByText('这里还没有匹配的题目')).toBeVisible();
   await page.getByLabel('最低难度').fill('1700');
   await expect(page.getByRole('link', { name: '2100D My unsolved problem', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/min=1700/);
+  await page.reload();
+  await expect(page.getByLabel('算法标签', { exact: true })).toHaveValue('dp');
+  await expect(page.getByLabel('最低难度')).toHaveValue('1700');
+  const listUrl = page.url();
+  await page.getByRole('link', { name: '2100D My unsolved problem', exact: true }).click();
+  await page.getByRole('button', { name: '学习证据', exact: true }).click();
+  await expect(page.getByText('学习证据时间线', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: '返回错题库' }).click();
+  await expect(page).toHaveURL(listUrl);
+  await page.getByRole('button', { name: '手动添加' }).click();
+  await page.getByLabel('比赛 ID').fill('2100');
+  await page.getByLabel('题目编号').fill('D');
+  await page.getByRole('button', { name: '打开已有题目' }).click();
+  await expect(page.getByRole('heading', { name: 'My unsolved problem' })).toBeVisible();
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
   await page.getByRole('button', { name: '备份与恢复' }).first().click();
   await page.getByLabel('选择备份文件').setInputFiles({

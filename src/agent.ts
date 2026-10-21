@@ -20,7 +20,7 @@ export async function dismissAstraSuggestion() {
   astraSuggestion.value = null;
 }
 export async function streamAgent(
-  input: { sessionId: string; requestId: string; message: string },
+  input: { sessionId: string; requestId: string; message: string; workflowId?: string },
   onEvent: (event: AgentEvent) => void,
   signal: AbortSignal,
 ) {

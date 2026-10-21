@@ -36,7 +36,7 @@ test('Pages confirms same-day AC before reflection and waits for subjective eval
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
-  await expect(page.getByText('Two Screens', { exact: true })).toBeVisible();
+  await expect(page.locator('.daily-task').getByText('Two Screens', { exact: true })).toBeVisible();
   includeRedo = true;
   await page.getByRole('button', { name: '检查提交' }).click();
   await expect(page.getByText('重做完成 · 待复盘')).toBeVisible();

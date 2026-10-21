@@ -14,6 +14,11 @@ import { growthCosmetics, type GrowthEquipment } from '../../shared/growth-domai
 import Companion from '../components/Companion.vue';
 import GrowthWeekly from '../components/GrowthWeekly.vue';
 const group = ref('all');
+const historyKind = ref('all'),
+  previewAppearance = ref<GrowthEquipment['appearance']>();
+function jump(id: string) {
+  document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'auto' });
+}
 const groups = [
   ['all', '全部'],
   ['ac', '首次 AC'],
@@ -45,7 +50,9 @@ async function loadHistory() {
   historyLoading.value = true;
   history.value = null;
   try {
-    const next = await api<GrowthHistory>(`/growth/history?page=${page.value}&pageSize=20`);
+    const next = await api<GrowthHistory>(
+      `/growth/history?page=${page.value}&pageSize=20&kind=${historyKind.value}`,
+    );
     if (isCurrent()) {
       history.value = next;
       error.value = '';
@@ -69,6 +76,10 @@ async function equip(type: 'appearance' | 'palette', value: string) {
   }
 }
 watch(page, loadHistory);
+watch(historyKind, () => {
+  if (page.value !== 1) page.value = 1;
+  else void loadHistory();
+});
 watch(
   () => `${settings.value.activeHandle}|${settings.value.activeAtcoder || ''}|${dataRevision.value}`,
   () => {
@@ -105,12 +116,22 @@ onBeforeUnmount(() => {
     </button>
   </div>
   <template v-if="growth">
-    <section class="growth-profile panel">
+    <nav class="content-switcher" aria-label="成长档案分区">
+      <button @click="jump('growth-milestones')">学习里程碑</button
+      ><button @click="jump('growth-collection')">外观收藏</button
+      ><button @click="jump('growth-achievements')">学习成就</button
+      ><button @click="jump('growth-evidence')">经验来源</button>
+    </nav>
+    <section id="growth-preview" class="growth-profile panel">
       <div class="growth-profile__art">
         <div class="orbital-ring"></div>
-        <Companion :appearance="growth.equipment.appearance" /><span class="companion-name"
+        <Companion :appearance="previewAppearance ?? growth.equipment.appearance" /><span
+          class="companion-name"
           >星澪 / ASTRA</span
         >
+        <button v-if="previewAppearance" class="small-button" @click="previewAppearance = undefined">
+          退出预览，显示已装备外观
+        </button>
       </div>
       <div class="growth-profile__info">
         <div class="terminal-tag">
@@ -150,7 +171,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
     <GrowthWeekly />
-    <section class="growth-section growth-route panel" aria-label="成长阶段路线">
+    <section id="growth-milestones" class="growth-section growth-route panel" aria-label="成长阶段路线">
       <div class="section-head">
         <h2>当前阶段 · {{ growth.currentStage.name }}</h2>
         <span class="small subtle">{{
@@ -178,7 +199,7 @@ onBeforeUnmount(() => {
         >
       </div>
     </section>
-    <section class="growth-section">
+    <section id="growth-collection" class="growth-section">
       <div class="section-heading">
         <span class="eyebrow">01 / COLLECTION</span>
         <h2>终端与伙伴</h2>
@@ -214,6 +235,14 @@ onBeforeUnmount(() => {
             </ul>
             <div class="cosmetic-actions">
               <button
+                @click="
+                  previewAppearance = item.appearance;
+                  jump('growth-preview');
+                "
+              >
+                {{ previewAppearance === item.appearance ? '正在预览' : '预览外观' }}
+              </button>
+              <button
                 :disabled="
                   busy ||
                   !growth.profiles.length ||
@@ -241,7 +270,7 @@ onBeforeUnmount(() => {
         </article>
       </div>
     </section>
-    <section class="growth-section">
+    <section id="growth-achievements" class="growth-section">
       <div class="section-heading">
         <span class="eyebrow">02 / ACHIEVEMENTS</span>
         <h2>学习成就</h2>
@@ -281,7 +310,7 @@ onBeforeUnmount(() => {
     </section>
   </template>
   <p v-else-if="!growthError" role="status">正在读取成长档案…</p>
-  <section class="growth-section panel growth-history">
+  <section id="growth-evidence" class="growth-section panel growth-history">
     <div class="section-head">
       <div>
         <span class="eyebrow">03 / EVIDENCE LOG</span>
@@ -294,6 +323,12 @@ onBeforeUnmount(() => {
       当日不叠加重做奖励；同题同日取最高奖励。缺少可靠时间的历史记录不补奖。周任务额外最多
       +180，不增加训练天数。
     </p>
+    <label
+      >经验记录类型<select v-model="historyKind">
+        <option value="all">全部来源</option>
+        <option v-for="(label, key) in growthKindLabel" :key="key" :value="key">{{ label }}</option>
+      </select></label
+    >
     <div v-if="historyLoading" class="quiet-empty" role="status">正在读取经验记录…</div>
     <div v-else-if="!history?.items.length" class="quiet-empty">
       还没有可核验的成长记录。完成训练后，足迹会出现在这里。

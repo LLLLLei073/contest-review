@@ -40,6 +40,7 @@ export const agentRecordSchema = z.discriminatedUnion('kind', [
     kind: z.literal('run'),
     id,
     requestId: id,
+    workflowId: id.optional(),
     sessionId: id,
     status: z.enum(['running', 'completed', 'failed', 'cancelled']),
     events: z
@@ -100,4 +101,5 @@ export const agentRunInputSchema = z.object({
   sessionId: id,
   requestId: id,
   message: z.string().trim().min(1).max(10000),
+  workflowId: id.optional(),
 });

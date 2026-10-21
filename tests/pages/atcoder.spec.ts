@@ -95,7 +95,7 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await expect(page.getByText('已从官方比赛历史验证该用户名')).toBeVisible();
   expect(mirrorResources).toBe(3);
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
-  await expect(page.getByText('Review A', { exact: true })).toBeVisible();
+  await expect(page.locator('.daily-task').getByText('Review A', { exact: true })).toBeVisible();
   await expect(page.getByText('新知题仅从 Codeforces 选择。')).toBeVisible();
   await page.getByRole('link', { name: '查看笔记' }).first().click();
   await expect(page.getByText('ATCODER / abc777_a')).toBeVisible();
@@ -155,6 +155,6 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
       .path()
       .then(async (path) => (await import('node:fs/promises')).readFile(path, 'utf8')),
   );
-  expect(backup.version).toBe(10);
+  expect(backup.version).toBe(11);
   expect(backup.activeAtcoder).toBe('alice');
 });

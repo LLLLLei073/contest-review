@@ -143,7 +143,21 @@ watch(
         <p v-else>暂无可匹配的官方参赛记录；赛时提交不能证明正式参赛身份。</p>
         <p class="small subtle">提交来源：AtCoder Problems · {{ fullDate(report.fetchedAt) }}</p>
       </div>
-      <p v-if="!report.windowAvailable" class="alert">比赛时间资料待补齐，暂不将提交划分为赛时或赛后。</p>
+      <p v-if="!report.windowAvailable" class="alert">
+        比赛时间资料待补齐，暂不将提交划分为赛时或赛后。<RouterLink to="/settings?view=sync&platform=atcoder"
+          >刷新 AtCoder 目录 →</RouterLink
+        >
+      </p>
+      <h3>下一场的行动建议</h3>
+      <p v-if="!report.advice.length" class="subtle">目前没有足够证据触发具体建议。</p>
+      <article v-for="(item, i) in report.advice" :key="i" class="advice-card">
+        <span class="eyebrow">{{ String(i + 1).padStart(2, '0') }} / ACTION</span>
+        <p>
+          <strong>{{ item.evidence }}</strong>
+        </p>
+        <p>{{ item.action }}</p>
+      </article>
+      <h3>已同步提交分析</h3>
       <details class="report-deep-dive">
         <summary>赛时分题时间线 · {{ problemRows.length }} 题</summary>
         <p class="small subtle">时间按提交记录展示；提交间隔不等于思考时长。</p>
@@ -193,15 +207,6 @@ watch(
           </ol>
         </article>
       </details>
-      <h3>下一场的行动建议</h3>
-      <p v-if="!report.advice.length" class="subtle">目前没有足够证据触发具体建议。</p>
-      <article v-for="(item, i) in report.advice" :key="i" class="advice-card">
-        <span class="eyebrow">{{ String(i + 1).padStart(2, '0') }} / ACTION</span>
-        <p>
-          <strong>{{ item.evidence }}</strong>
-        </p>
-        <p>{{ item.action }}</p>
-      </article>
       <details v-if="report.afterContest.length" class="report-context">
         <summary>赛后补题 {{ report.afterContest.length }} 次（不计入赛时）</summary>
         <ol class="submission-timeline">

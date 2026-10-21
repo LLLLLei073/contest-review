@@ -1,25 +1,24 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import {
-  BookOpen,
-  LayoutDashboard,
-  Library,
-  Flag,
-  ChartNoAxesCombined,
-  Settings2,
-  ArrowUpRight,
-  RefreshCw,
-  Check,
-  X,
-  Orbit,
-  Sparkles,
-} from 'lucide-vue-next';
+import { BookOpen, ArrowUpRight, RefreshCw, Check, X, Orbit, Sparkles, Sun, Moon } from 'lucide-vue-next';
+import { navigation } from './navigation';
+import { appearance, toggleAppearance } from './composables/useAppearance';
+import CommandPalette from './components/CommandPalette.vue';
 import { growth, growthNotice, growthError, startGrowth, dismissGrowthNotice } from './growth';
 import { astraSuggestion, checkAstraSuggestion, dismissAstraSuggestion } from './agent';
 import { loadSettings, loadJob, settings, job, toast, browserMode, dataRevision } from './api';
 import { useSpringValues } from './motion';
 const route = useRoute();
+const accountScope = computed(() =>
+  [
+    settings.value.activeHandle ? settings.value.activeHandle + ' · CF' : '',
+    settings.value.activeAtcoder ? settings.value.activeAtcoder + ' · AtCoder' : '',
+    settings.value.xcpcPlayer ? settings.value.xcpcPlayer.name + ' · XCPC' : '',
+  ]
+    .filter(Boolean)
+    .join(' / '),
+);
 const navElement = ref<HTMLElement | null>(null);
 const navVisible = ref(false);
 const navSpring = useSpringValues([0, 0, 0, 0]);
@@ -39,16 +38,6 @@ function measureNav(immediate = false) {
   );
   navVisible.value = true;
 }
-const navigation = [
-  { to: '/', label: '今日训练', icon: LayoutDashboard },
-  { to: '/problems', label: '错题库', icon: Library },
-  { to: '/contests', label: '比赛复盘', icon: Flag },
-  { to: '/statistics', label: '训练统计', icon: ChartNoAxesCombined },
-  { to: '/knowledge', label: '知识中心', icon: Library },
-  { to: '/growth', label: '成长收藏', icon: Orbit },
-  { to: '/companion', label: '星澪伙伴', icon: Sparkles },
-  { to: '/settings', label: '设置与数据', icon: Settings2 },
-];
 const initError = ref('');
 const initialized = ref(false);
 let poll: ReturnType<typeof setInterval>;
@@ -73,18 +62,20 @@ onMounted(async () => {
   poll = setInterval(() => loadJob().catch(() => {}), 2500);
 });
 const onResize = () => measureNav(true);
-watch(
-  () => route.path,
-  async () => {
-    await nextTick();
-    measureNav();
-    const heading = document.querySelector<HTMLElement>('.workspace main h1');
-    if (heading) {
-      heading.tabIndex = -1;
-      heading.focus({ preventScroll: true });
-    }
-  },
-);
+let pendingFocusPath: string | null = null;
+watch([() => route.path, initialized], async ([path, ready], [previousPath]) => {
+  if (path !== previousPath) pendingFocusPath = path;
+  await nextTick();
+  measureNav();
+  // Navigation is usable while storage opens; focus the destination once it mounts.
+  if (!ready || pendingFocusPath !== route.path) return;
+  const heading = document.querySelector<HTMLElement>('.workspace main h1');
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    pendingFocusPath = null;
+  }
+});
 let suggestionTimer: ReturnType<typeof setTimeout>;
 watch(
   [() => route.path, dataRevision, () => settings.value.activeHandle, () => settings.value.activeAtcoder],
@@ -111,8 +102,8 @@ onUnmounted(() => {
         ><span class="brand-mark"><BookOpen :size="23" /></span
         ><span>回解<small>CONTEST REVIEW</small></span></RouterLink
       >
-      <div class="nav-caption">训练工作台</div>
-      <nav ref="navElement">
+      <div class="nav-caption">你的算法训练工作台</div>
+      <nav ref="navElement" aria-label="主导航">
         <span
           v-if="navVisible"
           class="nav-indicator"
@@ -123,27 +114,28 @@ onUnmounted(() => {
             height: `${navSpring.values.value[3]}px`,
           }"
         ></span>
-        <RouterLink
-          v-for="n in navigation"
-          :key="n.to"
-          :to="n.to"
-          :class="{
-            active:
-              n.to === '/'
-                ? $route.path === '/'
-                : n.to === '/contests'
-                  ? ['/contests', '/simulation'].includes($route.path)
-                  : $route.path.startsWith(n.to),
-          }"
-          ><component :is="n.icon" :size="19" /><span>{{ n.label }}</span
-          ><span v-if="n.to === '/'" class="nav-dot"></span
-        ></RouterLink>
+        <template v-for="(n, index) in navigation" :key="n.to">
+          <div v-if="index === 0 || navigation[index - 1]?.group !== n.group" class="nav-group-label">
+            {{ n.group }}
+          </div>
+          <RouterLink
+            :to="n.to"
+            :class="{
+              active:
+                n.to === '/'
+                  ? $route.path === '/'
+                  : n.to === '/contests'
+                    ? ['/contests', '/simulation'].includes($route.path)
+                    : $route.path.startsWith(n.to),
+            }"
+            ><component :is="n.icon" :size="19" /><span>{{ n.label }}</span
+            ><span v-if="n.to === '/'" class="nav-dot"></span
+          ></RouterLink>
+        </template>
       </nav>
       <div class="sidebar-note">
-        <span class="eyebrow">UNDERSTANDING / ONLINE</span>
-        <p>把每一次卡住，<br />变成下一次的思路。</p>
-        <div class="note-line"></div>
-        <span class="small subtle">记录 · 反思 · 再解</span>
+        <p>理解，来自再次验证。</p>
+        <span class="small subtle">留下思路，也留下证据。</span>
         <RouterLink v-if="growth" to="/growth" class="sidebar-growth"
           ><Orbit :size="15" /><span>Lv.{{ growth.level }}</span
           ><small>{{ growth.xp }} EXP</small></RouterLink
@@ -179,28 +171,31 @@ onUnmounted(() => {
                             : '今日训练'
           }}</b>
         </div>
-        <RouterLink to="/settings?view=accounts" class="profile-chip"
-          ><span class="avatar">{{
-            settings.activeHandle
-              ? settings.activeHandle[0].toUpperCase()
-              : settings.activeAtcoder
-                ? 'A'
-                : settings.xcpcPlayer
-                  ? 'X'
-                  : 'CF'
-          }}</span
-          ><span>{{
-            settings.activeHandle ||
-            (settings.activeAtcoder
-              ? settings.activeAtcoder + ' · AtCoder'
-              : settings.xcpcPlayer
-                ? settings.xcpcPlayer.name + ' · XCPC'
-                : '绑定账号')
-          }}</span
-          ><RefreshCw v-if="job?.status === 'running'" class="spin" :size="14" /><ArrowUpRight
-            v-else
-            :size="14"
-        /></RouterLink>
+        <div class="topbar-actions">
+          <CommandPalette />
+          <button
+            class="appearance-toggle icon-button"
+            :aria-label="appearance === 'light' ? '切换为深色模式' : '切换为明亮模式'"
+            @click="toggleAppearance"
+          >
+            <Moon v-if="appearance === 'light'" :size="18" /><Sun v-else :size="18" />
+          </button>
+          <RouterLink to="/settings?view=accounts" class="profile-chip"
+            ><span class="avatar">{{
+              settings.activeHandle
+                ? settings.activeHandle[0].toUpperCase()
+                : settings.activeAtcoder
+                  ? 'A'
+                  : settings.xcpcPlayer
+                    ? 'X'
+                    : 'CF'
+            }}</span
+            ><span :title="accountScope">{{ accountScope || '绑定账号' }}</span
+            ><RefreshCw v-if="job?.status === 'running'" class="spin" :size="14" /><ArrowUpRight
+              v-else
+              :size="14"
+          /></RouterLink>
+        </div>
       </header>
       <main>
         <p v-if="!initialized" role="status">正在打开训练空间…</p>
@@ -241,13 +236,16 @@ onUnmounted(() => {
           </button>
         </div>
         <strong>+{{ growthNotice.xp }} <small>EXP</small></strong>
-        <p>
-          {{
-            growthNotice.achievements.length
-              ? '成就点亮：' + growthNotice.achievements.join('、')
-              : '你的学习足迹，已写入成长档案。'
-          }}
-        </p>
+        <details>
+          <summary>查看本次成长明细</summary>
+          <p>
+            {{
+              growthNotice.achievements.length
+                ? '成就点亮：' + growthNotice.achievements.join('、')
+                : '你的学习足迹，已写入成长档案。'
+            }}
+          </p>
+        </details>
         <p v-if="growthError" class="error" role="alert">{{ growthError }}</p>
         <RouterLink to="/growth">查看成长收藏 <ArrowUpRight :size="14" /></RouterLink></aside
     ></Transition>

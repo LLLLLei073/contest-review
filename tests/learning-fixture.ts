@@ -1,7 +1,18 @@
 export function learningReply(system: string, data: Record<string, unknown>) {
+  if ('constraints' in data && 'selected' in data)
+    return { reason: '依据复盘证据、周目标与预算，解释已校验的本地规划结果。' };
   if ('metrics' in data && 'month' in data)
-    return { findings: [{ title: '月度训练建议', cause: '依据本月提交与训练证据安排复习。',
-      action: '下月保持固定训练时段，优先复习薄弱算法。', evidenceIds: ['monthly:volume'] }], warnings: [] };
+    return {
+      findings: [
+        {
+          title: '月度训练建议',
+          cause: '依据本月提交与训练证据安排复习。',
+          action: '下月保持固定训练时段，优先复习薄弱算法。',
+          evidenceIds: ['monthly:volume'],
+        },
+      ],
+      warnings: [],
+    };
   if ('question' in data)
     return {
       answer: '资料显示需要先证明循环不变量，并检查边界。',

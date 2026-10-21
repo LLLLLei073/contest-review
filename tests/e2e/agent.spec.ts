@@ -129,6 +129,7 @@ test('Astra chat, streamed tools, managed memory, account isolation and offline 
   await page.getByRole('button', { name: '记忆与偏好' }).click();
   await expect(page.getByLabel('已记住的偏好')).toHaveValue('先讲直觉，再讲证明');
   await expect(page.getByLabel('开启站内主动建议')).not.toBeChecked();
+  await page.getByRole('button', { name: '关闭记忆面板' }).click();
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
@@ -143,10 +144,11 @@ test('Astra chat, streamed tools, managed memory, account isolation and offline 
     await page.reload();
     await expect(page.locator('.astra-message.assistant')).toContainText('星澪已查询真实学习记录');
     await context.setOffline(false);
-    await page.getByRole('button', { name: '记忆与偏好' }).click();
   }
+  await page.getByRole('button', { name: '记忆与偏好' }).click();
   await page.getByRole('button', { name: '删除记忆' }).click();
   await expect(page.getByLabel('已记住的偏好')).toHaveCount(0);
+  await page.getByRole('button', { name: '关闭记忆面板' }).click();
   await page.getByLabel('发送给星澪的消息').fill('请修改复盘笔记');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.locator('.astra-proposal').last()).toContainText('星澪帮助确认边界');

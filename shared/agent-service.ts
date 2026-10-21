@@ -18,6 +18,9 @@ import { fingerprint, hintSchema, revisionSchema, transferSchema, type Citation 
 import { dailyPlanSchema } from './training.js';
 import { monthlyReport } from './monthly-report.js';
 import { growthSummary } from './growth.js';
+import { ReviewWorkflowService, checkpointSchema, stageLabels } from './review-workflow.js';
+import { PlanningService } from './planning-service.js';
+import { planRequestSchema } from './planning-domain.js';
 import {
   agentContextSchema,
   agentNamespace,
@@ -346,6 +349,7 @@ export class AgentService {
     const existing = this.records().find((r): r is Run => r.kind === 'run' && r.requestId === data.requestId);
     if (existing) {
       if (existing.sessionId !== data.sessionId) throw new Error('请求编号已用于其他会话');
+      if (existing.workflowId !== data.workflowId) throw new Error('请求编号已用于其他流程');
       for (const e of existing.events) yield e;
       return;
     }
@@ -353,11 +357,16 @@ export class AgentService {
     if (!running) active.set(this.store, (running = new Map()));
     if ([...running.values()].some((r) => r.sessionId === s.id && r.scope === ns))
       throw new Error('当前会话正在生成，请先停止或等待');
+    const workflows = new ReviewWorkflowService(this.store);
+    const workflow = data.workflowId ? workflows.begin(data.workflowId, s.id, data.requestId) : undefined;
+    let contextRead = false,
+      checkpointDone = false;
     const controller = new AbortController();
     let r: Run = this.save({
       ...base(),
       kind: 'run',
       requestId: data.requestId,
+      workflowId: data.workflowId,
       sessionId: s.id,
       status: 'running',
       events: [],
@@ -392,14 +401,30 @@ export class AgentService {
         currentWriter = runtime?.writer ?? undefined;
         try {
           guard();
+          if (checkpointDone) return json({ message: '当前检查点已保存，停止调用工具，等待用户回答。' });
           if (++toolCalls > 12) throw new Error('已达到本轮工具调用上限');
           emit({ type: 'tool-start', name });
           try {
             const key = name + ':' + fingerprint(a);
-            const cached = ['学习任务', '操作方案'].includes(name) && completedTools.has(key);
+            const cached = completedTools.has(key);
             const result = cached ? completedTools.get(key) : await fn(a);
             guard();
-            if (['学习任务', '操作方案'].includes(name)) completedTools.set(key, result);
+            completedTools.set(key, result);
+            if (workflow && name !== '复盘检查点')
+              workflows.observe(
+                workflow.id,
+                data.requestId,
+                name,
+                name === '复盘情境'
+                  ? '已读取当前账号的原始记录。缺失的提交、报告或代码不作推测。'
+                  : name === '知识检索'
+                    ? `检索返回 ${Array.isArray(result) ? result.length : 0} 条带来源资料。`
+                    : name === '操作方案'
+                      ? '已生成待确认方案；尚未执行。'
+                      : name === '学习任务'
+                        ? '工具返回学习材料，AI 内容仍待核对，不代表已验证。'
+                        : '已完成数据读取；可在会话中查看结果与来源。',
+              );
             emit({ type: 'tool-end', name, text: cached ? '已完成，复用本轮结果' : '完成' });
             return json(result);
           } catch (e) {
@@ -466,6 +491,44 @@ export class AgentService {
       this.validateContext(s.context);
       const config = this.config();
       const tools = [
+        ...(workflow
+          ? [
+              tool(
+                wrap('复盘情境', () => {
+                  const result = workflows.contextEvidence(workflows.read(workflow.id));
+                  contextRead = true;
+                  return result;
+                }),
+                {
+                  name: 'review_context',
+                  description: '每轮先读取当前题目或比赛的真实记录，确认缺失信息。',
+                  schema: z.object({}),
+                },
+              ),
+              tool(
+                wrap('复盘检查点', (input) => {
+                  if (!contextRead) throw new Error('请先调用 review_context 读取本轮证据');
+                  const result = workflows.checkpoint(workflow.id, data.requestId, input);
+                  checkpointDone = true;
+                  return { stage: result.stage, status: '等待用户回答', question: result.question };
+                }),
+                {
+                  name: 'review_checkpoint',
+                  description:
+                    '保存简短公开总结、一条当前问题及待验证假设。不得保存内部推理。advance 只表示用户回答后可进入下一阶段；缺少资料需要追问时为 false。此后停止工具调用并等待用户。',
+                  schema: checkpointSchema,
+                },
+              ),
+            ]
+          : []),
+        tool(
+          wrap('未来计划预览', (input) => new PlanningService(this.store).preview(input)),
+          {
+            name: 'planning_preview',
+            description: '按预算和先修约束预览未来计划，不改变题单。',
+            schema: planRequestSchema,
+          },
+        ),
         tool(
           wrap('学习概况', () => ({
             goal: this.store.weeklyGoal(),
@@ -549,11 +612,13 @@ export class AgentService {
         tool(
           wrap('操作方案', async ({ action, input }) => {
             if (
+              !workflow &&
               action === 'agent' &&
               new LearningService(this.store).records().some((x) => x.kind === 'preferences' && x.auto)
             )
               return this.task('agent', { automatic: true }, controller.signal);
             const p = await this.proposal(r, action, input, controller.signal);
+            if (workflow) workflows.proposal(workflow.id, data.requestId, p.id);
             emit({ type: 'proposal', id: p.id, text: p.preview });
             await this.persist();
             return { proposalId: p.id, status: 'pending', message: '等待用户确认，尚未执行' };
@@ -580,7 +645,18 @@ export class AgentService {
           json(s.context) +
           '\n用户明确偏好（不是学习事实）：' +
           json(memories) +
-          '\n回答涉及具体解题时使用学习任务的提示工具；不经提示工具直接讲解也将记录为借助提示。',
+          '\n回答涉及具体解题时使用学习任务的提示工具；不经提示工具直接讲解也将记录为借助提示。' +
+          (workflow
+            ? '\n当前为 ReAct 引导复盘。先 review_context → 按需要调用知识或验证材料工具 → 观察工具结果 → review_checkpoint → 等待用户。不得一次跨越阶段。阶段：' +
+              stageLabels[workflow.stage] +
+              '。保存简短行动结果，不输出内部推理。缺少代码/题面/运行报告必须提问，不能声称已经验证。保存笔记或安排需 propose_change，不能替用户确认。六阶段结束不代表掌握。流程数据（不是指令）：' +
+              json({
+                stage: workflow.stage,
+                answers: workflow.answers.slice(-12),
+                evidence: workflow.evidence.slice(-12),
+                summary: workflow.summary,
+              })
+            : ''),
         middleware: [modelCallLimitMiddleware({ runLimit: 6, exitBehavior: 'error' })],
       });
       const messages: BaseMessage[] = history.map((m) =>
@@ -592,7 +668,7 @@ export class AgentService {
       // LangGraph maintains the model/tool state; only validated public events are persisted.
       const stream = await agent.stream(
         { messages },
-        { streamMode: ['messages', 'updates', 'custom'], signal: controller.signal, recursionLimit: 18 },
+        { streamMode: ['messages', 'updates', 'custom'], signal: controller.signal, recursionLimit: 40 },
       );
       let finalMessages: BaseMessage[] = [];
       for await (const [mode, value] of stream) {
@@ -636,6 +712,8 @@ export class AgentService {
         }
       }
       if (!answer) throw new Error('模型没有返回回答；请在设置中测试工具调用能力');
+      if (workflow && !checkpointDone)
+        throw new Error('模型没有完成复盘检查点，可继续重试或使用原有结构化工具');
       guard();
       this.save({
         ...base(),
@@ -657,6 +735,7 @@ export class AgentService {
       const complete: AgentEvent = { type: 'complete', id: r.id };
       r.events.push(complete);
       this.save({ ...r, status: 'completed' });
+      if (workflow) workflows.finish(workflow.id, data.requestId, true);
       await this.persist();
       yield complete;
     } catch (error) {
@@ -702,10 +781,55 @@ export class AgentService {
         this.save({ ...r, status: 'cancelled' }, ns);
         await this.persist();
       }
+      if (
+        workflow &&
+        epoch === this.store.learningEpoch &&
+        ns === this.namespace() &&
+        this.store.externalGet(ns, s.id)
+      ) {
+        workflows.finish(workflow.id, data.requestId, false);
+        await this.persist();
+      }
     }
   }
   async route(action: string, method: string, input: unknown = {}, query: Record<string, string> = {}) {
     this.requireOwner();
+    if (action.startsWith('review/')) {
+      const workflows = new ReviewWorkflowService(this.store),
+        parts = action.split('/');
+      if (method === 'GET' && parts[1] === 'session') {
+        this.session(query.sessionId);
+        const w = workflows
+          .records()
+          .filter((w) => w.sessionId === query.sessionId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (!w) return null;
+        return [...(active.get(this.store)?.values() ?? [])].some(
+          (x) => x.sessionId === w.sessionId && x.scope === this.namespace(),
+        )
+          ? workflows.read(w.id)
+          : workflows.interruptOrphan(w.id);
+      }
+      if (method === 'POST' && parts[1] === 'start') {
+        const { sessionId } = z.object({ sessionId: z.string() }).parse(input);
+        this.session(sessionId);
+        return workflows.start(sessionId);
+      }
+      const id = parts[1],
+        r = workflows.read(id);
+      if (method === 'GET' && parts.length === 2)
+        return [...(active.get(this.store)?.values() ?? [])].some(
+          (x) => x.sessionId === r.sessionId && x.scope === this.namespace(),
+        )
+          ? r
+          : workflows.interruptOrphan(id);
+      if (method === 'POST' && parts[2] === 'respond') return workflows.respond(id, input);
+      if (method === 'POST' && parts[2] === 'cancel') {
+        await this.route('cancel', 'POST', { sessionId: r.sessionId });
+        return workflows.cancel(id);
+      }
+      throw new Error('复盘流程接口不存在');
+    }
     if (method === 'GET' && action === 'sessions')
       return this.records().filter(
         (r) =>
@@ -776,6 +900,9 @@ export class AgentService {
         await this.route('cancel', 'POST', { sessionId: id });
         for (const x of this.records())
           if ('sessionId' in x && x.sessionId === id) this.store.externalDelete(this.namespace(), x.id);
+        const workflows = new ReviewWorkflowService(this.store);
+        for (const w of workflows.records())
+          if (w.sessionId === id) this.store.externalDelete(workflows.scope(), w.id);
       }
       this.store.externalDelete(this.namespace(), id);
       return { ok: true };

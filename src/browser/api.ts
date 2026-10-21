@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { growthRoute } from '../../shared/growth';
 import { LearningService } from '../../shared/learning-service';
+import { PlanningService } from '../../shared/planning-service';
 import { monthlyReport } from '../../shared/monthly-report';
 import { listAiModels } from '../../shared/ai-models';
 import { attemptSchema, reviewSchema } from '../../shared/domain';
@@ -58,8 +59,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         Object.fromEntries(url.searchParams),
       );
     } else if (route === '/ai/capabilities' && method === 'POST') {
-      const config = aiConfig();
-      if (!config) throw new Error('请先保存 AI 配置');
+      const config = resolveAiConfiguration(body, aiConfig());
       result = await aiReviewer.capabilities(config);
     } else if (route.startsWith('/growth/'))
       result = growthRoute(
@@ -69,6 +69,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         body,
         Object.fromEntries(url.searchParams),
       );
+    else if (route.startsWith('/planning/'))
+      result = new PlanningService(store).route(route.slice('/planning/'.length), method, body);
     else if (route.startsWith('/learning/'))
       result = await new LearningService(store, aiReviewer, () => runtime.flush()).route(
         route.slice('/learning/'.length),
@@ -191,17 +193,11 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
           model: z.string().trim().min(1).max(120),
         })
         .parse(body);
-      const previous = aiConfig();
-      const apiKey =
-        previous && input.apiKey && input.apiKey === maskApiKey(previous.apiKey)
-          ? previous.apiKey
-          : input.apiKey;
-      const config = aiConfigSchema.parse({ baseUrl: input.baseUrl, apiKey, model: input.model });
+      const config = resolveAiConfiguration(input, aiConfig());
       store.externalPut(AI_CONFIG_NAMESPACE, AI_CONFIG_KEY, config);
       result = aiSettingsView(config);
     } else if (route === '/ai/test' && method === 'POST') {
-      const config = aiConfig();
-      if (!config) throw new Error('请先保存 AI 配置');
+      const config = resolveAiConfiguration(body, aiConfig());
       result = { ok: true, message: await aiReviewer.test(config) };
     } else if (/^\/problems\/[^/]+\/fetch-submission-code$/.test(route) && method === 'POST')
       throw new Error('在线版受浏览器跨域限制，无法自动获取平台源码，请打开提交页面手动复制代码');
@@ -450,3 +446,4 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     throw error;
   }
 }
+import { resolveAiConfiguration } from '../../shared/ai-configuration';

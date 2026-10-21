@@ -1,0 +1,242 @@
+{
+  "format": "contest-review",
+  "version": 11,
+  "exportedAt": "2026-10-14T04:00:00.000Z",
+  "activeHandle": "synthetic_planner",
+  "profiles": ["synthetic_planner"],
+  "activeAtcoder": "",
+  "xcpcActive": "",
+  "xcpcMode": "official",
+  "external": [
+    {
+      "namespace": "growth:synthetic_planner:-",
+      "key": "weekly:2026-10-12",
+      "value": {
+        "kind": "weekly",
+        "version": 1,
+        "week": "2026-10-12",
+        "scope": "growth:synthetic_planner:-",
+        "activatedAt": "2026-10-14T04:00:00.000Z",
+        "goal": {
+          "week": "2026-10-12",
+          "mode": "focus",
+          "categories": ["实现与模拟"],
+          "updatedAt": "2026-10-14T04:00:00.000Z"
+        }
+      }
+    },
+    {
+      "namespace": "weekly:synthetic_planner:-",
+      "key": "2026-10-12",
+      "value": {
+        "week": "2026-10-12",
+        "mode": "focus",
+        "categories": ["实现与模拟"],
+        "updatedAt": "2026-10-14T04:00:00.000Z"
+      }
+    }
+  ],
+  "tables": {
+    "problems": [],
+    "submissions": [],
+    "reviews": [],
+    "contests": [],
+    "contest_reviews": [],
+    "attempts": [],
+    "jobs": [],
+    "analysis_cache": [],
+    "catalog_cache": [
+      {
+        "profile": "synthetic_planner",
+        "key": "current",
+        "value": {
+          "fetchedAt": "2026-10-14T04:00:00.000Z",
+          "problems": [
+            {
+              "key": "7000:A",
+              "contestId": 7000,
+              "index": "A",
+              "name": "Synthetic practice 0",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7000/problem/A"
+            },
+            {
+              "key": "7001:A",
+              "contestId": 7001,
+              "index": "A",
+              "name": "Synthetic practice 1",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7001/problem/A"
+            },
+            {
+              "key": "7002:A",
+              "contestId": 7002,
+              "index": "A",
+              "name": "Synthetic practice 2",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7002/problem/A"
+            },
+            {
+              "key": "7003:A",
+              "contestId": 7003,
+              "index": "A",
+              "name": "Synthetic practice 3",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7003/problem/A"
+            },
+            {
+              "key": "7004:A",
+              "contestId": 7004,
+              "index": "A",
+              "name": "Synthetic practice 4",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7004/problem/A"
+            },
+            {
+              "key": "7005:A",
+              "contestId": 7005,
+              "index": "A",
+              "name": "Synthetic practice 5",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7005/problem/A"
+            },
+            {
+              "key": "7006:A",
+              "contestId": 7006,
+              "index": "A",
+              "name": "Synthetic practice 6",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7006/problem/A"
+            },
+            {
+              "key": "7007:A",
+              "contestId": 7007,
+              "index": "A",
+              "name": "Synthetic practice 7",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7007/problem/A"
+            },
+            {
+              "key": "7008:A",
+              "contestId": 7008,
+              "index": "A",
+              "name": "Synthetic practice 8",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7008/problem/A"
+            },
+            {
+              "key": "7009:A",
+              "contestId": 7009,
+              "index": "A",
+              "name": "Synthetic practice 9",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7009/problem/A"
+            },
+            {
+              "key": "7010:A",
+              "contestId": 7010,
+              "index": "A",
+              "name": "Synthetic practice 10",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7010/problem/A"
+            },
+            {
+              "key": "7011:A",
+              "contestId": 7011,
+              "index": "A",
+              "name": "Synthetic practice 11",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7011/problem/A"
+            },
+            {
+              "key": "7012:A",
+              "contestId": 7012,
+              "index": "A",
+              "name": "Synthetic practice 12",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7012/problem/A"
+            },
+            {
+              "key": "7013:A",
+              "contestId": 7013,
+              "index": "A",
+              "name": "Synthetic practice 13",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7013/problem/A"
+            },
+            {
+              "key": "7014:A",
+              "contestId": 7014,
+              "index": "A",
+              "name": "Synthetic practice 14",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7014/problem/A"
+            },
+            {
+              "key": "7015:A",
+              "contestId": 7015,
+              "index": "A",
+              "name": "Synthetic practice 15",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7015/problem/A"
+            },
+            {
+              "key": "7016:A",
+              "contestId": 7016,
+              "index": "A",
+              "name": "Synthetic practice 16",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7016/problem/A"
+            },
+            {
+              "key": "7017:A",
+              "contestId": 7017,
+              "index": "A",
+              "name": "Synthetic practice 17",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7017/problem/A"
+            },
+            {
+              "key": "7018:A",
+              "contestId": 7018,
+              "index": "A",
+              "name": "Synthetic practice 18",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7018/problem/A"
+            },
+            {
+              "key": "7019:A",
+              "contestId": 7019,
+              "index": "A",
+              "name": "Synthetic practice 19",
+              "rating": 1100,
+              "tags": ["implementation"],
+              "url": "https://codeforces.com/contest/7019/problem/A"
+            }
+          ]
+        }
+      }
+    ],
+    "daily_plans": [],
+    "training_meta": []
+  }
+}

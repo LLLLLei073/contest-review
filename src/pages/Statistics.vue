@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, ref, computed, watch } from 'vue';
-import { ChartNoAxesCombined } from 'lucide-vue-next';
 import { api } from '../api';
 import type { Statistics } from '../../shared/domain';
 import type { WeeklyGoal } from '../../shared/weekly';
@@ -8,12 +7,18 @@ import { useSpringValues } from '../motion';
 import { useSection } from '../sections';
 import { useLearningState } from '../learningState';
 const LearningActivity = defineAsyncComponent(() => import('../components/LearningActivity.vue'));
+const PlanningWorkspace = defineAsyncComponent(() => import('../components/training/PlanningWorkspace.vue'));
 import MonthlyReport from '../components/MonthlyReport.vue';
 const stats = ref<Statistics | null>(null),
   error = ref(''),
   loading = ref(true);
 const source = useSection(['all', 'cf', 'atcoder'] as const, 'all', 'source');
-const activeSection = useSection(['overview', 'monthly', 'activity', 'diagnosis'] as const, 'overview');
+const activeSection = useSection(
+  ['overview', 'monthly', 'activity', 'diagnosis', 'knowledge'] as const,
+  'overview',
+);
+const activityPart = useSection(['records', 'distribution', 'reasons'] as const, 'records', 'chart');
+const masteryView = ref<'chart' | 'list'>('chart');
 const learning = useLearningState();
 const activityOpened = ref(activeSection.value === 'diagnosis');
 watch(activeSection, () => {
@@ -77,27 +82,31 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <div class="page-head">
+  <div class="page-head statistics-head">
     <div>
       <div class="eyebrow">PROGRESS, NOT PERFECTION</div>
       <h1>训练统计</h1>
-      <RouterLink class="astra-context-link" to="/companion">请星澪分析学习进展</RouterLink>
-      <RouterLink to="/statistics?view=diagnosis">生成 AI 学情诊断</RouterLink>
+      <details class="statistics-ai-actions">
+        <summary>AI 分析</summary>
+        <div class="button-row">
+          <RouterLink to="/companion">请星澪分析学习进展</RouterLink>
+          <RouterLink to="/statistics?view=diagnosis">生成 AI 学情诊断</RouterLink>
+        </div>
+      </details>
       <p>找到反复出现的问题，让下一次练习更有方向。</p>
     </div>
-    <span class="date-chip"><ChartNoAxesCombined :size="17" />按唯一题目统计</span>
+    <div class="contest-filter statistics-source">
+      <label
+        >统计来源
+        <select v-model="source">
+          <option value="all">两站合计</option>
+          <option value="cf">Codeforces</option>
+          <option value="atcoder">AtCoder</option>
+        </select></label
+      >
+    </div>
   </div>
   <div v-if="error" class="alert error" role="alert">{{ error }}</div>
-  <div class="contest-filter statistics-source">
-    <label
-      >统计来源
-      <select v-model="source">
-        <option value="all">两站合计</option>
-        <option value="cf">Codeforces</option>
-        <option value="atcoder">AtCoder</option>
-      </select></label
-    >
-  </div>
   <nav class="content-switcher" aria-label="训练统计内容">
     <button
       v-for="item in [
@@ -105,11 +114,27 @@ onBeforeUnmount(() => {
         { id: 'monthly', label: '月度报告' },
         { id: 'activity', label: '练习趋势' },
         { id: 'diagnosis', label: '学情诊断' },
+        { id: 'knowledge', label: '知识状态' },
       ]"
       :key="item.id"
       :class="{ active: activeSection === item.id }"
       :aria-current="activeSection === item.id ? 'page' : undefined"
       @click="showSection(item.id)"
+    >
+      {{ item.label }}
+    </button>
+  </nav>
+  <nav v-if="activeSection === 'activity'" class="content-switcher sub-switcher" aria-label="练习趋势分区">
+    <button
+      v-for="item in [
+        { id: 'records', label: '重做与题单' },
+        { id: 'distribution', label: '错因与算法分布' },
+        { id: 'reasons', label: '错因变化' },
+      ] as const"
+      :key="item.id"
+      :class="{ active: activityPart === item.id }"
+      :aria-pressed="activityPart === item.id"
+      @click="activityPart = item.id"
     >
       {{ item.label }}
     </button>
@@ -121,6 +146,7 @@ onBeforeUnmount(() => {
     :session="learning"
   />
   <MonthlyReport v-if="activeSection === 'monthly'" :source="source" />
+  <PlanningWorkspace v-if="activeSection === 'knowledge'" mode="knowledge" />
   <div v-show="activeSection === 'overview' || activeSection === 'activity'">
     <button v-if="error" @click="load">重试统计</button>
     <div v-if="loading" class="quiet-empty" role="status">正在读取训练统计…</div>
@@ -147,12 +173,15 @@ onBeforeUnmount(() => {
           >
         </div>
       </section>
-      <section v-show="activeSection === 'activity'" class="panel training-extra-panel statistics-reasons">
+      <section
+        v-show="activeSection === 'activity' && activityPart === 'reasons'"
+        class="panel training-extra-panel statistics-reasons"
+      >
         <div class="section-head">
           <div>
             <span class="eyebrow">ROOT CAUSE</span>
             <h2>错因改进趋势</h2>
-            <p>按保存复盘时的错因快照归集；旧复盘只计入上方当前分布。</p>
+            <p>按保存复盘时的错因快照归集；旧复盘只计入“错因与算法分布”。</p>
           </div>
         </div>
         <div v-if="!reasonTrend.length" class="quiet-empty">新保存的错因将在这里形成每周记录。</div>
@@ -189,13 +218,21 @@ onBeforeUnmount(() => {
           {{ stats.dailyTraining.at(-1)?.newAssigned ?? 0 }}</span
         >
       </div>
-      <section v-show="activeSection === 'overview'" class="panel mastery-panel statistics-mastery">
+      <section
+        v-show="activeSection === 'overview'"
+        class="panel mastery-panel statistics-mastery"
+        :class="'mastery-view-' + masteryView"
+      >
         <div class="section-head">
           <div>
             <span class="eyebrow">LEARNING PROFILE</span>
             <h2>算法领域掌握度</h2>
             <p>结合提交与独立重做；AtCoder 仅纳入手动标注领域的题，样本不足时向中性值收敛。</p>
           </div>
+        </div>
+        <div class="mastery-display-switch" role="group" aria-label="掌握度展示方式">
+          <button :aria-pressed="masteryView === 'chart'" @click="masteryView = 'chart'">雷达图</button>
+          <button :aria-pressed="masteryView === 'list'" @click="masteryView = 'list'">领域明细</button>
         </div>
         <div class="mastery-content">
           <svg
@@ -235,10 +272,15 @@ onBeforeUnmount(() => {
           <div class="mastery-list">
             <div v-for="area in stats.mastery" :key="area.name" class="mastery-row">
               <span>{{ area.name }}</span
-              ><strong>{{ area.score }}<small> / 100</small></strong
+              ><strong
+                >{{ area.samples ? area.score : '样本不足' }}<small v-if="area.samples"> / 100</small></strong
               ><small>{{ area.samples }} 题</small>
             </div>
           </div>
+        </div>
+        <div class="button-row">
+          <RouterLink to="/?view=path">按薄弱领域规划学习路径 →</RouterLink
+          ><RouterLink to="/problems?status=pending">补充尚未完成的复盘 →</RouterLink>
         </div>
         <details class="chart-caption mastery-caption">
           <summary>查看掌握度计算口径</summary>
@@ -249,13 +291,17 @@ onBeforeUnmount(() => {
           </p>
         </details>
       </section>
-      <section v-show="activeSection === 'activity'" class="panel daily-history statistics-history">
-        <div class="section-head">
+      <details
+        v-show="activeSection === 'activity' && activityPart === 'records'"
+        class="panel daily-history statistics-history"
+      >
+        <summary class="section-head">
           <div>
             <span class="eyebrow">DAILY PRACTICE</span>
             <h2>最近 14 天题单</h2>
           </div>
-        </div>
+          <span class="small subtle">展开每日完成明细</span>
+        </summary>
         <div class="daily-history-grid">
           <div v-for="item in stats.dailyTraining" :key="item.date" class="daily-history-day">
             <strong>{{ item.date.slice(5).replace('-', '/') }}</strong
@@ -271,8 +317,11 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p class="chart-caption">复习完成按笔记完成或重做记录计算；新知完成按题单当日的 CF AC 计算。</p>
-      </section>
-      <section v-show="activeSection === 'activity'" class="panel trend-panel statistics-trend">
+      </details>
+      <section
+        v-show="activeSection === 'activity' && activityPart === 'records'"
+        class="panel trend-panel statistics-trend"
+      >
         <div class="section-head">
           <div>
             <span class="eyebrow">CONSISTENCY MATTERS</span>
@@ -300,8 +349,32 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p class="chart-caption">每次重做计为一条记录，按本地日期归集。没有记录的日期显示为零。</p>
+        <details class="chart-caption">
+          <summary>查看每日重做数据表</summary>
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>独立做对</th>
+                <th>借助提示</th>
+                <th>仍未做出</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in stats.trend" :key="t.date">
+                <th>{{ t.date }}</th>
+                <td>{{ t.independent }}</td>
+                <td>{{ t.hint }}</td>
+                <td>{{ t.failed }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </details>
       </section>
-      <div v-show="activeSection === 'activity'" class="two-columns statistics-distribution">
+      <div
+        v-show="activeSection === 'activity' && activityPart === 'distribution'"
+        class="two-columns statistics-distribution"
+      >
         <section
           v-for="group in [
             { title: '常见错因', sub: '从错误中找到模式', rows: stats.reasons },
@@ -321,7 +394,12 @@ onBeforeUnmount(() => {
             <span class="row-number">{{ String(i + 1).padStart(2, '0') }}</span>
             <div>
               <div class="distribution-label">
-                <span>{{ label }}</span
+                <RouterLink
+                  :to="{
+                    path: '/problems',
+                    query: { source, [group.title === '常见错因' ? 'reason' : 'tag']: label },
+                  }"
+                  >{{ label }}</RouterLink
                 ><b>{{ count }} <small>题</small></b>
               </div>
               <div class="horizontal-track">

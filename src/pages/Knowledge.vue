@@ -1,20 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, notify } from '../api';
 import { useLearningState } from '../learningState';
 import { useSection } from '../sections';
 import Markdown from '../components/Markdown.vue';
+import KnowledgeReader from '../components/knowledge/KnowledgeReader.vue';
+import KnowledgeGraph from '../components/knowledge/KnowledgeGraph.vue';
 import { categoryNames } from '../../shared/training';
 import type { LearningService } from '../../shared/learning-service';
 import type { ExperienceCard, Citation } from '../../shared/learning-domain';
 const route = useRoute();
-const nodeLabels: Record<string, string> = {
-  knowledge: '知识点',
-  problem: '题目',
-  reason: '错因',
-  experience: '经验卡',
-};
 const session = useLearningState();
 const { state, busy, error, message, run } = session;
 const graph = ref<ReturnType<LearningService['graph']>>();
@@ -25,6 +21,16 @@ const query = ref(''),
 const selected = ref<ExperienceCard>(),
   category = ref('all'),
   focus = ref('');
+const cardStatus = ref('all');
+const filteredCards = computed(() =>
+  cards.value.filter(
+    (c) =>
+      cardStatus.value === 'all' ||
+      (cardStatus.value === 'stale' && !c.sourceValid) ||
+      (cardStatus.value === 'confirmed' && c.confirmed && c.sourceValid) ||
+      (cardStatus.value === 'draft' && !c.confirmed),
+  ),
+);
 const records = computed(() => state.value?.records ?? []);
 const cards = computed(() =>
   records.value.filter((r): r is ExperienceCard & { sourceValid: boolean } => r.kind === 'card'),
@@ -35,33 +41,6 @@ const library = computed(() =>
       (category.value === 'all' || k.category === category.value) &&
       (k.title + k.content + k.aliases.join(' ')).toLowerCase().includes(query.value.toLowerCase()),
   ),
-);
-const graphNodes = computed(() => {
-  const all = graph.value?.nodes ?? [],
-    edges = graph.value?.edges ?? [];
-  return all.filter(
-    (n) =>
-      (category.value === 'all' || n.category === category.value) &&
-      (!focus.value ||
-        n.id === focus.value ||
-        edges.some(
-          (e) => (e.from === focus.value && e.to === n.id) || (e.to === focus.value && e.from === n.id),
-        )),
-  );
-});
-const drawing = computed(() =>
-  graphNodes.value.slice(0, 40).map((n, i, all) => ({
-    ...n,
-    x: 420 + 310 * Math.cos((i * 2 * Math.PI) / all.length),
-    y: 240 + 185 * Math.sin((i * 2 * Math.PI) / all.length),
-  })),
-);
-const drawingEdges = computed(() =>
-  (graph.value?.edges ?? []).flatMap((e) => {
-    const a = drawing.value.find((n) => n.id === e.from),
-      b = drawing.value.find((n) => n.id === e.to);
-    return a && b ? [{ ...e, a, b }] : [];
-  }),
 );
 let graphSerial = 0,
   searchSerial = 0,
@@ -76,7 +55,11 @@ async function load() {
   await session.load();
   if (route.query.experience && !selected.value) {
     const card = cards.value.find((c) => c.id === route.query.experience);
-    if (card) selected.value = JSON.parse(JSON.stringify(card));
+    if (card) {
+      selected.value = JSON.parse(JSON.stringify(card));
+      await nextTick();
+      document.getElementById('experience-editor')?.scrollIntoView({ block: 'center' });
+    }
   }
 }
 async function loadGraph() {
@@ -110,6 +93,14 @@ async function saveCard() {
 onMounted(() => {
   void load();
 });
+watch(
+  () => route.query.card,
+  () => {
+    category.value = 'all';
+    query.value = '';
+    section.value = 'library';
+  },
+);
 watch(
   section,
   (value) => {
@@ -175,41 +166,41 @@ watch(
     </div>
     <div v-for="r in results" :key="r.id" class="panel learning-card">
       <RouterLink :to="r.url">{{ r.title }}</RouterLink>
+      <p class="small subtle">
+        来源：{{
+          r.url.startsWith('/knowledge?card=')
+            ? '内置知识'
+            : r.url.includes('experience=')
+              ? '个人经验'
+              : '原始复盘'
+        }}
+      </p>
       <p>{{ r.excerpt }}</p>
     </div>
-    <div class="learning-grid">
-      <article
-        v-for="k in library"
-        :key="k.id"
-        :id="k.id"
-        :class="['panel', 'learning-card', { 'learning-selected': route.query.card === k.id }]"
-      >
-        <span class="eyebrow">{{ k.category }}</span>
-        <h2>{{ k.title }}</h2>
-        <Markdown :text="k.content" />
-        <p class="small subtle">
-          别名：{{ k.aliases.join('、') }}<br />前置：{{
-            k.prerequisites
-              .map((id) => state?.knowledge.find((card) => card.id === id)?.title ?? id)
-              .join('、') || '无'
-          }}
-        </p>
-        <button
-          class="small-button"
-          @click="
-            section = 'graph';
-            focus = 'knowledge:' + k.id;
-          "
-        >
-          查看关联
-        </button>
-      </article>
-    </div>
+    <KnowledgeReader
+      :cards="library"
+      :all="state?.knowledge ?? []"
+      @graph="
+        (id) => {
+          section = 'graph';
+          focus = 'knowledge:' + id;
+        }
+      "
+    />
     <h2>个人经验卡</h2>
+    <label
+      >经验状态<select v-model="cardStatus">
+        <option value="all">全部</option>
+        <option value="draft">草稿</option>
+        <option value="confirmed">已确认且来源有效</option>
+        <option value="stale">来源已失效</option>
+      </select></label
+    >
+    <p v-if="cards.length && !filteredCards.length" class="quiet-empty">当前状态没有经验卡。</p>
     <p v-if="!cards.length" class="subtle">
       从题目详情的“解题助手 → 经验沉淀”生成草稿，确认后才会用于算法问答和知识图谱。
     </p>
-    <article v-for="c in cards" :key="c.id" class="panel learning-card">
+    <article v-for="c in filteredCards" :key="c.id" class="panel learning-card">
       <div class="section-head">
         <h3>{{ c.title }}</h3>
         <span class="tag">{{ c.confirmed ? '已确认' : '草稿' }}</span>
@@ -230,7 +221,12 @@ watch(
         </button>
       </div>
     </article>
-    <form v-if="selected" class="panel learning-card learning-stack" @submit.prevent="saveCard">
+    <form
+      v-if="selected"
+      id="experience-editor"
+      class="panel learning-card learning-stack"
+      @submit.prevent="saveCard"
+    >
       <h2>编辑经验卡</h2>
       <label>标题<input v-model="selected.title" required /></label
       ><label>经验内容<textarea v-model="selected.content" rows="8" /></label>
@@ -270,93 +266,47 @@ watch(
     >
       <template v-if="r.kind === 'answer'"
         ><h2>{{ r.question }}</h2>
-        <h3>资料依据</h3>
-        <Markdown :text="r.answer" />
-        <h3>通用解释</h3>
-        <Markdown :text="r.general" />
-        <details v-for="c in r.citations" :key="c.id">
-          <summary>{{ c.title }} {{ 'valid' in c && !c.valid ? '· 来源已失效' : '' }}</summary>
-          <p>{{ c.excerpt }}</p>
-          <RouterLink :to="c.url">查看来源</RouterLink>
-        </details></template
+        <div class="knowledge-answer-layout">
+          <div>
+            <h3>资料依据</h3>
+            <Markdown :text="r.answer" />
+            <h3>通用解释</h3>
+            <Markdown :text="r.general" />
+          </div>
+          <aside aria-label="回答引用来源">
+            <h3>引用来源</h3>
+            <details v-for="c in r.citations" :key="c.id">
+              <summary>{{ c.title }} {{ 'valid' in c && !c.valid ? '· 来源已失效' : '' }}</summary>
+              <p>{{ c.excerpt }}</p>
+              <RouterLink :to="c.url">查看来源</RouterLink>
+            </details>
+          </aside>
+        </div></template
       >
     </article>
   </section>
-  <section v-if="section === 'graph'" class="learning-stack">
-    <div class="learning-controls">
-      <label
-        >图谱领域<select v-model="category">
-          <option value="all">全部领域</option>
-          <option v-for="c in categoryNames" :key="c">{{ c }}</option>
-        </select></label
-      ><button class="small-button" @click="focus = ''">显示全部关系</button>
-    </div>
-    <p class="subtle">点击节点展开相邻关系。图形最多展示 40 个节点，完整结果见下方列表；连线来源可查看。</p>
-    <div class="panel learning-graph">
-      <svg viewBox="0 0 840 480" role="img" aria-label="算法知识关系图">
-        <line
-          v-for="(e, i) in drawingEdges"
-          :key="i"
-          :x1="e.a.x"
-          :y1="e.a.y"
-          :x2="e.b.x"
-          :y2="e.b.y"
-          stroke="currentColor"
-          opacity=".2"
-        >
-          <title>{{ e.relation }} · {{ e.source }}</title>
-        </line>
-        <g
-          v-for="n in drawing"
-          :key="n.id"
-          @click="focus = n.id"
-          @keydown.enter="focus = n.id"
-          tabindex="0"
-          role="button"
-          :aria-label="n.label"
-        >
-          <circle :cx="n.x" :cy="n.y" r="9" :fill="n.kind === 'knowledge' ? '#92563a' : '#3e6858'" />
-          <text :x="n.x" :y="n.y + 23" text-anchor="middle" font-size="12" fill="currentColor">
-            {{ n.label.slice(0, 16) }}
-          </text>
-        </g>
-      </svg>
-    </div>
-    <div class="panel learning-card learning-table">
-      <table>
-        <thead>
-          <tr>
-            <th>节点</th>
-            <th>类型</th>
-            <th>样本</th>
-            <th>独立完成证据</th>
-            <th>提示使用</th>
-            <th>关系</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="n in graphNodes" :key="n.id">
-            <td>
-              <RouterLink :to="n.url">{{ n.label }}</RouterLink>
-            </td>
-            <td>{{ nodeLabels[n.kind] || n.kind }}</td>
-            <td>{{ n.samples }}</td>
-            <td>{{ n.independent }}</td>
-            <td>{{ n.hints }}</td>
-            <td><button class="small-button" @click="focus = n.id">展开</button></td>
-          </tr>
-        </tbody>
-      </table>
-      <details
-        v-for="(e, i) in graph?.edges.filter((e) => !focus || e.from === focus || e.to === focus)"
-        :key="i"
-      >
-        <summary>
-          {{ graph?.nodes.find((n) => n.id === e.from)?.label }} →
-          {{ graph?.nodes.find((n) => n.id === e.to)?.label }} · {{ e.relation }}
-        </summary>
-        来源：{{ e.source }}
-      </details>
-    </div>
-  </section>
+  <KnowledgeGraph v-if="section === 'graph' && graph" :graph="graph" :initial-focus="focus" />
 </template>
+
+<style scoped>
+.knowledge-answer-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+  gap: 24px;
+}
+.knowledge-answer-layout aside {
+  border-left: 1px solid var(--line);
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 768px) {
+  .knowledge-answer-layout {
+    grid-template-columns: 1fr;
+  }
+  .knowledge-answer-layout aside {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 16px 0 0;
+  }
+}
+</style>

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { growthRecordSchema } from './growth-domain.js';
 import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
 import { agentRecordSchema } from './agent-domain.js';
+import { planningRecordSchema } from './planning-domain.js';
+import { reviewWorkflowSchema } from './review-workflow-domain.js';
 import { learningRecordSchema, type LearningRecord } from './learning-domain.js';
 import { knowledgeCards } from './knowledge.js';
 import { fingerprint } from './learning-domain.js';
@@ -178,6 +180,7 @@ const backupSchema = z.object({
     z.literal(8),
     z.literal(9),
     z.literal(10),
+    z.literal(11),
   ]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
@@ -1097,7 +1100,10 @@ export class CoreStore {
       });
       this.externalPut(this.combinedNamespace(), date, plan);
     }
-    if (cf && (!cfPlan || (!cfPlan.catalogReady && plan.catalogReady)))
+    const planned = this.externalAll<import('./planning-domain.js').PlanningRecord>(
+      `planning:${cf || '-'}:ac~${ac.toLowerCase()}`,
+    ).some((r) => r.kind === 'decision' && r.status === 'applied' && r.request.date === date);
+    if (cf && !planned && (!cfPlan || (!cfPlan.catalogReady && plan.catalogReady)))
       this.put(
         'daily_plans',
         cf,
@@ -1114,8 +1120,17 @@ export class CoreStore {
       );
     if (cf) this.reconcileAcceptedRedo(cf, date);
     this.reconcileAcceptedRedo(acProfile, date);
-    const cfDay = cf ? this.trainingDay(cf, now) : null;
-    const acDay = this.trainingDay(acProfile, now);
+    const cfDay = cf
+      ? this.trainingDay(cf, now, {
+          ...plan,
+          review: plan.review.filter((p) => !p.key.startsWith('atcoder:')),
+        })
+      : null;
+    const acDay = this.trainingDay(acProfile, now, {
+      ...plan,
+      review: plan.review.filter((p) => p.key.startsWith('atcoder:')),
+      newKeys: [],
+    });
     const available = new Map([...(cfDay?.review ?? []), ...acDay.review].map((p) => [p.key, p]));
     return {
       date,
@@ -1190,7 +1205,7 @@ export class CoreStore {
           (b.ratingUpdateTimeSeconds ?? 0) - (a.ratingUpdateTimeSeconds ?? 0) || b.contestId - a.contestId,
       )[0]?.newRating;
   }
-  trainingDay(h: string, now = new Date()): TrainingDay {
+  trainingDay(h: string, now = new Date(), planOverride?: DailyPlan): TrainingDay {
     const date = localDay(now);
     this.repairLegacyReviews(h);
     this.reconcileAcceptedRedo(h, date);
@@ -1201,9 +1216,9 @@ export class CoreStore {
     const known = this.all<Problem>('problems', h);
     const reviews = new Map(rows.map((p) => [p.key, p.review]));
     const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey);
-    let plan = this.get<DailyPlan>('daily_plans', h, date);
+    let plan = planOverride ?? this.get<DailyPlan>('daily_plans', h, date);
     const weeklyGoal = h === this.active() ? this.weeklyGoal(now) : null;
-    if (!plan || (!plan.catalogReady && catalog && !!weeklyGoal && !plan.newKeys.length)) {
+    if (!plan || (!planOverride && !plan.catalogReady && catalog && !!weeklyGoal && !plan.newKeys.length)) {
       const eligible = rows.filter((p) => !p.review.ignored);
       const carry = eligible
         .filter(
@@ -1684,7 +1699,7 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 10,
+      version: 11,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
       profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
@@ -1759,6 +1774,96 @@ export class CoreStore {
       const id = `${row.namespace}\0${row.key}`;
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
+      if (row.namespace.startsWith('planning:') || row.namespace.startsWith('review-workflow:')) {
+        if (data.version < 11) throw new Error('规划与引导复盘记录需要 v11 备份');
+        const parts = row.namespace.split(':');
+        if (
+          parts.length !== 3 ||
+          (parts[1] === '-' && parts[2] === '-') ||
+          (parts[1] !== '-' && (parts[1].startsWith('ac~') || !data.profiles.includes(parts[1]))) ||
+          (parts[2] !== '-' && (!parts[2].startsWith('ac~') || !data.profiles.includes(parts[2])))
+        )
+          throw new Error('规划或复盘工作流账号不一致');
+        const owners = parts.slice(1).filter((p) => p !== '-');
+        if (row.namespace.startsWith('planning:')) {
+          const record = planningRecordSchema.parse(row.value);
+          if (record.id !== row.key || record.scope !== row.namespace)
+            throw new Error('规划记录归属或编号不一致');
+          const targets = record.kind === 'preferences' ? record.options.targets : record.path.targets;
+          if (targets.some((t) => !knowledgeCards.some((k) => k.id === t)))
+            throw new Error('规划目标知识点不存在');
+          if (record.kind === 'decision') {
+            if (
+              record.after.date !== record.request.date ||
+              (record.before && record.before.date !== record.request.date)
+            )
+              throw new Error('规划日期不一致');
+            for (const plan of [record.before, record.after].filter((p) => p !== null)) {
+              if (
+                new Set([...plan.review.map((p) => p.key), ...plan.newKeys]).size !==
+                plan.review.length + plan.newKeys.length
+              )
+                throw new Error('规划题目重复');
+              if (
+                plan.review.some(
+                  (p) => !data.tables.problems.some((x) => owners.includes(x.profile) && x.key === p.key),
+                )
+              )
+                throw new Error('规划复习题缺少所属账号的原题');
+              if (
+                plan.newKeys.some(
+                  (key) =>
+                    !data.tables.catalog_cache.some(
+                      (c) =>
+                        c.profile === parts[1] && (c.value as Catalog).problems?.some((p) => p.key === key),
+                    ),
+                )
+              )
+                throw new Error('规划新题缺少关联题库');
+            }
+            if (record.status === 'preview') record.status = 'expired';
+          }
+          row.value = record;
+        } else {
+          const record = reviewWorkflowSchema.parse(row.value);
+          const agentScope = `agent:${parts[1]}:${parts[2]}`;
+          const session = external.find(
+            (x) =>
+              x.namespace === agentScope &&
+              x.key === record.sessionId &&
+              (x.value as { kind?: string }).kind === 'session',
+          );
+          if (record.id !== row.key || record.scope !== row.namespace || !session)
+            throw new Error('复盘工作流缺少所属账号的会话');
+          const parsedSession = agentRecordSchema.parse(session.value);
+          if (
+            parsedSession.kind !== 'session' ||
+            fingerprint(parsedSession.context) !== fingerprint(record.context) ||
+            parsedSession.xcpc !== record.xcpc
+          )
+            throw new Error('复盘工作流上下文不一致');
+          if (
+            new Set(record.answers.map((a) => a.id)).size !== record.answers.length ||
+            new Set(record.proposalIds).size !== record.proposalIds.length
+          )
+            throw new Error('复盘工作流记录重复');
+          if (
+            record.proposalIds.some(
+              (proposalId) =>
+                !external.some(
+                  (x) =>
+                    x.namespace === agentScope &&
+                    x.key === proposalId &&
+                    (x.value as { kind?: string; sessionId?: string }).kind === 'proposal' &&
+                    (x.value as { sessionId?: string }).sessionId === record.sessionId,
+                ),
+            )
+          )
+            throw new Error('复盘工作流提案引用不一致');
+          if (record.status === 'running' || record.status === 'ready') record.status = 'interrupted';
+          row.value = record;
+        }
+      }
       if (row.namespace.startsWith('agent:')) {
         const parts = row.namespace.split(':');
         if (
@@ -1770,6 +1875,17 @@ export class CoreStore {
           throw new Error('智能体账号组合不一致');
         const record = agentRecordSchema.parse(row.value);
         if (record.id !== row.key) throw new Error('智能体记录编号不一致');
+        if (
+          record.kind === 'run' &&
+          record.workflowId &&
+          !external.some(
+            (x) =>
+              x.namespace === `review-workflow:${parts[1]}:${parts[2]}` &&
+              x.key === record.workflowId &&
+              (x.value as { sessionId?: string }).sessionId === record.sessionId,
+          )
+        )
+          throw new Error('智能体运行缺少所属会话的复盘工作流');
         if (
           'sessionId' in record &&
           !external.some(
@@ -1900,6 +2016,16 @@ export class CoreStore {
           record.after = dailyPlanSchema.parse(record.after);
           if (record.before.date !== record.date || record.after.date !== record.date)
             throw new Error('计划版本日期不一致');
+          if (
+            record.planningDecisionId &&
+            !external.some(
+              (x) =>
+                x.namespace === `planning:${parts[1]}:${parts[2]}` &&
+                x.key === record.planningDecisionId &&
+                (x.value as { kind?: string }).kind === 'decision',
+            )
+          )
+            throw new Error('学习计划缺少关联规划版本');
         }
         row.value = record;
       } else if (row.namespace === 'ai' && row.key === 'config') row.value = aiConfigSchema.parse(row.value);
@@ -1941,6 +2067,9 @@ export class CoreStore {
         row.value = contestReviewSchema.parse(row.value);
       else if (row.namespace.startsWith('growth:')) row.value = growthRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('agent:')) row.value = agentRecordSchema.parse(row.value);
+      else if (row.namespace.startsWith('planning:')) row.value = planningRecordSchema.parse(row.value);
+      else if (row.namespace.startsWith('review-workflow:'))
+        row.value = reviewWorkflowSchema.parse(row.value);
       else row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
     }
     if (data.xcpcActive && !externalKeys.has(`player\0${data.xcpcActive}`))
