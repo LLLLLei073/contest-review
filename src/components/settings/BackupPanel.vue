@@ -116,7 +116,7 @@ async function restore() {
         <div v-if="preview" class="backup-preview">
           <h3>待恢复文件概要 · v{{ preview.version }}</h3>
           <p>账号分区：{{ preview.profiles.join('、') || '无' }}。恢复将替换本机全部账号数据。</p>
-          <p>规划记录 {{ preview.planning }} · 引导复盘 {{ preview.workflows }}</p>
+          <p>规划记录 {{ preview.planning }} · 引导复盘 {{ preview.workflows }} · 连战 {{ preview.battles }}</p>
           <details>
             <summary>记录数量</summary>
             <ul>
@@ -131,7 +131,7 @@ async function restore() {
     </div>
     <p v-if="restoreResult" class="alert success">恢复成功。原数据备份：{{ restoreResult }}</p>
     <p class="small subtle">
-      导出格式 v11，支持恢复 v1–v11。包含算法偏好、路径、计划决策与引导进度；旧版应用可能无法读取新版备份。
+      导出格式 v12，支持恢复 v1–v12。包含连战、算法偏好、路径、计划决策与引导进度；旧版应用可能无法读取新版备份。
     </p>
     <button
       v-if="browserMode"

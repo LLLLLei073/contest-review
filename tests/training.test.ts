@@ -396,7 +396,7 @@ test('catalog and daily plan survive backup; legacy v3 has no catalog and needs 
   s.enrich('tester', [], [], catalog());
   const original = s.trainingDay('tester', now);
   const backup = s.backup();
-  assert.equal(backup.version, 11);
+  assert.equal(backup.version, 12);
   s.restore(backup);
   assert.deepEqual(
     s.trainingDay('tester', now).newProblems.map((p) => p.key),

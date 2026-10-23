@@ -29,10 +29,12 @@ const settingsSection = useSection(
   savedSection === 'sync' || savedSection === 'backup' || savedSection === 'ai' ? savedSection : 'accounts',
 );
 const accountPlatform = useSection(
-  ['cf', 'atcoder', 'xcpc'] as const,
+  ['cf', 'atcoder', 'luogu', 'xcpc'] as const,
   'cf',
   'platform',
-  savedPlatform === 'atcoder' || savedPlatform === 'xcpc' ? savedPlatform : 'cf',
+  savedPlatform === 'atcoder' || savedPlatform === 'xcpc' || savedPlatform === 'luogu'
+    ? savedPlatform
+    : 'cf',
 );
 const handle = ref(settings.value.activeHandle),
   busy = ref(false),
@@ -44,6 +46,10 @@ const atcoderHandle = ref(settings.value.activeAtcoder ?? ''),
   atcoderJob = ref<SyncJob | null>(null),
   atcoderVerified = ref(false),
   atcoderVerifiedBy = ref('submissions');
+const luoguUid = ref(settings.value.activeLuogu ?? ''),
+  luoguJob = ref<SyncJob | null>(null),
+  luoguName = ref(''),
+  luoguError = ref('');
 const handleError = computed(() =>
   handle.value && !/^[a-zA-Z0-9_.-]{1,64}$/.test(handle.value)
     ? '请输入 1–64 位字母、数字、下划线、点或连字符。'
@@ -67,6 +73,12 @@ watch(
   () => settings.value.activeAtcoder,
   (value, previous) => {
     if (!atcoderHandle.value || atcoderHandle.value === previous) atcoderHandle.value = value ?? '';
+  },
+);
+watch(
+  () => settings.value.activeLuogu,
+  (value, previous) => {
+    if (!luoguUid.value || luoguUid.value === previous) luoguUid.value = value ?? '';
   },
 );
 async function loadAtcoder() {
@@ -103,10 +115,53 @@ async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume 
     busy.value = false;
   }
 }
+const luoguUidError = computed(() =>
+  luoguUid.value && !/^\d{1,10}$/.test(luoguUid.value)
+    ? '请输入个人主页地址中的纯数字 UID。'
+    : '',
+);
+async function loadLuogu() {
+  const data = await api<{
+    job: SyncJob | null;
+    user: { uid: string; name: string; passedProblemCount: number } | null;
+  }>('/luogu/binding');
+  luoguJob.value = data.job;
+  luoguName.value = data.user?.name ?? '';
+}
+async function bindLuogu(value = luoguUid.value) {
+  busy.value = true;
+  luoguError.value = '';
+  try {
+    const data = await api<{ user: { name: string } | null }>('/luogu/binding', { uid: value });
+    await loadSettings();
+    luoguUid.value = settings.value.activeLuogu ?? '';
+    await loadLuogu();
+    notify(`洛谷用户 ${data.user?.name ?? ''}已绑定，请同步提交记录`);
+  } catch (e) {
+    luoguError.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+async function syncLuogu() {
+  busy.value = true;
+  luoguError.value = '';
+  try {
+    await api('/luogu/sync', { mode: 'incremental' });
+    await loadLuogu();
+    notify('洛谷同步已开始');
+  } catch (e) {
+    luoguError.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
 onMounted(() => {
+  void loadLuogu().catch((e) => (luoguError.value = (e as Error).message));
   void loadAtcoder().catch((e) => (error.value = (e as Error).message));
   atcoderTimer = setInterval(() => {
     if (atcoderJob.value?.status === 'running') void loadAtcoder();
+    if (luoguJob.value?.status === 'running') void loadLuogu();
   }, 2000);
 });
 onUnmounted(() => clearInterval(atcoderTimer));
@@ -201,6 +256,7 @@ async function sync(mode = 'incremental', resume = false) {
     <button :class="{ active: accountPlatform === 'atcoder' }" @click="accountPlatform = 'atcoder'">
       AtCoder
     </button>
+    <button :class="{ active: accountPlatform === 'luogu' }" @click="accountPlatform = 'luogu'">洛谷</button>
     <button :class="{ active: accountPlatform === 'xcpc' }" @click="accountPlatform = 'xcpc'">XCPC</button>
   </nav>
   <div>
@@ -286,6 +342,67 @@ async function sync(mode = 'incremental', resume = false) {
           <RouterLink class="small-button" to="/settings?view=sync&platform=atcoder"
             >同步 AtCoder 提交 →</RouterLink
           >
+        </section>
+        <section
+          v-show="settingsSection === 'accounts' && accountPlatform === 'luogu'"
+          class="panel settings-card"
+        >
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-icon"><Link2 :size="20" /></span>
+              <div>
+                <h2>洛谷账号</h2>
+                <p>使用个人主页的数字 UID 绑定；提交记录来自洛谷站内接口，仅本地模式可同步。</p>
+              </div>
+            </div>
+            <span v-if="settings.activeLuogu" class="badge mastered">已绑定</span>
+          </div>
+          <form class="handle-form" @submit.prevent="bindLuogu()">
+            <label
+              >洛谷 UID<input
+                v-model="luoguUid"
+                :aria-invalid="!!luoguUidError"
+                aria-describedby="lg-uid-error"
+                required
+                pattern="[0-9]+"
+                maxlength="10"
+                inputmode="numeric"
+                placeholder="例如 109757"
+                :disabled="busy || luoguJob?.status === 'running'" /></label
+            ><button class="primary" :disabled="busy || luoguJob?.status === 'running'">
+              {{ busy ? '处理中…' : '绑定洛谷' }}<ArrowRight :size="16" />
+            </button>
+          </form>
+          <p id="lg-uid-error" v-if="luoguUidError" class="field-error" role="alert">
+            {{ luoguUidError }}
+          </p>
+          <p v-if="luoguError" class="field-error" role="alert">{{ luoguError }}</p>
+          <p v-if="settings.activeLuogu" class="small subtle">
+            {{ luoguName ? `已绑定 ${luoguName}（UID ${settings.activeLuogu}）` : `已绑定 UID ${settings.activeLuogu}` }}
+            <template v-if="luoguJob">
+              ·
+              {{
+                {
+                  running: '正在同步',
+                  completed: '同步完成',
+                  failed: '同步未完成',
+                  interrupted: '同步已中断',
+                }[luoguJob.status]
+              }}
+              · 已读取 {{ luoguJob.processed }} 条 · {{ luoguJob.message
+              }}<template v-if="luoguJob.finishedAt"> · {{ fullDate(luoguJob.finishedAt) }}</template>
+            </template>
+          </p>
+          <button
+            v-if="settings.activeLuogu"
+            class="small-button"
+            :disabled="busy || luoguJob?.status === 'running'"
+            @click="syncLuogu()"
+          >
+            同步洛谷提交 →
+          </button>
+          <p v-if="browserMode" class="small subtle">在线版受浏览器跨域限制，洛谷同步仅本地模式可用。</p>
+          <p class="small subtle">洛谷仅提供较近一段的提交记录，历史深度有限；失败题会按规则进入复习。</p>
         </section>
         <section
           v-show="settingsSection === 'accounts' && accountPlatform === 'cf'"

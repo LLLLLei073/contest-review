@@ -52,7 +52,7 @@ export async function api<T>(
   body?: unknown,
   method = body === undefined ? 'GET' : 'POST',
 ): Promise<T> {
-  const recent = path === '/training/recent';
+  const recent = path === '/training/recent' || (method !== 'GET' && path.startsWith('/training/battle/'));
   if (recent) recentChecks.value++;
   try {
     if (browserMode) {

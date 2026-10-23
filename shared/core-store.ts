@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { allBattleRewards } from './battle-service.js';
+import { battleSessionSchema, validateBattle } from './battle-domain.js';
 import { growthRecordSchema } from './growth-domain.js';
 import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
 import { agentRecordSchema } from './agent-domain.js';
@@ -41,6 +43,13 @@ import {
   atcoderHistorySchema,
   type AtcoderSubmission,
 } from './atcoder.js';
+import {
+  luoguUidSchema,
+  luoguProfile,
+  normalizeLuogu,
+  luoguRecordSchema,
+  luoguUserSnapshotSchema,
+} from './luogu.js';
 import {
   analysisCacheSchema,
   analyzeContest,
@@ -86,7 +95,7 @@ export const tables = [
 export type Table = (typeof tables)[number];
 export const submissionSchema = z.object({
   id: z.number().int().positive(),
-  source: z.enum(['cf', 'atcoder']).optional(),
+  source: z.enum(['cf', 'atcoder', 'luogu']).optional(),
   contestKey: z.string().optional(),
   contestId: z.number().int().positive().optional(),
   creationTimeSeconds: z.number().nonnegative(),
@@ -166,7 +175,11 @@ const handleSchema = z
   .min(1)
   .max(64)
   .regex(/^[a-zA-Z0-9_.-]+$/);
-const profileSchema = z.union([handleSchema, z.string().regex(/^ac~[a-z0-9_]{1,64}$/)]);
+const profileSchema = z.union([
+  handleSchema,
+  z.string().regex(/^ac~[a-z0-9_]{1,64}$/),
+  z.string().regex(/^lg~\d{1,10}$/),
+]);
 const backupSchema = z.object({
   format: z.literal('contest-review'),
   version: z.union([
@@ -181,11 +194,13 @@ const backupSchema = z.object({
     z.literal(9),
     z.literal(10),
     z.literal(11),
+    z.literal(12),
   ]),
   exportedAt: z.string().datetime(),
   activeHandle: z.string(),
   profiles: z.array(profileSchema).max(1000),
   activeAtcoder: z.string().optional(),
+  activeLuogu: z.string().optional(),
   tables: z.object(
     Object.fromEntries(
       tables.map((t) => [
@@ -344,7 +359,7 @@ export class CoreStore {
     );
   }
   setSetting(key: string, value: string) {
-    if (['active', 'atcoder-active', 'xcpc-active'].includes(key) && this.setting(key) !== value)
+    if (['active', 'atcoder-active', 'xcpc-active', 'luogu-active'].includes(key) && this.setting(key) !== value)
       this.learningEpoch++;
     this.db
       .prepare(
@@ -354,9 +369,11 @@ export class CoreStore {
   }
   handles(): string[] {
     return (
-      this.db.prepare("SELECT handle FROM profiles WHERE handle NOT LIKE 'ac~%' ORDER BY handle").all() as {
-        handle: string;
-      }[]
+      this.db
+        .prepare(
+          "SELECT handle FROM profiles WHERE handle NOT LIKE 'ac~%' AND handle NOT LIKE 'lg~%' ORDER BY handle",
+        )
+        .all() as { handle: string }[]
     ).map((r) => r.handle);
   }
   atcoderHandles(): string[] {
@@ -366,6 +383,24 @@ export class CoreStore {
       }[]
     ).map((r) => r.handle.slice(3));
   }
+  luoguUsers(): string[] {
+    return (
+      this.db.prepare("SELECT handle FROM profiles WHERE handle LIKE 'lg~%' ORDER BY handle").all() as {
+        handle: string;
+      }[]
+    ).map((r) => r.handle.slice(3));
+  }
+  activeLuogu(): string {
+    return this.setting('luogu-active');
+  }
+  activateLuogu(uid: string) {
+    const id = luoguUidSchema.parse(uid),
+      profile = luoguProfile(id);
+    this.transaction(() => {
+      this.db.prepare('INSERT OR IGNORE INTO profiles(handle) VALUES(?)').run(profile);
+      this.setSetting('luogu-active', id);
+    });
+  }
   activeAtcoder(): string {
     return this.setting('atcoder-active');
   }
@@ -374,6 +409,10 @@ export class CoreStore {
       if (!this.activeAtcoder()) throw new Error('请先绑定 AtCoder 用户名');
       return atcoderProfile(this.activeAtcoder());
     }
+    if (key.startsWith('luogu:')) {
+      if (!this.activeLuogu()) throw new Error('请先绑定洛谷 UID');
+      return luoguProfile(this.activeLuogu());
+    }
     if (!this.active()) throw new Error('请先绑定 Codeforces 用户名');
     return this.active();
   }
@@ -381,6 +420,7 @@ export class CoreStore {
     return [
       ...(this.active() ? this.problems(this.active()) : []),
       ...(this.activeAtcoder() ? this.problems(atcoderProfile(this.activeAtcoder())) : []),
+      ...(this.activeLuogu() ? this.problems(luoguProfile(this.activeLuogu())) : []),
     ];
   }
   activateAtcoder(handle: string) {
@@ -636,6 +676,36 @@ export class CoreStore {
             tags: [],
             manual: false,
             url: `https://atcoder.jp/contests/${contestId}/tasks/${s.problem.index}`,
+          }),
+        );
+        this.put('submissions', profile, String(s.id), s);
+        if (failures.has(s.verdict ?? '') && !this.get('reviews', profile, key))
+          this.put('reviews', profile, key, emptyReview());
+      }
+      for (const day of affected) this.reconcileAcceptedRedo(profile, day);
+    });
+  }
+  ingestLuogu(profile: string, input: z.infer<typeof luoguRecordSchema>[]) {
+    const normalized = z.array(luoguRecordSchema).parse(input).map(normalizeLuogu);
+    const affected = new Set(normalized.map((s) => localDay(new Date(s.creationTimeSeconds * 1000))));
+    this.transaction(() => {
+      for (const s of normalized) {
+        const key = problemKey(s),
+          old = this.get<Problem>('problems', profile, key);
+        this.put(
+          'problems',
+          profile,
+          key,
+          problemSchema.parse({
+            key,
+            source: 'luogu',
+            contestId: null,
+            index: s.problem.index,
+            name: s.problem.name,
+            rating: s.problem.rating ?? old?.rating ?? null,
+            tags: [],
+            manual: false,
+            url: `https://www.luogu.com.cn/problem/${s.problem.index}`,
           }),
         );
         this.put('submissions', profile, String(s.id), s);
@@ -1215,7 +1285,7 @@ export class CoreStore {
     const attempts = this.all<Attempt>('attempts', h);
     const known = this.all<Problem>('problems', h);
     const reviews = new Map(rows.map((p) => [p.key, p.review]));
-    const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey);
+    const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey, allBattleRewards(this, h));
     let plan = planOverride ?? this.get<DailyPlan>('daily_plans', h, date);
     const weeklyGoal = h === this.active() ? this.weeklyGoal(now) : null;
     if (!plan || (!planOverride && !plan.catalogReady && catalog && !!weeklyGoal && !plan.newKeys.length)) {
@@ -1416,6 +1486,7 @@ export class CoreStore {
       attempts: this.all<Attempt>('attempts', h)
         .filter((a) => a.problemKey === key)
         .reverse(),
+      battle: allBattleRewards(this, h).filter((r) => r.problemKey === key),
     };
   }
   attempt(h: string, key: string, input: AttemptInput, now = new Date()) {
@@ -1561,7 +1632,7 @@ export class CoreStore {
     const submissions = this.all<CFSubmission>('submissions', h);
     const known = this.all<Problem>('problems', h);
     const reviews = new Map(allRows.map((p) => [p.key, p.review]));
-    const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey);
+    const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey, allBattleRewards(this, h));
     const count = (items: string[]) => {
       const map = new Map<string, number>();
       items.forEach((s) => map.set(s, (map.get(s) || 0) + 1));
@@ -1622,10 +1693,15 @@ export class CoreStore {
       dailyTraining,
     };
   }
-  combinedStatistics(source: 'all' | 'cf' | 'atcoder' = 'all', now = new Date()): Statistics {
+  combinedStatistics(source: 'all' | 'cf' | 'atcoder' | 'luogu' = 'all', now = new Date()): Statistics {
     const profiles = [
-      ...(source !== 'atcoder' && this.active() ? [this.active()] : []),
-      ...(source !== 'cf' && this.activeAtcoder() ? [atcoderProfile(this.activeAtcoder())] : []),
+      ...(source !== 'atcoder' && source !== 'luogu' && this.active() ? [this.active()] : []),
+      ...(source !== 'cf' && source !== 'luogu' && this.activeAtcoder()
+        ? [atcoderProfile(this.activeAtcoder())]
+        : []),
+      ...(source !== 'cf' && source !== 'atcoder' && this.activeLuogu()
+        ? [luoguProfile(this.activeLuogu())]
+        : []),
     ];
     if (profiles.length === 1) return this.statistics(profiles[0], now);
     const parts = profiles.map((h) => this.statistics(h, now));
@@ -1643,7 +1719,7 @@ export class CoreStore {
     const submissions = profiles.flatMap((h) => this.all<CFSubmission>('submissions', h));
     const attempts = profiles.flatMap((h) => this.all<Attempt>('attempts', h));
     const reviews = new Map(profiles.flatMap((h) => this.problems(h).map((p) => [p.key, p.review] as const)));
-    const mastery = masteryAreas(problems, submissions, attempts, reviews, problemKey);
+    const mastery = masteryAreas(problems, submissions, attempts, reviews, problemKey, profiles.flatMap((h) => allBattleRewards(this, h)));
     const dailyTraining = parts[0].dailyTraining.map((t, i) => {
       const merged = {
         date: t.date,
@@ -1699,11 +1775,16 @@ export class CoreStore {
   backup() {
     return {
       format: 'contest-review',
-      version: 11,
+      version: 12,
       exportedAt: new Date().toISOString(),
       activeHandle: this.active(),
-      profiles: [...this.handles(), ...this.atcoderHandles().map(atcoderProfile)],
+      profiles: [
+        ...this.handles(),
+        ...this.atcoderHandles().map(atcoderProfile),
+        ...this.luoguUsers().map(luoguProfile),
+      ],
       activeAtcoder: this.activeAtcoder(),
+      activeLuogu: this.activeLuogu(),
       xcpcActive: this.setting('xcpc-active'),
       xcpcMode: this.setting('xcpc-mode') === 'all' ? 'all' : 'official',
       external: (
@@ -1770,11 +1851,28 @@ export class CoreStore {
       throw new Error('v3 备份缺少 XCPC 数据字段');
     const external = data.external ?? [];
     const externalKeys = new Set<string>();
+    const battleEvidenceKeys = new Set<string>();
     for (const row of external) {
       const id = `${row.namespace}\0${row.key}`;
       if (externalKeys.has(id)) throw new Error('备份包含重复的 XCPC 记录');
       externalKeys.add(id);
-      if (row.namespace.startsWith('planning:') || row.namespace.startsWith('review-workflow:')) {
+      if (row.namespace.startsWith('battle:')) {
+        if (data.version < 12) throw new Error('连战记录需要 v12 备份');
+        const owner = row.namespace.slice('battle:'.length);
+        const session = battleSessionSchema.parse(row.value);
+        if (!data.profiles.includes(owner) || owner.startsWith('ac~') || owner.startsWith('lg~') || owner !== session.handle || row.key !== session.id)
+          throw new Error('连战账号或编号不一致');
+        const submissions = data.tables.submissions.filter((r) => r.profile === owner).map((r) => submissionSchema.parse(r.value));
+        validateBattle(session, submissions);
+        for (const item of session.items) {
+          const keys = [`${owner}:item:${item.id}`, ...(item.submissionId ? [`${owner}:submission:${item.submissionId}`] : [])];
+          if (keys.some((key) => battleEvidenceKeys.has(key))) throw new Error('连战包含重复的题目或提交证据');
+          keys.forEach((key) => battleEvidenceKeys.add(key));
+        }
+        if (session.status !== 'ended' && external.some((r) => r !== row && r.namespace === row.namespace &&
+          battleSessionSchema.parse(r.value).status !== 'ended')) throw new Error('每个账号只能有一个进行中的连战');
+        row.value = session;
+      } else if (row.namespace.startsWith('planning:') || row.namespace.startsWith('review-workflow:')) {
         if (data.version < 11) throw new Error('规划与引导复盘记录需要 v11 备份');
         const parts = row.namespace.split(':');
         if (
@@ -2065,11 +2163,14 @@ export class CoreStore {
         row.value = atcoderReportSchema.parse(row.value);
       else if (row.namespace.startsWith('atcoder:') && row.key.startsWith('review:'))
         row.value = contestReviewSchema.parse(row.value);
+      else if (row.namespace.startsWith('luogu:') && row.key === 'user')
+        row.value = luoguUserSnapshotSchema.parse(row.value);
       else if (row.namespace.startsWith('growth:')) row.value = growthRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('agent:')) row.value = agentRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('planning:')) row.value = planningRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('review-workflow:'))
         row.value = reviewWorkflowSchema.parse(row.value);
+      else if (row.namespace.startsWith('battle:')) row.value = battleSessionSchema.parse(row.value);
       else row.value = xcpcRecordSchema(row.namespace, row.key).parse(row.value);
     }
     if (data.xcpcActive && !externalKeys.has(`player\0${data.xcpcActive}`))
@@ -2112,7 +2213,9 @@ export class CoreStore {
           (t === 'jobs' &&
             (row.profile.startsWith('ac~')
               ? atcoderProfile(String(v.handle)) !== row.profile
-              : v.handle !== row.profile))
+              : row.profile.startsWith('lg~')
+                ? luoguProfile(String(v.handle)) !== row.profile
+                : v.handle !== row.profile))
         )
           throw new Error('备份记录编号不一致');
         if (
@@ -2191,6 +2294,7 @@ export class CoreStore {
       for (const h of data.profiles) this.db.prepare('INSERT INTO profiles VALUES(?)').run(h);
       this.db.prepare("INSERT INTO settings VALUES('active',?)").run(data.activeHandle);
       this.setSetting('atcoder-active', data.activeAtcoder ?? '');
+      this.setSetting('luogu-active', data.activeLuogu ?? '');
       this.setSetting('xcpc-active', data.xcpcActive ?? '');
       this.setSetting('xcpc-mode', data.xcpcMode ?? 'official');
       for (const row of external) {

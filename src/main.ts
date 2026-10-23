@@ -19,10 +19,12 @@ const router = createRouter({
   },
   routes: [
     { path: '/', component: Dashboard },
+    { path: '/battle', component: () => import('./pages/Battle.vue') },
     { path: '/problems', component: () => import('./pages/Problems.vue') },
     { path: '/problems/:key', component: () => import('./pages/ProblemDetail.vue') },
     { path: '/contests', component: () => import('./pages/Contests.vue') },
     { path: '/simulation', component: () => import('./pages/Simulation.vue') },
+    { path: '/insights', component: () => import('./pages/Insights.vue') },
     { path: '/statistics', component: () => import('./pages/Statistics.vue') },
     { path: '/knowledge', component: () => import('./pages/Knowledge.vue') },
     { path: '/growth', component: () => import('./pages/Growth.vue') },

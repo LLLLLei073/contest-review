@@ -51,7 +51,7 @@ const learningOpened = ref(tab.value === 'assistant' && tool.value !== 'code');
 watch([tab, tool], () => {
   if (tab.value === 'assistant' && tool.value !== 'code') learningOpened.value = true;
 });
-const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[] } | null>(null),
+const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[]; battle?: import('../../shared/battle-domain').BattleReward[] } | null>(null),
   draft = ref<Review>(emptyReview()),
   snapshot = ref(''),
   error = ref(''),

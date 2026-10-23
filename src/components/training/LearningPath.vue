@@ -88,6 +88,9 @@ const state = (id: string) => props.tracing.states.find((s) => s.skillId === id)
             </ul>
           </details>
           <RouterLink
+            :to="{ path: '/battle', query: { skill: node.id } }" class="text-link"
+            >开始连战 →</RouterLink>
+          <RouterLink
             :to="
               '/problems?tag=' +
               encodeURIComponent(knowledgeCards.find((k) => k.id === node.id)?.tags[0] ?? '')

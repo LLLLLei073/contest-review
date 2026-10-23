@@ -123,7 +123,7 @@ onUnmounted(() => {
             :class="{
               active:
                 n.to === '/'
-                  ? $route.path === '/'
+                  ? ['/', '/battle'].includes($route.path)
                   : n.to === '/contests'
                     ? ['/contests', '/simulation'].includes($route.path)
                     : $route.path.startsWith(n.to),
@@ -158,17 +158,19 @@ onUnmounted(() => {
                 ? '比赛复盘'
                 : $route.path === '/simulation'
                   ? 'CF 模拟赛'
-                  : $route.path === '/statistics'
-                    ? '训练统计'
-                    : $route.path === '/knowledge'
-                      ? '知识中心'
-                      : $route.path === '/growth'
-                        ? '成长收藏'
-                        : $route.path === '/companion'
-                          ? '星澪伙伴'
-                          : $route.path === '/settings'
-                            ? '设置与数据'
-                            : '今日训练'
+                  : $route.path === '/insights'
+                    ? '数据总览'
+                    : $route.path === '/statistics'
+                      ? '训练统计'
+                      : $route.path === '/knowledge'
+                        ? '知识中心'
+                        : $route.path === '/growth'
+                          ? '成长收藏'
+                          : $route.path === '/companion'
+                            ? '星澪伙伴'
+                            : $route.path === '/settings'
+                              ? '设置与数据'
+                              : $route.path === '/battle' ? '知识点连战' : '今日训练'
           }}</b>
         </div>
         <div class="topbar-actions">

@@ -44,7 +44,7 @@ test('workspace appearance persists and command search supports keyboard, focus 
   await expect(page.getByRole('dialog', { name: '想从哪里继续？' })).not.toBeVisible();
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 960 });
-    await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link')).toHaveCount(8);
+    await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link')).toHaveCount(9);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`workbench-light-${width}.png`), fullPage: true });
   }

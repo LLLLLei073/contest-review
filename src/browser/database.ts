@@ -6,6 +6,7 @@ import { AnalysisService } from '../../shared/analysis-service';
 import { ContestHub } from '../../shared/contest-hub';
 import { TrainingService } from '../../shared/training-service';
 import { AtcoderService, AtcoderClient } from '../../shared/atcoder';
+import { LuoguService, LuoguClient } from '../../shared/luogu';
 
 class BrowserSQLite implements DatabaseLike {
   constructor(public raw: Database) {}
@@ -85,6 +86,7 @@ export class BrowserRuntime {
   readonly hub: ContestHub;
   readonly training: TrainingService;
   readonly atcoder: AtcoderService;
+  readonly luogu: LuoguService;
   private writes: Promise<void> = Promise.resolve();
   private pendingWrites = 0;
   private previous: unknown;
@@ -108,6 +110,12 @@ export class BrowserRuntime {
       ),
       () => this.flush(),
     );
+    // 洛谷不允许浏览器跨域访问，在线版仅本地数据可读；同步请求会得到可读错误。
+    this.luogu = new LuoguService(
+      this.store,
+      new LuoguClient((url, options) => fetch(url, { ...options, credentials: 'omit' })),
+      () => this.flush(),
+    );
     this.hub = new ContestHub(
       this.store,
       this.sync,
@@ -123,7 +131,8 @@ export class BrowserRuntime {
         this.sync.running ||
         this.analysis.running ||
         this.hub.isBusy() ||
-        this.atcoder.running
+        this.atcoder.running ||
+        this.luogu.running
       ) {
         event.preventDefault();
         event.returnValue = '';
@@ -162,6 +171,7 @@ export class BrowserRuntime {
       this.storageError = '浏览器存储写入失败，已停止后续写入。请立即导出备份，释放空间后重新打开页面。';
       this.sync.stop();
       this.atcoder.stop();
+      this.luogu.stop();
       throw new Error(this.storageError, { cause: error });
     } finally {
       this.pendingWrites--;

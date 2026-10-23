@@ -42,7 +42,7 @@ test('compact layouts keep summaries in view, expose details on demand and fit a
     const nav = page.locator('.sidebar');
     expect(await nav.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
     const links = page.getByRole('navigation', { name: '主导航' }).getByRole('link');
-    await expect(links).toHaveCount(8);
+    await expect(links).toHaveCount(9);
     if (width <= 650) {
       expect(
         (await links.last().boundingBox())!.y + (await links.last().boundingBox())!.height,

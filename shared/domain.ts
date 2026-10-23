@@ -60,7 +60,7 @@ export const problemSchema = z.object({
   tags: z.array(z.string().max(100)).max(100),
   url: z.url().refine((v) => /^https?:\/\//.test(v)),
   manual: z.boolean().default(false),
-  source: z.enum(['cf', 'atcoder']).optional(),
+  source: z.enum(['cf', 'atcoder', 'luogu']).optional(),
 });
 export type Problem = z.infer<typeof problemSchema>;
 export type ProblemRow = Problem & {
@@ -71,7 +71,7 @@ export type ProblemRow = Problem & {
 };
 export interface CFSubmission {
   id: number;
-  source?: 'cf' | 'atcoder';
+  source?: 'cf' | 'atcoder' | 'luogu';
   contestKey?: string;
   contestId?: number;
   creationTimeSeconds: number;
@@ -147,6 +147,8 @@ export interface Settings {
   handles: string[];
   activeAtcoder?: string;
   atcoderHandles?: string[];
+  activeLuogu?: string;
+  luoguUsers?: string[];
   xcpcPlayer?: { key: string; name: string; org: string; contests: number } | null;
   xcpcMode?: 'official' | 'all';
 }

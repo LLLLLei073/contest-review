@@ -12,10 +12,10 @@ test('backup inventory is read-only and does not reveal credentials', () => {
     s.externalPut('ai', 'config', { apiKey: 'secret' });
     const b = s.backup(),
       summary = backupSummary(b);
-    assert.equal(summary.version, 11);
+    assert.equal(summary.version, 12);
     assert.deepEqual(summary.profiles, ['owner']);
     assert.ok(!JSON.stringify(summary).includes('secret'));
-    for (let version = 1; version <= 11; version++)
+    for (let version = 1; version <= 12; version++)
       assert.equal(backupSummary({ ...b, version }).version, version);
     assert.throws(() => backupSummary({ ...b, version: 99 }));
     assert.deepEqual(s.backup().tables, b.tables);

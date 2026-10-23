@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
         </li>
       </ul>
       <p v-for="item in report.completeness" :key="item.source" class="small subtle">
-        {{ item.source === 'cf' ? 'Codeforces' : 'AtCoder' }}：{{
+        {{ item.source === 'cf' ? 'Codeforces' : item.source === 'atcoder' ? 'AtCoder' : '洛谷' }}：{{
           item.fullHistory ? '已完成全量同步' : '历史完整性待确认'
         }}
         · 最近成功同步 {{ item.latestSync ? date(item.latestSync) : '无' }}

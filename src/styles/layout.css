@@ -170,12 +170,12 @@ svg {
   font-size: 10px;
   color: var(--muted);
   letter-spacing: 1.3px;
-  margin: 47px 15px 16px;
+  margin: 30px 15px 13px;
 }
 .sidebar nav {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
 }
 .sidebar nav a,
 .sidebar-bottom > a {
@@ -184,7 +184,7 @@ svg {
   gap: 13px;
   color: var(--muted);
   font-size: 13px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-radius: 8px;
 }
 .sidebar nav a.active,
@@ -205,7 +205,7 @@ svg {
   margin-left: auto;
 }
 .sidebar-note {
-  margin: 52px 14px 25px;
+  margin: 24px 14px 14px;
 }
 .eyebrow {
   font-size: 9px;
@@ -229,7 +229,7 @@ svg {
   width: 25px;
   height: 2px;
   background: var(--surface-raised);
-  margin: 20px 0 14px;
+  margin: 12px 0 10px;
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -3452,7 +3452,7 @@ details[open] > :not(summary) {
   }
   .sidebar nav {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 2px 4px;
     width: 100%;
   }
@@ -3739,7 +3739,7 @@ h2[tabindex='-1']:focus {
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.08em;
-  margin: 14px 12px 4px;
+  margin: 9px 12px 3px;
 }
 
 .nav-group-label:first-of-type {

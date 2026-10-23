@@ -15,8 +15,14 @@ export function learningEvidence(input: {
   attempts: Attempt[];
   review: Review;
   records: LearningRecord[];
+  battle?: import('./battle-domain.js').BattleReward[];
 }) {
   const events: LearningEvidence[] = [];
+  for (const r of input.battle ?? []) events.push({
+    id: r.itemId, kind: 'attempt', at: r.evaluatedAt, title: `连战评价 · ${{ independent: '独立完成', hint: '借助提示', failed: '未完成' }[r.result]}`,
+    summary: `目标知识点 ${r.skillId} · ${r.result === 'independent' ? r.multiplier.toFixed(1) + '× 掌握度加成' : '无独立完成加成'}${r.submissionId ? ' · 提交 #' + r.submissionId : ''}`,
+    href: '/battle', status: 'user-reported',
+  });
   const link = (query: string) => '/problems/' + encodeURIComponent(input.problemKey) + '?' + query;
   const time = (value: string | number | undefined | null) => {
     if (value === null || value === undefined) return null;

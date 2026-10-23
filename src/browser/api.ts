@@ -2,12 +2,15 @@ import { z } from 'zod';
 import { growthRoute } from '../../shared/growth';
 import { LearningService } from '../../shared/learning-service';
 import { PlanningService } from '../../shared/planning-service';
+import { BattleService } from '../../shared/battle-service';
 import { monthlyReport } from '../../shared/monthly-report';
 import { listAiModels } from '../../shared/ai-models';
 import { attemptSchema, reviewSchema } from '../../shared/domain';
 import { contestReviewSchema, localDay } from '../../shared/core-store';
 import { browserRuntime } from './database';
 import { atcoderHandleSchema, atcoderProfile, atcoderNamespace } from '../../shared/atcoder';
+import { luoguUidSchema, luoguProfile } from '../../shared/luogu';
+import { buildInsights } from '../../shared/insights';
 import {
   AiReviewer,
   aiConfigSchema,
@@ -21,7 +24,7 @@ import {
 
 export async function browserApi<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
   const runtime = await browserRuntime(),
-    { store, sync, cf, analysis, hub, training, atcoder } = runtime;
+    { store, sync, cf, analysis, hub, training, atcoder, luogu } = runtime;
   const url = new URL(path, 'https://local.invalid'),
     route = url.pathname;
   const profile = () => {
@@ -30,7 +33,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     return h;
   };
   const idle = () => {
-    if (sync.running || analysis.running || hub.isBusy() || atcoder.running)
+    if (sync.running || analysis.running || hub.isBusy() || atcoder.running || luogu.running)
       throw new Error('请等待当前同步或比赛分析完成');
   };
   const isWrite = !['GET', 'HEAD'].includes(method) && route !== '/ai/models';
@@ -50,7 +53,10 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   });
   let result: unknown;
   try {
-    if (route.startsWith('/agent/')) {
+    if (route === '/training/battle' || route.startsWith('/training/battle/')) {
+      result = await new BattleService(store).route(route.slice('/training/battle'.length).replace(/^\//, ''), method, body,
+        training, cf, () => !!sync.running || !!analysis.running || hub.isBusy());
+    } else if (route.startsWith('/agent/')) {
       const { AgentService } = await import('../../shared/agent-service');
       result = await new AgentService(store, undefined, () => runtime.flush()).route(
         route.slice('/agent/'.length),
@@ -83,6 +89,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         handles: store.handles(),
         activeAtcoder: store.activeAtcoder(),
         atcoderHandles: store.atcoderHandles(),
+        activeLuogu: store.activeLuogu(),
+        luoguUsers: store.luoguUsers(),
         xcpcPlayer: hub.binding(),
         xcpcMode: hub.mode(),
       };
@@ -177,7 +185,38 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (route === '/review/batch/stop' && method === 'POST') {
       hub.stop();
       result = hub.latestJob();
-    } else if (/^\/xcpc\/contests\/[^/]+\/analysis$/.test(route) && method === 'GET')
+    } else if (route === '/luogu/binding' && method === 'GET')
+      result = {
+        activeUid: store.activeLuogu(),
+        uids: store.luoguUsers(),
+        user: store.activeLuogu() ? luogu.user(store.activeLuogu()) : null,
+        job: store.activeLuogu() ? store.latestJob(luoguProfile(store.activeLuogu())) : null,
+      };
+    else if (route === '/luogu/binding' && method === 'POST') {
+      idle();
+      const uid = luoguUidSchema.parse(z.object({ uid: z.string() }).parse(body).uid);
+      const user = await luogu.bind(uid);
+      await runtime.flush();
+      result = {
+        activeUid: store.activeLuogu(),
+        uids: store.luoguUsers(),
+        user,
+        job: store.latestJob(luoguProfile(uid)),
+      };
+    } else if (route === '/luogu/sync' && method === 'GET')
+      result = store.activeLuogu() ? store.latestJob(luoguProfile(store.activeLuogu())) : null;
+    else if (route === '/luogu/sync' && method === 'POST') {
+      if (sync.running || analysis.running || hub.isBusy() || atcoder.running)
+        throw new Error('请等待当前同步完成');
+      const { mode, resume } = z
+        .object({
+          mode: z.enum(['full', 'incremental']).default('incremental'),
+          resume: z.boolean().default(false),
+        })
+        .parse(body);
+      if (!store.activeLuogu()) throw new Error('请先绑定洛谷 UID');
+      result = luogu.start(store.activeLuogu(), mode, resume);
+    } else if (route === '/insights' && method === 'GET') result = buildInsights(store); else if (/^\/xcpc\/contests\/[^/]+\/analysis$/.test(route) && method === 'GET')
       result = hub.getReport(decodeURIComponent(route.split('/')[3]));
     else if (/^\/xcpc\/contests\/[^/]+\/analysis\/refresh$/.test(route) && method === 'POST')
       result = hub.startReport(decodeURIComponent(route.split('/')[3]));
@@ -312,7 +351,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       const q = z
         .object({
           q: z.string().optional(),
-          source: z.enum(['all', 'cf', 'atcoder']).default('all'),
+          source: z.enum(['all', 'cf', 'atcoder', 'luogu']).default('all'),
           tag: z.string().optional(),
           reason: z.string().optional(),
           status: z.enum(['pending', 'reviewing', 'mastered']).optional(),
@@ -417,7 +456,7 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
     else if (route === '/statistics' && method === 'GET')
       result = store.combinedStatistics(
         z
-          .object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') })
+          .object({ source: z.enum(['all', 'cf', 'atcoder', 'luogu']).default('all') })
           .parse(Object.fromEntries(url.searchParams)).source,
       );
     else if (route === '/backup' && method === 'GET') {

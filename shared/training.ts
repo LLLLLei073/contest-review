@@ -19,7 +19,7 @@ export interface MasteryArea {
 }
 export interface TrainingTask {
   key: string;
-  source?: 'cf' | 'atcoder';
+  source?: 'cf' | 'atcoder' | 'luogu';
   name: string;
   rating: number | null;
   tags: string[];
@@ -124,6 +124,7 @@ export function masteryAreas(
   attempts: Attempt[],
   reviews: Map<string, ProblemRow['review']>,
   keyOf: (submission: CFSubmission) => string,
+  battle: import('./battle-domain.js').BattleReward[] = [],
 ): MasteryArea[] {
   const subs = new Map<string, CFSubmission[]>();
   for (const submission of submissions) {
@@ -145,9 +146,23 @@ export function masteryAreas(
     else if (attempt) score = { independent: 85, hint: 45, failed: 15 }[attempt.result];
     else if (personal.some((s) => s.verdict === 'OK')) score = 70;
     else if (personal.some((s) => failures.has(s.verdict ?? ''))) score = 20;
-    if (score !== null)
-      for (const name of problem.source === 'atcoder' ? (review?.categories ?? []) : categories(problem.tags))
-        buckets.get(name)!.push(score);
+    const reward = battle.filter((r) => r.problemKey === problem.key).sort((a, b) => b.at.localeCompare(a.at))[0];
+    // A later ordinary practice supersedes the historical battle contribution. A same-day
+    // ordinary evaluation of the same AC is one fact, not a second reward.
+    const laterAttempt = attempt && reward && (
+      personal.some((s) => s.verdict === 'OK' && s.creationTimeSeconds * 1000 > Date.parse(reward.at) &&
+        s.creationTimeSeconds * 1000 <= Date.parse(attempt.createdAt)) ||
+      (attempt.result === 'failed' && Date.parse(attempt.createdAt) > Date.parse(reward.evaluatedAt))
+    );
+    if (score !== null || reward) {
+      const names = ['atcoder', 'luogu'].includes(problem.source ?? '')
+        ? (review?.categories ?? [])
+        : categories(problem.tags);
+      for (const name of names) {
+        const contribution = reward && !laterAttempt && review?.status !== 'mastered' && reward.category === name ? reward.score : score;
+        if (contribution !== null) buckets.get(name)!.push(contribution);
+      }
+    }
   }
   return categoryNames.map((name) => {
     const values = buckets.get(name)!;

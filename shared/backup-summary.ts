@@ -2,7 +2,7 @@ import { z } from 'zod';
 const envelope = z
   .object({
     format: z.literal('contest-review'),
-    version: z.number().int().min(1).max(11),
+    version: z.number().int().min(1).max(12),
     exportedAt: z.string().optional(),
     profiles: z.array(z.string()).max(10000),
     tables: z.record(z.string(), z.array(z.unknown())),
@@ -19,5 +19,6 @@ export function backupSummary(input: unknown) {
     counts: Object.entries(value.tables).map(([name, rows]) => ({ name, count: rows.length })),
     planning: value.external?.filter((r) => r.namespace.startsWith('planning:')).length ?? 0,
     workflows: value.external?.filter((r) => r.namespace.startsWith('review-workflow:')).length ?? 0,
+    battles: value.external?.filter((r) => r.namespace.startsWith('battle:')).length ?? 0,
   };
 }

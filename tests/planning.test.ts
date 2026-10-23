@@ -300,7 +300,7 @@ test('v11 backups preserve planning history, expire previews and interrupt runni
     };
     store.externalPut(workflow.scope, workflow.id, workflow);
     const backup = store.backup();
-    assert.equal(backup.version, 11);
+    assert.equal(backup.version, 12);
     store.restore(backup);
     assert.equal(planner.state().decisions.find((d) => d.id === preview.id)!.status, 'expired');
     assert.equal(store.externalGet<ReviewWorkflow>(workflow.scope, workflow.id)!.status, 'interrupted');

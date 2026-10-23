@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   Library,
   Flag,
+  Radar,
   ChartNoAxesCombined,
   BookOpen,
   Orbit,
@@ -13,6 +14,13 @@ export const navigation = [
   { to: '/', label: '今日训练', icon: LayoutDashboard, group: '训练', caption: '题单、周目标与未来计划' },
   { to: '/problems', label: '错题库', icon: Library, group: '训练', caption: '查找题目、记录思路与重做' },
   { to: '/contests', label: '比赛复盘', icon: Flag, group: '训练', caption: '比赛报告、赛后补题与模拟赛' },
+  {
+    to: '/insights',
+    label: '数据总览',
+    icon: Radar,
+    group: '分析',
+    caption: '多平台账号、能力雷达与趋势',
+  },
   {
     to: '/statistics',
     label: '训练统计',

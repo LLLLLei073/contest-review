@@ -39,6 +39,7 @@ const selected = computed(() => props.cards.find((c) => c.id === route.query.car
       <div class="button-row">
         <button class="small-button" @click="emit('graph', selected.id)">查看关联</button
         ><RouterLink to="/?view=path" class="small-button">加入目标学习路径 →</RouterLink>
+        <RouterLink :to="{ path: '/battle', query: { skill: selected.id } }" class="small-button">开始连战 →</RouterLink>
       </div>
     </article>
   </div>

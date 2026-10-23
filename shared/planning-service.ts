@@ -3,6 +3,7 @@ import { plannerOutcomes } from './planner-outcomes.js';
 import { CoreStore, localDay, problemKey } from './core-store.js';
 import type { CFSubmission } from './domain.js';
 import { knowledgeCards, knowledgeFor } from './knowledge.js';
+import { allBattleRewards } from './battle-service.js';
 import { fingerprint, learningNamespace, type LearningRecord } from './learning-domain.js';
 import { BKT_VERSION, DEFAULT_BKT, traceKnowledge, type KnowledgeObservation } from './knowledge-tracing.js';
 import { buildLearningPath } from './learning-path.js';
@@ -103,7 +104,7 @@ export class PlanningService {
         const a = attempts[i],
           time = Date.parse(a.createdAt),
           previous = i ? Date.parse(attempts[i - 1].createdAt) : 0;
-        const accepted = detail.submissions.some(
+        const accepted = detail.submissions.find(
           (s) =>
             s.verdict === 'OK' &&
             !s.author.teamId &&
@@ -125,10 +126,24 @@ export class PlanningService {
           at: a.createdAt,
           skillIds: knowledgeFor(row.tags),
           result: a.result,
-          accepted,
+          accepted: !!accepted,
+          acceptedSubmissionId: accepted?.id,
           assisted,
         });
       }
+    }
+    for (const reward of allBattleRewards(this.store, this.store.active())) {
+      if (Date.parse(reward.evaluatedAt) > cutoff || Date.parse(reward.at) > cutoff) continue;
+      const day = localDay(new Date(reward.at));
+      // The ordinary evaluation and battle evaluation of one AC share a single observation.
+      const same = observations.filter((o) => o.problemKey === reward.problemKey && o.session === day &&
+        (o.acceptedSubmissionId === reward.submissionId || Date.parse(o.at) <= Date.parse(reward.evaluatedAt)));
+      const assisted = same.some((o) => o.assisted || o.result === 'hint');
+      for (const o of same) observations.splice(observations.indexOf(o), 1);
+      observations.push({ id: reward.itemId, problemKey: reward.problemKey, session: day,
+        at: reward.at, skillIds: [reward.skillId], attributedSkillId: reward.skillId,
+        result: assisted ? 'hint' : reward.result, accepted: reward.submissionId !== null,
+        assisted, learningMultiplier: reward.multiplier, acceptedSubmissionId: reward.submissionId ?? undefined });
     }
     return observations;
   }

@@ -200,11 +200,13 @@ export type PageFetchLike = (
 }>;
 
 export function submissionUrl(s: {
-  source?: 'cf' | 'atcoder';
+  source?: 'cf' | 'atcoder' | 'luogu';
   contestId?: number;
   contestKey?: string;
   id: number;
 }): string {
+  if (s.source === 'luogu')
+    throw new Error('洛谷提交源码需要登录后才能查看，请打开提交页面手动复制代码');
   if (s.source === 'atcoder') {
     if (!s.contestKey) throw new Error('该提交缺少比赛标识，无法定位源码页面');
     return `https://atcoder.jp/contests/${s.contestKey}/submissions/${s.id}`;

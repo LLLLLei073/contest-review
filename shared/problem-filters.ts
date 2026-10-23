@@ -28,7 +28,7 @@ export function parseProblemFilters(query: Record<string, unknown>) {
   };
   const filters: ProblemFilters = {
     q: str('q'),
-    source: choice('source', ['all', 'cf', 'atcoder'], 'all'),
+    source: choice('source', ['all', 'cf', 'atcoder', 'luogu'], 'all'),
     tag: str('tag', 100),
     reason: str('reason', 100),
     status: choice('status', ['pending', 'reviewing', 'mastered']),

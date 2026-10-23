@@ -3,16 +3,16 @@ import { defineAsyncComponent, onBeforeUnmount, ref, computed, watch } from 'vue
 import { api } from '../api';
 import type { Statistics } from '../../shared/domain';
 import type { WeeklyGoal } from '../../shared/weekly';
-import { useSpringValues } from '../motion';
 import { useSection } from '../sections';
 import { useLearningState } from '../learningState';
+import RadarChart from '../components/charts/RadarChart.vue';
 const LearningActivity = defineAsyncComponent(() => import('../components/LearningActivity.vue'));
 const PlanningWorkspace = defineAsyncComponent(() => import('../components/training/PlanningWorkspace.vue'));
 import MonthlyReport from '../components/MonthlyReport.vue';
 const stats = ref<Statistics | null>(null),
   error = ref(''),
   loading = ref(true);
-const source = useSection(['all', 'cf', 'atcoder'] as const, 'all', 'source');
+const source = useSection(['all', 'cf', 'atcoder', 'luogu'] as const, 'all', 'source');
 const activeSection = useSection(
   ['overview', 'monthly', 'activity', 'diagnosis', 'knowledge'] as const,
   'overview',
@@ -34,18 +34,9 @@ const weekly = ref<{
   coverage: Record<string, number>;
 } | null>(null);
 const reasonTrend = ref<{ week: string; samples: number; reasons: { name: string; count: number }[] }[]>([]);
-const radarSpring = useSpringValues(Array(8).fill(0));
 let alive = true;
 const maximum = computed(() =>
   Math.max(1, ...(stats.value?.trend.map((t) => t.independent + t.hint + t.failed) || [])),
-);
-const radarPoint = (index: number, radius: number) => {
-  const angle = -Math.PI / 2 + (index * Math.PI) / 4;
-  return `${160 + Math.cos(angle) * radius},${160 + Math.sin(angle) * radius}`;
-};
-const radarRing = (radius: number) => Array.from({ length: 8 }, (_, i) => radarPoint(i, radius)).join(' ');
-const radarShape = computed(
-  () => stats.value?.mastery.map((_, i) => radarPoint(i, radarSpring.values.value[i] * 1.1)).join(' ') ?? '',
 );
 let loadSerial = 0;
 async function load() {
@@ -62,7 +53,6 @@ async function load() {
     const next = await api<Statistics>('/statistics?source=' + currentSource);
     if (!alive || serial !== loadSerial) return;
     stats.value = next;
-    radarSpring.setTarget(next.mastery.map((area) => area.score));
     if (activeSection.value === 'overview') {
       const nextWeekly = await api<NonNullable<typeof weekly.value>>('/training/weekly');
       if (alive && serial === loadSerial) weekly.value = nextWeekly;
@@ -99,9 +89,10 @@ onBeforeUnmount(() => {
       <label
         >统计来源
         <select v-model="source">
-          <option value="all">两站合计</option>
+          <option value="all">全部来源</option>
           <option value="cf">Codeforces</option>
           <option value="atcoder">AtCoder</option>
+          <option value="luogu">洛谷</option>
         </select></label
       >
     </div>
@@ -235,40 +226,12 @@ onBeforeUnmount(() => {
           <button :aria-pressed="masteryView === 'list'" @click="masteryView = 'list'">领域明细</button>
         </div>
         <div class="mastery-content">
-          <svg
-            class="mastery-radar"
-            viewBox="0 0 320 320"
-            role="img"
+          <RadarChart
+            :axes="stats.mastery.map((area) => area.name)"
+            :series="[{ name: '掌握度', values: stats.mastery.map((area) => area.score) }]"
             aria-label="八个算法领域的掌握度雷达图"
-            :data-target-scores="stats.mastery.map((area) => area.score).join(',')"
-          >
-            <polygon
-              v-for="ring in [27.5, 55, 82.5, 110]"
-              :key="ring"
-              :points="radarRing(ring)"
-              class="radar-ring"
-            />
-            <line
-              v-for="i in 8"
-              :key="i"
-              x1="160"
-              y1="160"
-              :x2="radarPoint(i - 1, 110).split(',')[0]"
-              :y2="radarPoint(i - 1, 110).split(',')[1]"
-              class="radar-axis"
-            />
-            <polygon :points="radarShape" class="radar-value" />
-            <circle
-              v-for="(area, i) in stats.mastery"
-              :key="area.name"
-              :cx="radarPoint(i, radarSpring.values.value[i] * 1.1).split(',')[0]"
-              :cy="radarPoint(i, radarSpring.values.value[i] * 1.1).split(',')[1]"
-              r="3"
-              class="radar-dot"
-            >
-              <title>{{ area.name }}：{{ area.score }} 分，{{ area.samples }} 题</title>
-            </circle>
-          </svg>
+            :tooltip="(i) => (stats ? `${stats.mastery[i].name}：${stats.mastery[i].score} 分，${stats.mastery[i].samples} 题` : '')"
+          />
           <div class="mastery-list">
             <div v-for="area in stats.mastery" :key="area.name" class="mastery-row">
               <span>{{ area.name }}</span

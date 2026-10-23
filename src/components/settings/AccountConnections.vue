@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { settings } from '../../api';
 defineProps<{ platform: string }>();
-const emit = defineEmits<{ select: [platform: 'cf' | 'atcoder' | 'xcpc'] }>();
+const emit = defineEmits<{ select: [platform: 'cf' | 'atcoder' | 'luogu' | 'xcpc'] }>();
 </script>
 <template>
   <div class="connection-cards">
@@ -9,6 +9,7 @@ const emit = defineEmits<{ select: [platform: 'cf' | 'atcoder' | 'xcpc'] }>();
       v-for="item in [
         { id: 'cf', title: 'Codeforces', name: settings.activeHandle },
         { id: 'atcoder', title: 'AtCoder', name: settings.activeAtcoder },
+        { id: 'luogu', title: '洛谷', name: settings.activeLuogu },
         { id: 'xcpc', title: 'XCPC', name: settings.xcpcPlayer?.name },
       ] as const"
       :key="item.id"
@@ -24,7 +25,7 @@ const emit = defineEmits<{ select: [platform: 'cf' | 'atcoder' | 'xcpc'] }>();
 <style scoped>
 .connection-cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }

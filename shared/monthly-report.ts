@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { type CoreStore, problemKey } from './core-store.js';
 import { AtcoderService, atcoderProfile, atcoderHistoryContestId } from './atcoder.js';
+import { luoguProfile } from './luogu.js';
 import { failures, type Attempt, type CFSubmission, type SyncJob } from './domain.js';
 import { fingerprint, learningNamespace, type LearningRecord } from './learning-domain.js';
 import type { DailyPlan } from './training.js';
@@ -16,7 +17,7 @@ export const monthlyQuerySchema = z.object({
     .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
     .refine((s) => Number(s.slice(0, 4)) >= 1970)
     .optional(),
-  source: z.enum(['all', 'cf', 'atcoder']).default('all'),
+  source: z.enum(['all', 'cf', 'atcoder', 'luogu']).default('all'),
 });
 export type MonthlySource = z.infer<typeof monthlyQuerySchema>['source'];
 export interface MonthlyEvidence {
@@ -166,9 +167,18 @@ export function monthlyReport(
     previousStart = monthStart(previousMonth);
   const previousEnd = month === currentMonth ? Math.min(start, previousStart + (end - start)) : start;
   const profiles = [
-    ...(source !== 'atcoder' && store.active() ? [store.active()] : []),
-    ...(source !== 'cf' && store.activeAtcoder() ? [atcoderProfile(store.activeAtcoder())] : []),
+    ...(source !== 'atcoder' && source !== 'luogu' && store.active() ? [store.active()] : []),
+    ...(source !== 'cf' && source !== 'luogu' && store.activeAtcoder()
+      ? [atcoderProfile(store.activeAtcoder())]
+      : []),
+    ...(source !== 'cf' && source !== 'atcoder' && store.activeLuogu()
+      ? [luoguProfile(store.activeLuogu())]
+      : []),
   ];
+  const profileSource = (p: string) =>
+    p.startsWith('lg~') ? 'luogu' : p.startsWith('ac~') ? 'atcoder' : 'cf';
+  const profileLabel = (p: string) =>
+    p.startsWith('lg~') ? '洛谷' : p.startsWith('ac~') ? 'AtCoder' : 'Codeforces';
   const warnings = new Set<string>();
   const completeness = profiles.map((p) => {
     const jobs = store.all<SyncJob>('jobs', p);
@@ -178,11 +188,11 @@ export function monthlyReport(
     const fullHistory = jobs.some((j) => j.mode === 'full' && j.status === 'completed');
     if (!fullHistory)
       warnings.add(
-        `${p.startsWith('ac~') ? 'AtCoder' : 'Codeforces'} 历史可能不完整，首次通过仅指已导入记录中的首次通过。`,
+        `${profileLabel(p)} 历史可能不完整，首次通过仅指已导入记录中的首次通过。`,
       );
     if (!latest) warnings.add(`${p} 尚无成功同步记录，报告仅反映已保存数据。`);
     return {
-      source: p.startsWith('ac~') ? 'atcoder' : 'cf',
+      source: profileSource(p),
       fullHistory,
       latestSync: latest?.finishedAt ?? latest?.startedAt ?? null,
     };
@@ -221,7 +231,7 @@ export function monthlyReport(
     else if (priority[c.kind] > priority[allContests[old].kind]) allContests[old] = c;
   };
   const contestUrl = (key: string) => '/contests?contest=' + encodeURIComponent(key);
-  if (source !== 'atcoder' && store.active()) {
+  if ((source === 'all' || source === 'cf') && store.active()) {
     for (const c of store.contests(store.active())) {
       const kind = c.types.includes('CONTESTANT')
         ? 'official'
@@ -281,7 +291,7 @@ export function monthlyReport(
       });
     }
   }
-  if (source !== 'cf' && store.activeAtcoder()) {
+  if ((source === 'all' || source === 'atcoder') && store.activeAtcoder()) {
     const ac = new AtcoderService(store),
       catalog = store.externalGet<{ contests: { id: string; start_epoch_second: number }[] }>(
         'atcoder-meta',

@@ -4,6 +4,7 @@ import { AgentService } from '../shared/agent-service.js';
 import { growthRoute } from '../shared/growth.js';
 import { LearningService } from '../shared/learning-service.js';
 import { PlanningService } from '../shared/planning-service.js';
+import { BattleService } from '../shared/battle-service.js';
 import { monthlyReport } from '../shared/monthly-report.js';
 import staticPlugin from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -40,6 +41,14 @@ import {
   atcoderNamespace,
   type AtcoderClientLike,
 } from '../shared/atcoder.js';
+import {
+  LuoguService,
+  LuoguClient,
+  luoguUidSchema,
+  luoguProfile,
+  type LuoguClientLike,
+} from '../shared/luogu.js';
+import { buildInsights } from '../shared/insights.js';
 
 export async function buildApp(
   store: Store,
@@ -50,6 +59,7 @@ export async function buildApp(
     pageSize?: number;
     xcpc?: XcpcClient;
     atcoder?: AtcoderClientLike;
+    luogu?: LuoguClientLike;
     aiFetch?: FetchLike;
     pageFetch?: PageFetchLike;
   } = {},
@@ -58,6 +68,7 @@ export async function buildApp(
   const sync = new SyncService(store, cf, options.pageSize);
   const analysis = new AnalysisService(store, cf);
   const atcoder = new AtcoderService(store, options.atcoder ?? new AtcoderClient());
+  const luogu = new LuoguService(store, options.luogu ?? new LuoguClient());
   const hub = new ContestHub(store, sync, analysis, async () => {}, options.xcpc, atcoder);
   const training = new TrainingService(store, cf);
   const aiReviewer = new AiReviewer(options.aiFetch);
@@ -154,7 +165,7 @@ export async function buildApp(
     return h;
   };
   const idle = () => {
-    if (sync.running || analysis.running || hub.isBusy() || atcoder.running)
+    if (sync.running || analysis.running || hub.isBusy() || atcoder.running || luogu.running)
       throw new Error('请等待当前同步或比赛分析完成');
   };
   app.get('/api/health', async () => ({ ok: true }));
@@ -163,6 +174,8 @@ export async function buildApp(
     handles: store.handles(),
     activeAtcoder: store.activeAtcoder(),
     atcoderHandles: store.atcoderHandles(),
+    activeLuogu: store.activeLuogu(),
+    luoguUsers: store.luoguUsers(),
     xcpcPlayer: hub.binding(),
     xcpcMode: hub.mode(),
   }));
@@ -262,6 +275,38 @@ export async function buildApp(
     hub.stop();
     return hub.latestJob();
   });
+  app.get('/api/luogu/binding', async () => ({
+    activeUid: store.activeLuogu(),
+    uids: store.luoguUsers(),
+    user: store.activeLuogu() ? luogu.user(store.activeLuogu()) : null,
+    job: store.activeLuogu() ? store.latestJob(luoguProfile(store.activeLuogu())) : null,
+  }));
+  app.post('/api/luogu/binding', async (req) => {
+    idle();
+    const uid = luoguUidSchema.parse(z.object({ uid: z.string() }).parse(req.body).uid);
+    const user = await luogu.bind(uid);
+    return {
+      activeUid: store.activeLuogu(),
+      uids: store.luoguUsers(),
+      user,
+      job: store.latestJob(luoguProfile(uid)),
+    };
+  });
+  app.get('/api/luogu/sync', async () =>
+    store.activeLuogu() ? store.latestJob(luoguProfile(store.activeLuogu())) : null,
+  );
+  app.post('/api/luogu/sync', async (req) => {
+    idle();
+    const { mode, resume } = z
+      .object({
+        mode: z.enum(['full', 'incremental']).default('incremental'),
+        resume: z.boolean().default(false),
+      })
+      .parse(req.body);
+    if (!store.activeLuogu()) throw new Error('请先绑定洛谷 UID');
+    return luogu.start(store.activeLuogu(), mode, resume);
+  });
+  app.get('/api/insights', async () => buildInsights(store));
   app.get<{ Params: { slug: string } }>('/api/xcpc/contests/:slug/analysis', async (req) =>
     hub.getReport(req.params.slug),
   );
@@ -295,6 +340,12 @@ export async function buildApp(
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
   app.get('/api/training/day', async () => store.combinedTrainingDay());
+  app.get('/api/training/battle', async () => new BattleService(store).state());
+  app.get<{ Params: { id: string } }>('/api/training/battle/:id', async (req) => new BattleService(store).state(req.params.id));
+  app.post('/api/training/battle', async (req) => new BattleService(store).start(req.body));
+  app.post<{ Params: { id: string } }>('/api/training/battle/:id', async (req) =>
+    new BattleService(store).route(req.params.id, 'POST', req.body, training, cf,
+      () => !!sync.running || !!analysis.running || hub.isBusy()));
   app.get('/api/training/weekly', async () => store.weeklyProgress());
   app.put('/api/training/weekly', async (req) => store.saveWeeklyGoal(req.body));
   app.get('/api/training/upsolve', async () => store.upsolveItems());
@@ -516,7 +567,8 @@ export async function buildApp(
   });
   app.get('/api/statistics', async (req) =>
     store.combinedStatistics(
-      z.object({ source: z.enum(['all', 'cf', 'atcoder']).default('all') }).parse(req.query).source,
+      z.object({ source: z.enum(['all', 'cf', 'atcoder', 'luogu']).default('all') }).parse(req.query)
+        .source,
     ),
   );
   app.get('/api/statistics/monthly', async (req) => monthlyReport(store, req.query));

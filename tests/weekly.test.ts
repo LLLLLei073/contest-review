@@ -173,7 +173,7 @@ test('upsolve AC, reason snapshots, quality hints, simulation evidence and v7 ba
   s.ingest('alice', [sub(2, '3000:A', 'OK')]);
   assert.ok(s.simulations()[0].events.some((e) => e.source === 'cf' && e.verdict === 'OK'));
   const backup = s.backup();
-  assert.equal(backup.version, 11);
+  assert.equal(backup.version, 12);
   const restored = new Store(':memory:');
   restored.restore(backup);
   assert.equal(restored.upsolveItems()[0].completed, true);

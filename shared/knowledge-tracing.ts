@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BKT_VERSION = 'bkt-1-uncalibrated';
+export const BKT_VERSION = 'bkt-2-battle-uncalibrated';
 export const bktParametersSchema = z.object({
   initial: z.number().min(0).max(1),
   learn: z.number().min(0).max(1),
@@ -37,6 +37,8 @@ export interface KnowledgeObservation {
   result: 'independent' | 'failed' | 'hint' | 'accepted';
   accepted: boolean;
   assisted: boolean;
+  learningMultiplier?: number;
+  acceptedSubmissionId?: number;
 }
 export interface KnowledgeState {
   skillId: string;
@@ -115,7 +117,8 @@ export function traceKnowledge(
     }
     seenIds.add(o.id);
     const state = states.get(skill!)!;
-    state.probability = updateKnowledge(state.probability, o.result === 'independent', params);
+    const multiplier = o.result === 'independent' ? Math.max(1, Math.min(1.5, o.learningMultiplier ?? 1)) : 1;
+    state.probability = updateKnowledge(state.probability, o.result === 'independent', { ...params, learn: Math.min(1, params.learn * multiplier) });
     state.samples++;
     state.evidenceIds.push(o.id);
     state.lastEvidenceAt = o.at;
