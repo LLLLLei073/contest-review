@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   Library,
   Flag,
+  Swords,
   Radar,
   ChartNoAxesCombined,
   BookOpen,
@@ -14,6 +15,7 @@ export const navigation = [
   { to: '/', label: '今日训练', icon: LayoutDashboard, group: '训练', caption: '题单、周目标与未来计划' },
   { to: '/problems', label: '错题库', icon: Library, group: '训练', caption: '查找题目、记录思路与重做' },
   { to: '/contests', label: '比赛复盘', icon: Flag, group: '训练', caption: '比赛报告、赛后补题与模拟赛' },
+  { to: '/battle', label: '连战', icon: Swords, group: '训练', caption: '任意主题一题接一题，自动生成战报' },
   {
     to: '/insights',
     label: '数据总览',
@@ -41,6 +43,7 @@ export const navigation = [
 ];
 
 export const quickActions = [
+  { to: '/battle', label: '开始主题连战', caption: '输入任意主题（如线段树），一题接一题' },
   { to: '/?view=path', label: '学习路径', caption: '从基础到目标，查看先修关系与独立验证' },
   { to: '/problems?due=yes', label: '查看到期复习', caption: '优先处理积压的复习任务' },
   { to: '/?view=training', label: '调整未来计划', caption: '预览、查看与撤回未来安排' },

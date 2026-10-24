@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { allBattleRewards } from './battle-service.js';
 import { battleSessionSchema, validateBattle } from './battle-domain.js';
+import { battleSummarySchema } from './battle-summary.js';
 import { growthRecordSchema } from './growth-domain.js';
 import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
 import { agentRecordSchema } from './agent-domain.js';
@@ -2165,6 +2166,11 @@ export class CoreStore {
         row.value = contestReviewSchema.parse(row.value);
       else if (row.namespace.startsWith('luogu:') && row.key === 'user')
         row.value = luoguUserSnapshotSchema.parse(row.value);
+      else if (row.namespace.startsWith('battle-summary:')) {
+        row.value = battleSummarySchema.parse(row.value);
+        const owner = row.namespace.slice('battle-summary:'.length);
+        if (!owner || !data.profiles.includes(owner)) throw new Error('连战总结账号不一致');
+      }
       else if (row.namespace.startsWith('growth:')) row.value = growthRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('agent:')) row.value = agentRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('planning:')) row.value = planningRecordSchema.parse(row.value);

@@ -100,8 +100,10 @@ test('battle automatically advances verified AC, evaluates without leaving the t
   await expect(page.locator('.battle-reward')).toContainText('1.1×');
   await page.getByRole('button', { name: '跳过此题', exact: true }).click();
   await expect(page.locator('.battle-problem-title')).not.toHaveText(second);
-  await page.getByRole('button', { name: '结束本轮', exact: true }).click();
+  await page.getByRole('button', { name: '结束本轮并生成总结', exact: true }).click();
   await expect(page.getByRole('button', { name: '开始连战', exact: true })).toBeVisible();
+  // fixture 未配置 AI：归档中显示可读提示而不是报错崩溃
+  await expect(page.locator('.battle-archive')).toContainText('尚未生成 AI 总结');
   await page.getByRole('button', { name: '切换为深色模式' }).click();
   await page.screenshot({ path: info.outputPath('battle-dark-ended.png'), fullPage: true });
   expect(errors).toEqual([]);

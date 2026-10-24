@@ -233,7 +233,7 @@ watch(
       <h1>今日训练</h1>
       <p>复习旧题，学习新知。每栏按今天的安排保持固定。</p>
     </div>
-    <div class="button-row"><RouterLink to="/battle" class="small-button">开始连战 →</RouterLink><span class="date-chip"><CalendarDays :size="16" />{{ date }}</span></div>
+    <div class="button-row"><RouterLink to="/battle" class="button primary">开始连战 →</RouterLink><span class="date-chip"><CalendarDays :size="16" />{{ date }}</span></div>
   </div>
   <div class="training-navigation">
     <nav class="content-switcher" aria-label="今日训练内容">

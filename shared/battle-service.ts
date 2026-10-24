@@ -9,8 +9,11 @@ import {
   BATTLE_RULE_VERSION,
   battleSessionSchema,
   battleRewards,
+  battleTags,
+  battleTheme,
   type BattleSession,
 } from './battle-domain.js';
+import { battleSummaryNamespace, battleSummarySchema, type BattleSummary } from './battle-summary.js';
 import type { TrainingService } from './training-service.js';
 import type { CFClient } from './sync.js';
 
@@ -67,16 +70,60 @@ const commandSchema = z.object({
   minimum: z.number().int().min(800).max(4000).optional(),
   maximum: z.number().int().min(800).max(4000).optional(),
 });
+export interface ThemeMapper {
+  (theme: string): Promise<{ tags: string[]; skillId: string }>;
+}
+export interface SummaryGenerator {
+  (session: BattleSession): Promise<BattleSummary>;
+}
+export interface BattleOptions {
+  themeMapper?: ThemeMapper;
+  summarizer?: SummaryGenerator;
+}
+export type BattleRecord = {
+  id: string;
+  theme: string;
+  skillId: string;
+  status: 'active' | 'paused' | 'ended';
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  durationMinutes: number;
+  problemCount: number;
+  solvedCount: number;
+  pendingCount: number;
+  summary?: BattleSummary;
+};
 export class BattleService {
   constructor(
     private store: CoreStore,
     private now: () => Date = () => new Date(),
+    private options: BattleOptions = {},
   ) {}
   private handle(expected?: string) {
     const h = this.store.active();
     if (!h) throw new Error('请先绑定 Codeforces 账号');
     if (expected && h !== expected) throw new Error('连战账号已变化，请刷新页面');
     return h;
+  }
+  private record(s: BattleSession, summary: BattleSummary | null = null) {
+    const closed = s.items.filter((i) => i.closedAt).at(-1)?.closedAt ?? s.updatedAt;
+    const playedUntil =
+      s.status === 'ended' ? s.updatedAt : s.items.some((i) => i.closedAt) ? closed : s.updatedAt;
+    return {
+      id: s.id,
+      theme: battleTheme(s),
+      skillId: s.skillId,
+      status: s.status,
+      revision: s.revision,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      durationMinutes: Math.max(0, Math.round((Date.parse(playedUntil) - Date.parse(s.createdAt)) / 60000)),
+      problemCount: s.items.length,
+      solvedCount: s.items.filter((i) => i.outcome === 'accepted').length,
+      pendingCount: s.items.filter((i) => i.outcome === 'accepted' && !i.evaluation).length,
+      ...(summary ? { summary } : {}),
+    };
   }
   state(id?: string) {
     const h = this.store.active();
@@ -93,14 +140,18 @@ export class BattleService {
       handle: h,
       session,
       activeId: sessions.find((s) => s.status !== 'ended')?.id ?? null,
-      history: sessions.map((s) => ({
-        id: s.id,
-        skillId: s.skillId,
-        createdAt: s.createdAt,
-        status: s.status,
-      })),
+      history: sessions.map((s) => this.record(s)),
       ...(session ? sessionRewards(this.store, session) : { rewards: [], streak: 0, pending: 0 }),
     };
+  }
+  /** 完整战报档案：全部场次 + 已生成的 AI 总结。 */
+  records() {
+    const h = this.store.active();
+    if (!h) return [];
+    return this.store
+      .externalAll<BattleSession>(battleNamespace(h))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+      .map((s) => this.record(s, this.store.externalGet<BattleSummary>(battleSummaryNamespace(h), s.id) ?? null));
   }
   private save(s: BattleSession) {
     this.store.externalPut(battleNamespace(s.handle), s.id, battleSessionSchema.parse(s));
@@ -120,7 +171,7 @@ export class BattleService {
       ...day.newProblems.map((p) => p.key),
     ]);
     const catalog = this.store.get<Catalog>('catalog_cache', s.handle, 'current');
-    const skill = knowledgeCards.find((k) => k.id === s.skillId)!;
+    const tags = battleTags(s);
     const hash = (key: string) => {
       let n = 2166136261;
       for (const c of s.id + key) n = Math.imul(n ^ c.charCodeAt(0), 16777619);
@@ -133,7 +184,7 @@ export class BattleService {
           p.rating !== null &&
           p.rating >= s.minimum &&
           p.rating <= s.maximum &&
-          p.tags.some((t) => skill.tags.includes(t)),
+          p.tags.some((t) => tags.includes(t)),
       )
       .sort(
         (a, b) =>
@@ -161,8 +212,37 @@ export class BattleService {
   }
   start(input: unknown) {
     const data = z
-      .object({ handle: z.string(), skillId: z.string(), operationId: z.string().uuid() })
+      .object({
+        handle: z.string(),
+        skillId: z.string(),
+        operationId: z.string().uuid(),
+      })
       .parse(input);
+    return this.create(data, null);
+  }
+  /** 自定义主题连战：先异步解析主题（不触碰 store），再进入同步建场。 */
+  async startWithTheme(input: unknown) {
+    const data = z
+      .object({
+        handle: z.string(),
+        theme: z.string().trim().min(1).max(60),
+        operationId: z.string().uuid(),
+      })
+      .parse(input);
+    this.handle(data.handle);
+    if (!this.options.themeMapper) throw new Error('自定义主题连战不可用：请更新应用或配置 AI 服务');
+    const mapping = await this.options.themeMapper(data.theme);
+    if (!knowledgeCards.some((k) => k.id === mapping.skillId))
+      throw new Error('主题解析结果无效，请换个说法重试');
+    return this.create(
+      { handle: data.handle, skillId: mapping.skillId, operationId: data.operationId },
+      { theme: data.theme, tags: mapping.tags },
+    );
+  }
+  private create(
+    data: { handle: string; skillId: string; operationId: string },
+    custom: BattleSession['custom'],
+  ) {
     const h = this.handle(data.handle);
     const sessions = this.store.externalAll<BattleSession>(battleNamespace(h));
     if (sessions.some((s) => s.operations.includes(data.operationId))) return this.state();
@@ -195,6 +275,7 @@ export class BattleService {
       preferred: Math.min(4000, band.preferred),
       items: [],
       operations: [data.operationId],
+      custom,
     };
     return this.store.transaction(() => {
       this.issue(session);
@@ -301,6 +382,19 @@ export class BattleService {
       return this.save(s);
     });
   }
+  /** 生成（或重新生成）一场连战的 AI 总结；生成后由服务统一持久化。 */
+  async summarize(id: string, input: unknown) {
+    const data = z.object({ handle: z.string(), operationId: z.string().uuid() }).parse(input);
+    const h = this.handle(data.handle);
+    const session = this.store.externalGet<BattleSession>(battleNamespace(h), id);
+    if (!session) throw new Error('连战不存在');
+    if (!this.options.summarizer) throw new Error('连战总结不可用：请先在设置中配置 AI 服务');
+    const epoch = this.store.learningEpoch;
+    const summary = battleSummarySchema.parse(await this.options.summarizer(session));
+    if (epoch !== this.store.learningEpoch) throw new Error('账号或数据已变化，请重新生成总结');
+    this.store.externalPut(battleSummaryNamespace(h), id, summary);
+    return { summary };
+  }
   async route(
     path: string,
     method: string,
@@ -309,9 +403,18 @@ export class BattleService {
     cf: CFClient,
     busy: () => boolean,
   ) {
-    if (method === 'GET') return this.state(path || undefined);
+    if (path === 'records' && method === 'GET') return this.records();
+    const [id, sub] = path ? path.split('/') : [''];
+    if (sub === 'summarize' && method === 'POST') return this.summarize(id, input);
+    if (sub) throw new Error('未知连战操作');
+    if (method === 'GET') return this.state(id || undefined);
     if (method !== 'POST') throw new Error('不支持的连战操作');
-    if (!path) return this.start(input);
+    if (!id) {
+      const probe = z
+        .object({ theme: z.string().trim().min(1).max(60).optional() })
+        .parse((input ?? {}) as Record<string, unknown>);
+      return probe.theme ? this.startWithTheme(input) : this.start(input);
+    }
     const data = commandSchema.parse(input);
     const { duplicate, session } = this.current(path, data);
     const epoch = this.store.learningEpoch;

@@ -3762,6 +3762,18 @@ h2[tabindex='-1']:focus {
   color: var(--muted);
 }
 
+/* 导航 10 项后，矮视口收起装饰性格言，把空间留给导航与成长徽章 */
+@media (max-height: 960px) {
+  .sidebar-note {
+    margin: 12px 14px 10px;
+  }
+  .sidebar-note p,
+  .sidebar-note > span,
+  .sidebar-note .note-line {
+    display: none;
+  }
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;

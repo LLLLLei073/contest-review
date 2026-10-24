@@ -123,7 +123,7 @@ onUnmounted(() => {
             :class="{
               active:
                 n.to === '/'
-                  ? ['/', '/battle'].includes($route.path)
+                  ? $route.path === '/'
                   : n.to === '/contests'
                     ? ['/contests', '/simulation'].includes($route.path)
                     : $route.path.startsWith(n.to),
@@ -170,7 +170,7 @@ onUnmounted(() => {
                             ? '星澪伙伴'
                             : $route.path === '/settings'
                               ? '设置与数据'
-                              : $route.path === '/battle' ? '知识点连战' : '今日训练'
+                              : $route.path === '/battle' ? '连战' : '今日训练'
           }}</b>
         </div>
         <div class="topbar-actions">

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { api, browserMode, loadSettings, notify, settings } from '../api';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { api, browserMode, dataRevision, loadSettings, notify, settings } from '../api';
 import type { SyncJob } from '../../shared/domain';
 import type { InsightsPayload } from '../../shared/insights';
 import RadarChart from '../components/charts/RadarChart.vue';
@@ -19,6 +19,10 @@ const luoguUser = ref<InsightsPayload['accounts'][number] | null>(null);
 let alive = true;
 let loadSerial = 0;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
+// 连战结束/中断会推进 dataRevision，这里跟随刷新总览
+watch(dataRevision, () => {
+  if (alive) void load();
+});
 
 const platformColors: Record<string, string> = {
   cf: '#3f6ff0',
@@ -34,6 +38,8 @@ const platformNames: Record<string, string> = {
 };
 const accountOf = (platform: 'cf' | 'atcoder' | 'luogu') =>
   insights.value?.accounts.find((a) => a.platform === platform);
+const battleStatus = (status: string) =>
+  ({ active: '进行中', paused: '已中断', ended: '已结束' })[status] ?? status;
 
 async function load() {
   const serial = ++loadSerial;
@@ -443,6 +449,44 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <section v-if="insights.battles.total" class="panel insight-panel" aria-label="连战记录">
+      <div class="section-head">
+        <h2>连战记录</h2>
+        <RouterLink to="/battle" class="text-link">进入连战 →</RouterLink>
+      </div>
+      <div class="metrics insight-metrics battle-metrics">
+        <div class="metric">
+          <small>连战场次</small>
+          <strong>{{ insights.battles.total }}</strong>
+        </div>
+        <div class="metric">
+          <small>连战题目</small>
+          <strong>{{ insights.battles.totalProblems }}</strong>
+        </div>
+        <div class="metric">
+          <small>连战 AC</small>
+          <strong>{{ insights.battles.solvedProblems }}</strong>
+        </div>
+        <div class="metric">
+          <small>累计耗时</small>
+          <strong>{{ insights.battles.totalMinutes }} 分</strong>
+        </div>
+      </div>
+      <ol class="battle-briefs">
+        <li v-for="b in insights.battles.recent" :key="b.id">
+          <div class="battle-brief-head">
+            <strong>{{ b.theme }}</strong>
+            <span class="badge">{{ battleStatus(b.status) }}</span>
+          </div>
+          <p class="small subtle">
+            {{ new Date(b.startedAt).toLocaleDateString() }} · {{ b.durationMinutes }} 分钟 ·
+            {{ b.problemCount }} 题 / AC {{ b.solvedCount }}
+          </p>
+          <p v-if="b.summaryText" class="battle-brief-summary">{{ b.summaryText }}</p>
+        </li>
+      </ol>
+    </section>
+
     <section class="panel insight-panel" aria-label="Rating 走势">
       <div class="section-head"><h2>Rating 走势</h2></div>
       <svg
@@ -641,6 +685,29 @@ onBeforeUnmount(() => {
 }
 .insight-metrics {
   grid-template-columns: repeat(6, 1fr);
+}
+.battle-metrics {
+  grid-template-columns: repeat(4, 1fr);
+}
+.battle-briefs {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.battle-briefs li {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.battle-brief-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.battle-brief-summary {
+  margin: 6px 0 0;
+  line-height: 1.7;
+  color: var(--ink);
 }
 .insight-columns {
   display: grid;

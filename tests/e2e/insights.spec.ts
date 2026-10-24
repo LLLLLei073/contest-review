@@ -122,6 +122,34 @@ test('insights aggregates bound accounts, radar and charts from a full payload',
       atcoder: i % 3,
       luogu: i % 2,
     })),
+    battles: {
+      total: 2,
+      totalProblems: 5,
+      solvedProblems: 4,
+      totalMinutes: 96,
+      recent: [
+        {
+          id: 'b-1',
+          theme: '线段树',
+          status: 'ended',
+          startedAt: new Date().toISOString(),
+          durationMinutes: 62,
+          problemCount: 3,
+          solvedCount: 3,
+          summaryText: '本轮线段树三连，全部独立完成。',
+        },
+        {
+          id: 'b-2',
+          theme: '动态规划',
+          status: 'paused',
+          startedAt: new Date().toISOString(),
+          durationMinutes: 34,
+          problemCount: 2,
+          solvedCount: 1,
+          summaryText: null,
+        },
+      ],
+    },
   };
   await page.route('**/api/insights', (route) => route.fulfill({ json: payload }));
   await page.goto('/insights');
@@ -147,6 +175,10 @@ test('insights aggregates bound accounts, radar and charts from a full payload',
   await expect(page.locator('.radar-legend-item')).toHaveCount(2);
   // 难度分布与活跃趋势堆叠柱
   await expect(page.locator('.stacked-chart')).toHaveCount(2);
+  // 连战记录面板：聚合指标 + 最近战报（含 AI 总结摘要）
+  await expect(page.locator('.battle-metrics .metric', { hasText: '连战场次' })).toContainText('2');
+  await expect(page.locator('.battle-briefs li')).toHaveCount(2);
+  await expect(page.locator('.battle-brief-summary').first()).toContainText('线段树三连');
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: 'reduce' });

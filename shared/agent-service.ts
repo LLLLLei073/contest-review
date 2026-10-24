@@ -20,7 +20,7 @@ import { monthlyReport } from './monthly-report.js';
 import { growthSummary } from './growth.js';
 import { ReviewWorkflowService, checkpointSchema, stageLabels } from './review-workflow.js';
 import { PlanningService } from './planning-service.js';
-import { planRequestSchema } from './planning-domain.js';
+import { planningDateSchema } from './planning-domain.js';
 import {
   agentContextSchema,
   agentNamespace,
@@ -33,6 +33,24 @@ import {
 } from './agent-domain.js';
 
 const base = () => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+// 部分兼容端点会把对象参数双重编码成 JSON 字符串；在应用层解开一次，
+// 失败时给出中文报错，避免落到 langchain 的英文 schema 拦截。
+function looseInput(input: unknown): Record<string, unknown> {
+  if (typeof input !== 'string') {
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new Error('input 需要是一个 JSON 对象');
+    return input as Record<string, unknown>;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    throw new Error('input 需要是一个 JSON 对象，当前字符串无法解析');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new Error('input 需要是一个 JSON 对象');
+  return parsed as Record<string, unknown>;
+}
 type Run = Extract<AgentRecord, { kind: 'run' }>;
 type Proposal = Extract<AgentRecord, { kind: 'proposal' }>;
 const active = new WeakMap<
@@ -430,7 +448,9 @@ export class AgentService {
           } catch (e) {
             guard();
             emit({ type: 'tool-end', name, text: (e as Error).message });
-            return json({ error: (e as Error).message });
+            // 错误要给模型一条可执行的出路：修正参数重试，或用已有证据作答，
+            // 避免它把失败自行转述成"放弃工具"的回复。
+            return json({ error: (e as Error).message, hint: '可修正参数后重试该工具；若无法修正，请直接基于已获取的信息回答。' });
           }
         } finally {
           currentWriter = undefined;
@@ -522,11 +542,33 @@ export class AgentService {
             ]
           : []),
         tool(
-          wrap('未来计划预览', (input) => new PlanningService(this.store).preview(input)),
+          wrap('未来计划预览', (input) => {
+            // 模型经常算不对日期或把预算传成字符串：在工具层兜底，
+            // 让严格校验的错误以中文形式回到模型而不是 langchain 的英文拦截。
+            const fallback = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+            const raw = (input ?? {}) as { date?: unknown; budget?: unknown; [k: string]: unknown };
+            const date =
+              typeof raw.date === 'string' && planningDateSchema.safeParse(raw.date).success
+                ? raw.date
+                : fallback;
+            const budget =
+              typeof raw.budget === 'string' && /^\d+$/.test(raw.budget.trim())
+                ? Number(raw.budget.trim())
+                : raw.budget;
+            return new PlanningService(this.store).preview({ ...raw, date, budget });
+          }),
           {
             name: 'planning_preview',
-            description: '按预算和先修约束预览未来计划，不改变题单。',
-            schema: planRequestSchema,
+            description:
+              '按预算和先修约束预览未来计划，不改变题单。date 可省略（默认预览明天），budget 为 15-240 的整数分钟。',
+            schema: z.object({
+              date: z.string().max(10).optional().describe('预览起始日期 YYYY-MM-DD，可省略'),
+              budget: z
+                .union([z.number().int().min(15).max(240), z.string().regex(/^\d+$/)])
+                .nullable()
+                .optional()
+                .describe('每日预算分钟数'),
+            }),
           },
         ),
         tool(
@@ -577,23 +619,24 @@ export class AgentService {
         ),
         tool(
           wrap('学习任务', async ({ action, input }) => {
-            if ('problemKey' in input) this.detail(String(input.problemKey));
+            const payload = looseInput(input);
+            if ('problemKey' in payload) this.detail(String(payload.problemKey));
             if (action === 'draft') {
               const before = new LearningService(this.store)
                 .records()
-                .find((x) => x.kind === 'card' && x.problemKey === input.problemKey);
+                .find((x) => x.kind === 'card' && x.problemKey === payload.problemKey);
               if (before) return { message: '已有经验卡，请通过操作提案修改，不能自动覆盖' };
             }
-            const result = await this.task(action, input, controller.signal);
+            const result = await this.task(action, payload, controller.signal);
             if (action === 'ask' && result && typeof result === 'object' && 'citations' in result)
               for (const c of (result as { citations: Citation[] }).citations) sources.set(c.id, c);
-            if (action === 'bundle' && 'problemKey' in input) this.markHelp(String(input.problemKey));
+            if (action === 'bundle' && 'problemKey' in payload) this.markHelp(String(payload.problemKey));
             return result;
           }),
           {
             name: 'learning_task',
             description:
-              '执行知识问答、诊断、渐进提示、代码分析、经验卡新草稿、对拍材料、比赛教练或月报解读；保留证据与输出校验。不得代填训练结果。',
+              '执行知识问答、诊断、渐进提示、代码分析、经验卡新草稿、对拍材料、比赛教练或月报解读；保留证据与输出校验。不得代填训练结果。input 必须是 JSON 对象（不要把对象编码成字符串）。',
             schema: z.object({
               action: z.enum([
                 'ask',
@@ -605,19 +648,20 @@ export class AgentService {
                 'coach',
                 'monthly-report',
               ]),
-              input: z.record(z.string(), z.unknown()),
+              input: z.unknown(),
             }),
           },
         ),
         tool(
           wrap('操作方案', async ({ action, input }) => {
+            const payload = looseInput(input);
             if (
               !workflow &&
               action === 'agent' &&
               new LearningService(this.store).records().some((x) => x.kind === 'preferences' && x.auto)
             )
               return this.task('agent', { automatic: true }, controller.signal);
-            const p = await this.proposal(r, action, input, controller.signal);
+            const p = await this.proposal(r, action, payload, controller.signal);
             if (workflow) workflows.proposal(workflow.id, data.requestId, p.id);
             emit({ type: 'proposal', id: p.id, text: p.preview });
             await this.persist();
@@ -626,8 +670,8 @@ export class AgentService {
           {
             name: 'propose_change',
             description:
-              '修改已有复盘(review 输入problemKey和patch)、经验卡(card)、删除学习记录(delete)、周目标(weekly)、安排迁移(transfer)、调整未来题单(agent)。生成预览待确认；只有开启自动题单调整时 agent 可自动执行。',
-            schema: z.object({ action: z.enum(changeActions), input: z.record(z.string(), z.unknown()) }),
+              '修改已有复盘(review 输入problemKey和patch)、经验卡(card)、删除学习记录(delete)、周目标(weekly)、安排迁移(transfer)、调整未来题单(agent)。生成预览待确认；只有开启自动题单调整时 agent 可自动执行。input 必须是 JSON 对象（不要把对象编码成字符串）。',
+            schema: z.object({ action: z.enum(changeActions), input: z.unknown() }),
           },
         ),
       ];

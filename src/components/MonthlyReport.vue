@@ -22,6 +22,8 @@ let sequence = 0,
   alive = true;
 const max = computed(() => Math.max(1, ...(report.value?.days.map((d) => d.submissions) ?? [])));
 const kindLabel = { official: '正式参赛', virtual: '虚拟参赛', other: '其他参赛', window: '仅赛时提交' };
+const battleStatus = (status: string) =>
+  ({ active: '进行中', paused: '已中断', ended: '已结束' })[status] ?? status;
 const summary = computed(() =>
   report.value
     ? [
@@ -241,6 +243,28 @@ onBeforeUnmount(() => {
           }}{{ contest.rating.performance ?? '未知' }}
         </p>
       </article>
+      <h3>连战记录</h3>
+      <p v-if="!report.battles.length" class="subtle">本月没有连战场次。</p>
+      <table v-else class="monthly-table">
+        <thead>
+          <tr>
+            <th>主题</th>
+            <th>开始时间</th>
+            <th>耗时</th>
+            <th>题量 / AC</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="b in report.battles" :key="b.startedAt + b.theme">
+            <td>{{ b.theme }}</td>
+            <td>{{ date(b.startedAt) }}</td>
+            <td>{{ b.durationMinutes }} 分钟</td>
+            <td>{{ b.problemCount }} / {{ b.solvedCount }}</td>
+            <td>{{ battleStatus(b.status) }}</td>
+          </tr>
+        </tbody>
+      </table>
       <details>
         <summary>题目与训练证据（{{ report.evidence.length }}）</summary>
         <div v-for="e in report.evidence" :key="e.id" class="monthly-evidence">
@@ -278,6 +302,22 @@ onBeforeUnmount(() => {
 .monthly-report .section-head,
 .monthly-report .button-row {
   flex-wrap: wrap;
+}
+.monthly-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.monthly-table th,
+.monthly-table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.monthly-table th {
+  color: var(--muted);
+  font-weight: 600;
 }
 .monthly-metrics {
   display: grid;

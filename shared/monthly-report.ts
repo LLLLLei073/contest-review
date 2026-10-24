@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { type CoreStore, problemKey } from './core-store.js';
 import { AtcoderService, atcoderProfile, atcoderHistoryContestId } from './atcoder.js';
 import { luoguProfile } from './luogu.js';
+import { battleNamespace } from './battle-service.js';
+import { battleTheme, type BattleSession } from './battle-domain.js';
 import { failures, type Attempt, type CFSubmission, type SyncJob } from './domain.js';
 import { fingerprint, learningNamespace, type LearningRecord } from './learning-domain.js';
 import type { DailyPlan } from './training.js';
@@ -100,6 +102,14 @@ export interface MonthlyAlgorithmReport {
   };
   days: { date: string; attempted: number; submissions: number; accepted: number }[];
   contests: MonthlyContest[];
+  battles: {
+    theme: string;
+    status: string;
+    startedAt: string;
+    durationMinutes: number;
+    problemCount: number;
+    solvedCount: number;
+  }[];
   evidence: MonthlyEvidence[];
   findings: MonthlyFinding[];
   warnings: string[];
@@ -617,6 +627,33 @@ export function monthlyReport(
     completeness.length && completeness.every((c) => c.fullHistory)
       ? '历史首次通过'
       : '已导入记录中的首次通过';
+  // 连战记录是 Codeforces 专属训练模式；按场次开始时间归入报告月份。
+  const battles = (
+    source !== 'atcoder' && source !== 'luogu' && store.active()
+      ? store.externalAll<BattleSession>(battleNamespace(store.active()))
+      : []
+  )
+    .filter((s) => {
+      const started = Date.parse(s.createdAt);
+      return started >= start && started < end;
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((s) => {
+      const closed = s.items.filter((i) => i.closedAt).at(-1)?.closedAt ?? s.updatedAt;
+      const playedUntil =
+        s.status === 'ended' ? s.updatedAt : s.items.some((i) => i.closedAt) ? closed : s.updatedAt;
+      return {
+        theme: battleTheme(s),
+        status: s.status,
+        startedAt: s.createdAt,
+        durationMinutes: Math.max(
+          0,
+          Math.round((Date.parse(playedUntil) - Date.parse(s.createdAt)) / 60000),
+        ),
+        problemCount: s.items.length,
+        solvedCount: s.items.filter((i) => i.outcome === 'accepted').length,
+      };
+    });
   const data = {
     month,
     source,
@@ -635,6 +672,7 @@ export function monthlyReport(
     },
     days,
     contests,
+    battles,
     evidence,
     findings,
     warnings: [...warnings],

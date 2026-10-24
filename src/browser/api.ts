@@ -3,6 +3,8 @@ import { growthRoute } from '../../shared/growth';
 import { LearningService } from '../../shared/learning-service';
 import { PlanningService } from '../../shared/planning-service';
 import { BattleService } from '../../shared/battle-service';
+import { mapTheme } from '../../shared/battle-theme';
+import { generateBattleSummary } from '../../shared/battle-summary';
 import { monthlyReport } from '../../shared/monthly-report';
 import { listAiModels } from '../../shared/ai-models';
 import { attemptSchema, reviewSchema } from '../../shared/domain';
@@ -54,7 +56,12 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   let result: unknown;
   try {
     if (route === '/training/battle' || route.startsWith('/training/battle/')) {
-      result = await new BattleService(store).route(route.slice('/training/battle'.length).replace(/^\//, ''), method, body,
+      const ai = new AiReviewer();
+      const battle = new BattleService(store, undefined, {
+        themeMapper: (theme) => mapTheme(store, ai, theme),
+        summarizer: (session) => generateBattleSummary(store, ai, session),
+      });
+      result = await battle.route(route.slice('/training/battle'.length).replace(/^\//, ''), method, body,
         training, cf, () => !!sync.running || !!analysis.running || hub.isBusy());
     } else if (route.startsWith('/agent/')) {
       const { AgentService } = await import('../../shared/agent-service');

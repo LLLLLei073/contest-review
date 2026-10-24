@@ -4,6 +4,13 @@ import { knowledgeCards } from './knowledge.js';
 import type { CFSubmission } from './domain.js';
 
 export const BATTLE_RULE_VERSION = 'battle-1';
+// 自定义主题连战：AI 把任意主题映射为 CF 标签组合，skillId 仍指向最近的
+// 知识卡以保持奖励归因链路（掌握度/BKT/学习转移）完全复用。
+export const battleCustomSchema = z.object({
+  theme: z.string().trim().min(1).max(60),
+  tags: z.array(z.string().min(1).max(50)).min(1).max(6),
+});
+export type BattleCustom = z.infer<typeof battleCustomSchema>;
 export const battleItemSchema = z.object({
   id: z.string().uuid(),
   problem: catalogSchema.shape.problems.element,
@@ -31,6 +38,7 @@ export const battleSessionSchema = z
     preferred: z.number().int().min(800).max(4000),
     items: z.array(battleItemSchema).max(20000),
     operations: z.array(z.string().uuid()).max(20000),
+    custom: battleCustomSchema.nullable().optional(),
   })
   .refine((s) => s.minimum <= s.preferred && s.preferred <= s.maximum, '难度区间无效');
 export type BattleSession = z.infer<typeof battleSessionSchema>;
@@ -109,17 +117,25 @@ export function battleRewards(session: BattleSession, submissions: CFSubmission[
   };
 }
 
+export function battleTheme(session: BattleSession) {
+  return session.custom?.theme ?? knowledgeCards.find((c) => c.id === session.skillId)?.title ?? session.skillId;
+}
+/** 选题允许的标签集合：自定义主题用 AI 映射的标签，知识卡连战用卡内标签。 */
+export function battleTags(session: BattleSession) {
+  const skill = knowledgeCards.find((c) => c.id === session.skillId)!;
+  return session.custom ? session.custom.tags : skill.tags;
+}
 export function validateBattle(session: BattleSession, submissions: CFSubmission[]) {
   const ids = new Set<string>(),
     keys = new Set<string>();
   let last = Date.parse(session.createdAt);
+  const allowed = new Set(battleTags(session));
   for (const [index, item] of session.items.entries()) {
     if (ids.has(item.id) || keys.has(item.problem.key)) throw new Error('连战题目重复');
     ids.add(item.id);
     keys.add(item.problem.key);
-    const skill = knowledgeCards.find((c) => c.id === session.skillId)!;
     if (
-      !item.problem.tags.some((t) => skill.tags.includes(t)) ||
+      !item.problem.tags.some((t) => allowed.has(t)) ||
       item.problem.key !== `${item.problem.contestId}:${item.problem.index}` ||
       item.problem.url !==
         `https://codeforces.com/contest/${item.problem.contestId}/problem/${item.problem.index}`

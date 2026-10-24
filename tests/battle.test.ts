@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { Store } from '../server/store';
 import { buildApp } from '../server/app';
 import { BattleService, allBattleRewards } from '../shared/battle-service';
+import { mapTheme, parseThemeAi, themeMapping } from '../shared/battle-theme';
+import { battleFacts, savedSummary } from '../shared/battle-summary';
 import { PlanningService } from '../shared/planning-service';
 import { DEFAULT_BKT, updateKnowledge } from '../shared/knowledge-tracing';
 import { TrainingService } from '../shared/training-service';
@@ -10,6 +12,8 @@ import { validateBattle, type BattleSession } from '../shared/battle-domain';
 import type { CFSubmission } from '../shared/domain';
 import { buildLearningPath } from '../shared/learning-path';
 import { knowledgeCards } from '../shared/knowledge';
+import { buildInsights } from '../shared/insights';
+import { monthlyReport } from '../shared/monthly-report';
 
 function fixture() {
   const store = new Store(':memory:');
@@ -404,5 +408,249 @@ test('HTTP battle routes persist progress and reject wrong account and version',
   } finally {
     await app.close();
     f.store.close();
+  }
+});
+
+test('custom theme battles map tags via the injected mapper and pick only matching catalog problems', async () => {
+  const store = new Store(':memory:');
+  store.activate('theme_tester');
+  let now = new Date('2026-10-23T04:00:00Z');
+  store.enrich(
+    'theme_tester',
+    [],
+    [],
+    [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        contestId: 7500 + i,
+        index: 'A',
+        name: 'Seg ' + i,
+        rating: 1200,
+        tags: ['segment tree'],
+      })),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        contestId: 7600 + i,
+        index: 'A',
+        name: 'DP ' + i,
+        rating: 1200,
+        tags: ['dp'],
+      })),
+    ],
+  );
+  const service = new BattleService(store, () => now, {
+    themeMapper: async (theme) => {
+      assert.equal(theme, '线段树');
+      return { tags: ['segment tree'], skillId: 'segment-tree' };
+    },
+  });
+  try {
+    const state = await service.startWithTheme({
+      handle: 'theme_tester',
+      theme: '线段树',
+      operationId: crypto.randomUUID(),
+    });
+    const s = state.session!;
+    assert.equal(s.custom?.theme, '线段树');
+    assert.deepEqual(s.custom?.tags, ['segment tree']);
+    assert.equal(s.skillId, 'segment-tree');
+    assert.ok(s.items[0].problem.name.startsWith('Seg'), '应从 segment tree 标签中选题');
+    assert.ok(s.items[0].problem.tags.includes('segment tree'));
+    // 战报行：主题、耗时、题数
+    const row = state.history.at(-1)!;
+    assert.equal(row.theme, '线段树');
+    assert.equal(row.problemCount, 1);
+    assert.ok(Number.isFinite(row.durationMinutes));
+    // 备份往返保留 custom
+    const backup = store.backup();
+    store.restore(backup);
+    assert.equal(store.externalGet<BattleSession>('battle:theme_tester', s.id)?.custom?.theme, '线段树');
+    store.close();
+  } catch (e) {
+    store.close();
+    throw e;
+  }
+});
+
+test('battle records expose theme, duration and counts, and summaries persist through backup', async () => {
+  const store = new Store(':memory:');
+  store.activate('record_tester');
+  let now = new Date('2026-10-23T04:00:00Z');
+  store.enrich(
+    'record_tester',
+    [],
+    [],
+    Array.from({ length: 6 }, (_, i) => ({
+      contestId: 7700 + i,
+      index: 'A',
+      name: 'R ' + i,
+      rating: 1100,
+      tags: ['dp'],
+    })),
+  );
+  const aiSummary = {
+    text: '本轮完成了 1 道动态规划题，节奏稳定。',
+    highlights: ['首题独立完成'],
+    advice: ['继续巩固状态设计'],
+  };
+  const service = new BattleService(store, () => now, { summarizer: async () => aiSummary });
+  const start = () =>
+    service.start({ handle: 'record_tester', skillId: 'dp', operationId: crypto.randomUUID() });
+  const cmd = (action: string, extra: Record<string, unknown> = {}) => {
+    const s = service.state().session!;
+    return service.command(s.id, {
+      handle: 'record_tester',
+      revision: s.revision,
+      operationId: crypto.randomUUID(),
+      action,
+      ...extra,
+    });
+  };
+  try {
+    start();
+    now = new Date(now.getTime() + 60000);
+    const item = service.state().session!.items.find((i) => i.outcome === 'current')!;
+    store.ingest('record_tester', [
+      {
+        id: 900,
+        contestId: item.problem.contestId,
+        creationTimeSeconds: now.getTime() / 1000,
+        problem: { ...item.problem, rating: item.problem.rating! },
+        verdict: 'OK',
+        programmingLanguage: 'GNU C++20',
+        author: { participantType: 'PRACTICE', members: [{ handle: 'record_tester' }] },
+      },
+    ]);
+    cmd('sync');
+    cmd('evaluate', { itemId: item.id, result: 'independent' });
+    now = new Date(now.getTime() + 300000);
+    cmd('end');
+    const records = service.records();
+    assert.equal(records.length, 1);
+    const row = records[0];
+    assert.equal(row.theme, '动态规划');
+    assert.equal(row.status, 'ended');
+    // AC 后自动出了下一题：发出 2 题（含未开做的当前题），通过 1 题
+    assert.equal(row.problemCount, 2);
+    assert.equal(row.solvedCount, 1);
+    assert.ok(row.durationMinutes >= 5);
+    assert.ok(!row.summary);
+    // 生成总结 → 持久化 → records 带 summary → 重新生成覆盖
+    const { summary } = await service.summarize(row.id, {
+      handle: 'record_tester',
+      operationId: crypto.randomUUID(),
+    });
+    assert.equal(summary.text, aiSummary.text);
+    assert.equal(savedSummary(store, 'record_tester', row.id)?.text, aiSummary.text);
+    assert.equal(service.records()[0].summary?.text, aiSummary.text);
+    // battleFacts 供 AI 使用
+    const session = store.externalGet<BattleSession>('battle:record_tester', row.id)!;
+    const facts = battleFacts(store, session);
+    assert.equal(facts.theme, '动态规划');
+    assert.equal(facts.accepted, 1);
+    assert.equal(facts.problemCount, 2);
+    assert.equal(facts.bestStreak, 1);
+    // 恢复备份时连战总结一起回来
+    const backup = store.backup();
+    store.restore(backup);
+    assert.equal(savedSummary(store, 'record_tester', row.id)?.text, aiSummary.text);
+    store.close();
+  } catch (e) {
+    store.close();
+    throw e;
+  }
+});
+
+test('theme mapping: local dictionary, AI fallback with vocabulary clamp and readable failures', async () => {
+  const local = themeMapping('线段树进阶');
+  assert.deepEqual(local?.tags, ['segment tree']);
+  assert.equal(local?.skillId, 'segment-tree');
+  assert.equal(themeMapping('不存在的东西 xyzzy')?.tags, undefined);
+  const store = new Store(':memory:');
+  store.activate('mapper_tester');
+  store.externalPut('ai', 'config', { baseUrl: 'https://fixture.invalid/v1', apiKey: 'k', model: 'm' });
+  try {
+    // 未配置 AI 且词典未命中 → 可读错误（这里传入 null completer 模拟未配置）
+    await assert.rejects(
+      () => mapTheme(store, null, '完全陌生的主题'),
+      /无法识别该主题/,
+    );
+    // AI 兜底：返回词表外的标签会被裁剪，非法 skillId 回落到最近知识卡
+    const fakeAi = {
+      complete: async () => JSON.stringify({ tags: ['segment tree', 'nonexistent-tag'], skillId: 'nope' }),
+    };
+    const mapped = await mapTheme(store, fakeAi, '完全陌生的主题');
+    assert.deepEqual(mapped.tags, ['segment tree']);
+    assert.ok(knowledgeCards.some((c) => c.id === mapped.skillId));
+    // parseThemeAi 空标签直接被 schema 拒绝
+    assert.throws(() => parseThemeAi('{"tags":[],"skillId":"dp"}'));
+    store.close();
+  } catch (e) {
+    store.close();
+    throw e;
+  }
+});
+
+test('insights and monthly report include battle records with theme, duration and counts', () => {
+  const store = new Store(':memory:');
+  store.activate('report_tester');
+  let now = new Date('2026-10-23T04:00:00Z');
+  store.enrich(
+    'report_tester',
+    [],
+    [],
+    Array.from({ length: 6 }, (_, i) => ({
+      contestId: 7800 + i,
+      index: 'A',
+      name: 'M ' + i,
+      rating: 1100,
+      tags: ['dp'],
+    })),
+  );
+  const service = new BattleService(store, () => now);
+  const start = () =>
+    service.start({ handle: 'report_tester', skillId: 'dp', operationId: crypto.randomUUID() });
+  const cmd = (action: string, extra: Record<string, unknown> = {}) => {
+    const s = service.state().session!;
+    return service.command(s.id, {
+      handle: 'report_tester',
+      revision: s.revision,
+      operationId: crypto.randomUUID(),
+      action,
+      ...extra,
+    });
+  };
+  try {
+    start();
+    now = new Date(now.getTime() + 60000);
+    const item = service.state().session!.items.find((i) => i.outcome === 'current')!;
+    store.ingest('report_tester', [
+      {
+        id: 901,
+        contestId: item.problem.contestId,
+        creationTimeSeconds: now.getTime() / 1000,
+        problem: { ...item.problem, rating: item.problem.rating! },
+        verdict: 'OK',
+        programmingLanguage: 'GNU C++20',
+        author: { participantType: 'PRACTICE', members: [{ handle: 'report_tester' }] },
+      },
+    ]);
+    cmd('sync');
+    now = new Date(now.getTime() + 120000);
+    cmd('end');
+    const insights = buildInsights(store, now);
+    assert.equal(insights.battles.total, 1);
+    assert.equal(insights.battles.totalProblems, 2);
+    assert.equal(insights.battles.solvedProblems, 1);
+    assert.equal(insights.battles.recent[0].theme, '动态规划');
+    assert.equal(insights.battles.recent[0].summaryText, null);
+    const report = monthlyReport(store, { month: '2026-10' }, now);
+    assert.equal(report.battles.length, 1);
+    assert.equal(report.battles[0].theme, '动态规划');
+    assert.equal(report.battles[0].problemCount, 2);
+    assert.equal(report.battles[0].solvedCount, 1);
+    assert.ok(report.battles[0].durationMinutes >= 0);
+    store.close();
+  } catch (e) {
+    store.close();
+    throw e;
   }
 });

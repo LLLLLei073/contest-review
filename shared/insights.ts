@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { CoreStore } from './core-store.js';
 import { localDay, problemKey } from './core-store.js';
-import { allBattleRewards } from './battle-service.js';
+import { allBattleRewards, battleNamespace } from './battle-service.js';
+import { battleSummaryNamespace } from './battle-summary.js';
+import { battleTheme, type BattleSession } from './battle-domain.js';
 import { masteryAreas, type MasteryArea } from './training.js';
 import { atcoderProfile, atcoderNamespace, atcoderHistorySchema } from './atcoder.js';
 import { luoguProfile, luoguNamespace, luoguUserSnapshotSchema } from './luogu.js';
@@ -60,6 +62,26 @@ export const insightsSchema = z.object({
       luogu: z.number().int().nonnegative(),
     }),
   ),
+  battles: z.object({
+    total: z.number().int().nonnegative(),
+    totalProblems: z.number().int().nonnegative(),
+    solvedProblems: z.number().int().nonnegative(),
+    totalMinutes: z.number().int().nonnegative(),
+    recent: z
+      .array(
+        z.object({
+          id: z.string(),
+          theme: z.string(),
+          status: z.enum(['active', 'paused', 'ended']),
+          startedAt: z.string(),
+          durationMinutes: z.number().int().nonnegative(),
+          problemCount: z.number().int().nonnegative(),
+          solvedCount: z.number().int().nonnegative(),
+          summaryText: z.string().nullable(),
+        }),
+      )
+      .max(10),
+  }),
 });
 export type InsightsPayload = z.infer<typeof insightsSchema>;
 
@@ -208,6 +230,30 @@ export function buildInsights(store: CoreStore, now = new Date()): InsightsPaylo
       if (index >= 0) difficulty[index][platform]++;
     }
   }
+  const battleSessions: BattleSession[] = cfHandle
+    ? store
+        .externalAll<BattleSession>(battleNamespace(cfHandle))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    : [];
+  const battleRows = battleSessions.map((s) => {
+    const closed = s.items.filter((i) => i.closedAt).at(-1)?.closedAt ?? s.updatedAt;
+    const playedUntil =
+      s.status === 'ended' ? s.updatedAt : s.items.some((i) => i.closedAt) ? closed : s.updatedAt;
+    const summary = store.externalGet<{ text: string }>(battleSummaryNamespace(cfHandle), s.id) ?? null;
+    return {
+      id: s.id,
+      theme: battleTheme(s),
+      status: s.status,
+      startedAt: s.createdAt,
+      durationMinutes: Math.max(
+        0,
+        Math.round((Date.parse(playedUntil) - Date.parse(s.createdAt)) / 60000),
+      ),
+      problemCount: s.items.length,
+      solvedCount: s.items.filter((i) => i.outcome === 'accepted').length,
+      summaryText: summary?.text ?? null,
+    };
+  });
   return insightsSchema.parse({
     generatedAt: now.toISOString(),
     accounts,
@@ -249,5 +295,12 @@ export function buildInsights(store: CoreStore, now = new Date()): InsightsPaylo
       atcoder: activity.get(month)?.atcoder ?? 0,
       luogu: activity.get(month)?.luogu ?? 0,
     })),
+    battles: {
+      total: battleRows.length,
+      totalProblems: battleRows.reduce((n, b) => n + b.problemCount, 0),
+      solvedProblems: battleRows.reduce((n, b) => n + b.solvedCount, 0),
+      totalMinutes: battleRows.reduce((n, b) => n + b.durationMinutes, 0),
+      recent: battleRows.slice(0, 10),
+    },
   });
 }

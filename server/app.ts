@@ -5,6 +5,8 @@ import { growthRoute } from '../shared/growth.js';
 import { LearningService } from '../shared/learning-service.js';
 import { PlanningService } from '../shared/planning-service.js';
 import { BattleService } from '../shared/battle-service.js';
+import { mapTheme } from '../shared/battle-theme.js';
+import { generateBattleSummary } from '../shared/battle-summary.js';
 import { monthlyReport } from '../shared/monthly-report.js';
 import staticPlugin from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -340,11 +342,18 @@ export async function buildApp(
   });
   app.get('/api/sync', async () => store.latestJob(store.active()));
   app.get('/api/training/day', async () => store.combinedTrainingDay());
-  app.get('/api/training/battle', async () => new BattleService(store).state());
-  app.get<{ Params: { id: string } }>('/api/training/battle/:id', async (req) => new BattleService(store).state(req.params.id));
-  app.post('/api/training/battle', async (req) => new BattleService(store).start(req.body));
-  app.post<{ Params: { id: string } }>('/api/training/battle/:id', async (req) =>
-    new BattleService(store).route(req.params.id, 'POST', req.body, training, cf,
+  const battle = () =>
+    new BattleService(store, undefined, {
+      themeMapper: (theme) => mapTheme(store, aiReviewer, theme),
+      summarizer: (session) => generateBattleSummary(store, aiReviewer, session),
+    });
+  app.get('/api/training/battle', async () => battle().state());
+  app.get('/api/training/battle/records', async () => battle().records());
+  app.get<{ Params: { '*': string } }>('/api/training/battle/*', async (req) =>
+    battle().route(req.params['*'] ?? '', 'GET', undefined, training, cf, () => true));
+  app.post('/api/training/battle', async (req) => battle().start(req.body));
+  app.post<{ Params: { '*': string } }>('/api/training/battle/*', async (req) =>
+    battle().route(req.params['*'] ?? '', 'POST', req.body, training, cf,
       () => !!sync.running || !!analysis.running || hub.isBusy()));
   app.get('/api/training/weekly', async () => store.weeklyProgress());
   app.put('/api/training/weekly', async (req) => store.saveWeeklyGoal(req.body));

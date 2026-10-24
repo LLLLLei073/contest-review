@@ -412,3 +412,93 @@ test('future plan approval applies the exact generated preview without another m
     f.store.close();
   }
 });
+
+test('bad planning_preview arguments are repaired in the tool layer instead of English rejection', async () => {
+  const f = fixture((b) =>
+    b.messages.at(-1)?.role === 'tool'
+      ? { role: 'assistant', content: '已基于真实计划数据完成预览。' }
+      : {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'plan-1',
+              type: 'function',
+              function: { name: 'planning_preview', arguments: '{"date":"明天","budget":"60"}' },
+            },
+          ],
+        },
+  );
+  try {
+    const s = await session(f.service);
+    const events = await run(f.service, s.id, '帮我看看明天的计划');
+    assert.equal(events.at(-1)?.type, 'complete');
+    assert.ok(events.some((e) => e.type === 'tool-start' && e.name === '未来计划预览'));
+    assert.ok(!events.some((e) => e.type === 'error'));
+    const toolRound = f.requests[1].messages.find((m) => m.role === 'tool');
+    assert.ok(toolRound, '工具结果应回传给模型');
+    assert.ok(!String(toolRound.content).includes('did not match expected schema'));
+  } finally {
+    f.store.close();
+  }
+});
+
+test('double encoded tool input is unwrapped once and unparseable input fails with a Chinese error', async () => {
+  const inner = JSON.stringify({ mode: 'focus', categories: ['数学'] });
+  const f = fixture((b) =>
+    b.messages.at(-1)?.role === 'tool'
+      ? { role: 'assistant', content: '周目标调整方案已生成，等待你确认。' }
+      : {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'weekly-1',
+              type: 'function',
+              function: {
+                name: 'propose_change',
+                arguments: JSON.stringify({ action: 'weekly', input: inner }),
+              },
+            },
+          ],
+        },
+  );
+  try {
+    const s = await session(f.service);
+    const events = await run(f.service, s.id, '把本周目标调成数学');
+    assert.equal(events.at(-1)?.type, 'complete');
+    assert.ok(events.some((e) => e.type === 'proposal'), '双重编码的 input 应解开后正常生成提案');
+  } finally {
+    f.store.close();
+  }
+  const broken = fixture((b) =>
+    b.messages.at(-1)?.role === 'tool'
+      ? { role: 'assistant', content: '参数有误，我基于已有信息说明。' }
+      : {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'weekly-2',
+              type: 'function',
+              function: {
+                name: 'propose_change',
+                arguments: JSON.stringify({ action: 'weekly', input: 'not-json' }),
+              },
+            },
+          ],
+        },
+  );
+  try {
+    const s = await session(broken.service);
+    const events = await run(broken.service, s.id, '调整周目标');
+    assert.equal(events.at(-1)?.type, 'complete');
+    const end = events.find((e) => e.type === 'tool-end' && e.name === '操作方案');
+    assert.ok(end && 'text' in end && String(end.text).includes('input 需要是一个 JSON 对象'));
+    const toolRound = broken.requests[1].messages.find((m) => m.role === 'tool');
+    assert.ok(toolRound && String(toolRound.content).includes('请直接基于已获取的信息回答'));
+    assert.ok(!String(toolRound.content).includes('did not match expected schema'));
+  } finally {
+    broken.store.close();
+  }
+});

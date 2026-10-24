@@ -3,18 +3,22 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, settings } from '../api';
 import { knowledgeCards } from '../../shared/knowledge';
-import type { BattleState } from '../../shared/battle-service';
+import type { BattleRecord, BattleState } from '../../shared/battle-service';
 
 const route = useRoute();
 const state = ref<BattleState>();
 const skillId = ref(
   knowledgeCards.some((c) => c.id === route.query.skill) ? String(route.query.skill) : 'simulation',
 );
+const theme = ref('');
 const error = ref(''),
   notice = ref(''),
   busy = ref(false),
   minimum = ref(1000),
   maximum = ref(1300);
+const records = ref<BattleRecord[]>(),
+  recordsError = ref(''),
+  recordsBusy = ref(false);
 const session = computed(() => state.value?.session);
 const current = computed(() => session.value?.items.find((i) => i.outcome === 'current'));
 const pending = computed(
@@ -34,6 +38,11 @@ const label = (value: string | null) =>
     accepted: '已 AC · 待评价',
     current: '进行中',
   })[value ?? 'accepted'];
+const themeOf = (s: { skillId: string; custom?: { theme: string } | null }) =>
+  s.custom?.theme || title(s.skillId);
+const recordStatus = (status: string) =>
+  ({ active: '进行中', paused: '已中断', ended: '已结束' })[status] ?? status;
+const summaryBusy = ref('');
 let alive = true,
   generation = 0,
   timer: ReturnType<typeof setInterval> | undefined;
@@ -52,6 +61,17 @@ async function load(id?: string) {
     if (alive && generation === token) error.value = (e as Error).message;
   }
 }
+async function loadRecords() {
+  recordsBusy.value = true;
+  recordsError.value = '';
+  try {
+    records.value = await api<BattleRecord[]>('/training/battle/records');
+  } catch (e) {
+    if (alive) recordsError.value = (e as Error).message;
+  } finally {
+    recordsBusy.value = false;
+  }
+}
 async function start() {
   if (busy.value) return;
   busy.value = true;
@@ -59,22 +79,64 @@ async function start() {
   notice.value = '';
   const handle = settings.value.activeHandle,
     token = ++generation;
+  const body = theme.value.trim()
+    ? { handle, theme: theme.value.trim(), operationId: crypto.randomUUID() }
+    : { handle, skillId: skillId.value, operationId: crypto.randomUUID() };
   try {
-    const next = await api<BattleState>('/training/battle', {
-      handle,
-      skillId: skillId.value,
-      operationId: crypto.randomUUID(),
-    });
+    const next = await api<BattleState>('/training/battle', body);
     if (alive && token === generation && handle === settings.value.activeHandle) {
       state.value = next;
       minimum.value = next.session!.minimum;
       maximum.value = next.session!.maximum;
+      notice.value = theme.value.trim() ? '已按主题完成选题，开始连战。' : '';
+      theme.value = '';
     }
   } catch (e) {
     if (alive && token === generation) error.value = (e as Error).message;
   } finally {
     if (token === generation) busy.value = false;
   }
+}
+async function summarize(id: string) {
+  summaryBusy.value = id;
+  try {
+    await api('/training/battle/' + id + '/summarize', {
+      handle: settings.value.activeHandle,
+      operationId: crypto.randomUUID(),
+    });
+    notice.value = '连战总结已生成，可在下方战报中查看。';
+  } catch (e) {
+    if (alive) recordsError.value = (e as Error).message;
+  } finally {
+    summaryBusy.value = '';
+    await loadRecords();
+  }
+}
+/** 结束本轮并自动生成 AI 总结；被中断的场次也可从战报中一键补结。 */
+async function endAndSummarize(id?: string) {
+  if (id && id !== session.value?.id) {
+    recordsBusy.value = true;
+    try {
+      const record = records.value?.find((r) => r.id === id);
+      await api('/training/battle/' + id, {
+        handle: settings.value.activeHandle,
+        revision: record?.revision ?? 0,
+        operationId: crypto.randomUUID(),
+        action: 'end',
+      });
+    } catch (e) {
+      recordsError.value = (e as Error).message;
+      recordsBusy.value = false;
+      return;
+    }
+    recordsBusy.value = false;
+  } else {
+    await act('end');
+    if (error.value) return;
+    id = session.value!.id;
+  }
+  await summarize(id);
+  await load();
 }
 async function act(action: string, extra: Record<string, unknown> = {}, silent = false) {
   const s = session.value;
@@ -130,6 +192,7 @@ watch(
     error.value = '';
     notice.value = '';
     void load();
+    void loadRecords();
   },
 );
 onMounted(async () => {
@@ -138,6 +201,7 @@ onMounted(async () => {
   timer = setInterval(check, 30000);
   document.addEventListener('visibilitychange', check);
   window.addEventListener('focus', check);
+  void loadRecords();
 });
 onBeforeUnmount(() => {
   alive = false;
@@ -170,15 +234,24 @@ onBeforeUnmount(() => {
   <template v-else>
     <section v-if="!session || session.status === 'ended'" class="panel battle-panel battle-start">
       <div>
-        <h2>选择这次要练的知识点</h2>
-        <p class="subtle">按你的当前难度推荐，优先未做过的题目。</p>
+        <h2>选择这次要练的内容</h2>
+        <p class="subtle">按你的当前难度推荐，优先未做过的题目。也可以输入任意主题，由 AI 映射到题库标签。</p>
       </div>
       <label
         >连战知识点<select v-model="skillId">
           <option v-for="card in knowledgeCards" :key="card.id" :value="card.id">{{ card.title }}</option>
         </select></label
       >
-      <button :disabled="busy || !!state?.activeId" @click="start">开始连战</button>
+      <label
+        >或输入自定义主题<input
+          v-model="theme"
+          maxlength="60"
+          placeholder="例如：线段树、期望 DP、二分答案"
+          :disabled="busy"
+      /></label>
+      <button :disabled="busy || !!state?.activeId" @click="start">
+        {{ busy && theme.trim() ? '正在解析主题…' : '开始连战' }}
+      </button>
       <button v-if="state?.activeId" class="small-button" @click="load(state.activeId)">
         返回进行中的连战
       </button>
@@ -188,7 +261,10 @@ onBeforeUnmount(() => {
         <div class="battle-heading">
           <div>
             <span class="eyebrow"
-              >{{ title(session.skillId) }} · {{ session.minimum }}–{{ session.maximum }}</span
+              >{{ themeOf(session) }} · {{ session.minimum }}–{{ session.maximum
+              }}<template v-if="session.custom">
+                · 主题连战（知识点：{{ title(session.skillId) }}）</template
+              ></span
             >
             <h2 id="battle-title">
               {{
@@ -210,7 +286,10 @@ onBeforeUnmount(() => {
           <p class="subtle">
             {{ current.problem.key.replace(':', '') }} · 难度 {{ current.problem.rating }} · 匹配标签：{{
               current.problem.tags
-                .filter((t) => knowledgeCards.find((c) => c.id === session!.skillId)!.tags.includes(t))
+                .filter((t) =>
+                  (session!.custom?.tags ??
+                    knowledgeCards.find((c) => c.id === session!.skillId)!.tags).includes(t),
+                )
                 .join(' / ')
             }}
           </p>
@@ -262,7 +341,13 @@ onBeforeUnmount(() => {
           >
             记录未完成
           </button>
-          <button class="small-button" :disabled="busy" @click="act('end')">结束本轮</button>
+          <button
+            class="small-button"
+            :disabled="busy || summaryBusy === session.id"
+            @click="endAndSummarize()"
+          >
+            {{ summaryBusy === session.id ? '正在生成总结…' : '结束本轮并生成总结' }}
+          </button>
         </div>
       </section>
       <section v-if="pending.length" class="panel battle-panel battle-evaluation" aria-label="补充独立评价">
@@ -331,26 +416,74 @@ onBeforeUnmount(() => {
         </div>
       </details>
     </template>
-    <details class="panel battle-panel">
-      <summary>连战规则与历史场次</summary>
+    <section class="panel battle-panel battle-archive" aria-label="连战战报">
+      <div class="battle-heading">
+        <h2>连战战报</h2>
+        <button class="small-button" :disabled="recordsBusy" @click="loadRecords">
+          {{ recordsBusy ? '刷新中…' : '刷新战报' }}
+        </button>
+      </div>
       <p class="small subtle">
-        连续独立完成的加成从 1.1× 递增至 1.5×。跳过、记录失败或使用提示会重置。统计评分按 70 + 15 ×
-        倍率计入目标领域；BKT 学习转移率为 0.05 ×
-        倍率，属于未校准的训练奖励参数。学习路径仍需三道不同题目的独立验证。网页关闭后不自动检查，重新打开可继续。
+        每轮连战（含被中断的场次）都会自动归入战报：主题、耗时与题目数量一目了然；结束的场次自动生成 AI 总结。
+        连续独立完成的加成从 1.1× 递增至 1.5×，跳过、记录失败或使用提示会重置；奖励计入统计掌握度与知识掌握概率。
       </p>
-      <label v-if="state?.history.length"
-        >历史连战<select
-          :value="session?.id"
-          :disabled="busy"
-          @change="load(($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="s in state.history" :key="s.id" :value="s.id">
-            {{ title(s.skillId) }} · {{ new Date(s.createdAt).toLocaleString() }} ·
-            {{ s.status === 'ended' ? '已结束' : '进行中' }}
-          </option>
-        </select></label
-      >
-    </details>
+      <p v-if="recordsError" role="alert" class="alert error">{{ recordsError }}</p>
+      <p v-else-if="!records?.length" class="quiet-empty">
+        还没有连战记录：选一个知识点或输入主题开始第一轮。
+      </p>
+      <ol v-else class="battle-records">
+        <li v-for="r in records" :key="r.id">
+          <div class="battle-record-head">
+            <strong>{{ r.theme }}</strong>
+            <span class="badge" :data-status="r.status">{{ recordStatus(r.status) }}</span>
+          </div>
+          <p class="small subtle">
+            {{ new Date(r.createdAt).toLocaleString() }} · 耗时 {{ r.durationMinutes }} 分钟 ·
+            {{ r.problemCount }} 题 / AC {{ r.solvedCount }}
+            <template v-if="r.pendingCount"> · {{ r.pendingCount }} 题待评价</template>
+          </p>
+          <details v-if="r.summary" class="battle-summary">
+            <summary>AI 总结</summary>
+            <p>{{ r.summary.text }}</p>
+            <ul v-if="r.summary.highlights.length">
+              <li v-for="h in r.summary.highlights" :key="h">{{ h }}</li>
+            </ul>
+            <ul v-if="r.summary.advice.length" class="battle-advice">
+              <li v-for="a in r.summary.advice" :key="a">{{ a }}</li>
+            </ul>
+            <button
+              class="small-button"
+              :disabled="summaryBusy === r.id"
+              @click="summarize(r.id)"
+            >
+              {{ summaryBusy === r.id ? '重新生成中…' : '重新生成总结' }}
+            </button>
+          </details>
+          <p v-else-if="r.status !== 'active'" class="small subtle">尚未生成 AI 总结。</p>
+          <div class="battle-actions">
+            <button v-if="r.id !== session?.id" class="small-button" @click="load(r.id)">
+              查看详情
+            </button>
+            <button
+              v-if="r.status === 'paused' && r.id !== session?.id"
+              class="small-button"
+              :disabled="recordsBusy || summaryBusy === r.id"
+              @click="endAndSummarize(r.id)"
+            >
+              {{ summaryBusy === r.id ? '正在生成总结…' : '结束并生成总结' }}
+            </button>
+            <button
+              v-if="!r.summary && r.status === 'ended' && r.id !== session?.id"
+              class="small-button"
+              :disabled="summaryBusy === r.id"
+              @click="summarize(r.id)"
+            >
+              {{ summaryBusy === r.id ? '生成中…' : '生成总结' }}
+            </button>
+          </div>
+        </li>
+      </ol>
+    </section>
   </template>
 </template>
 
@@ -424,6 +557,48 @@ onBeforeUnmount(() => {
   list-style: none;
   padding: 0;
   margin-bottom: 0;
+}
+.battle-records {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.battle-records li {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+.battle-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.battle-records .battle-actions {
+  gap: 8px;
+}
+.battle-summary {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.battle-summary summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--accent);
+}
+.battle-summary p {
+  margin: 10px 0;
+  line-height: 1.7;
+}
+.battle-summary ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.battle-advice {
+  color: var(--muted);
 }
 .battle-history li {
   display: flex;
