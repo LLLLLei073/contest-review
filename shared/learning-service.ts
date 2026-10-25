@@ -117,7 +117,7 @@ export class LearningService {
       id: 'knowledge:' + k.id,
       title: k.title,
       content: k.content,
-      aliases: k.aliases,
+      aliases: [k.category, ...k.aliases, ...k.tags],
       url: '/knowledge?card=' + k.id,
       excerpt: '',
       fingerprint: fingerprint(k.content),
@@ -150,7 +150,12 @@ export class LearningService {
           id: 'experience:' + r.id,
           title: r.title,
           content: r.content,
-          aliases: r.knowledgeIds,
+          aliases: [
+            ...r.knowledgeIds,
+            ...knowledgeCards
+              .filter((k) => r.knowledgeIds.includes(k.id))
+              .flatMap((k) => [k.title, k.category, ...k.aliases, ...k.tags]),
+          ],
           url: '/knowledge?experience=' + r.id,
           excerpt: '',
           fingerprint: fingerprint(r.content),

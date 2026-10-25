@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
-import { api, notify } from '../api';
+import { useRoute, useRouter } from 'vue-router';
+import { api, notify, settings } from '../api';
 import { useLearningState } from '../learningState';
 import { useSection } from '../sections';
 import Markdown from '../components/Markdown.vue';
 import KnowledgeReader from '../components/knowledge/KnowledgeReader.vue';
 import KnowledgeGraph from '../components/knowledge/KnowledgeGraph.vue';
 import { categoryNames } from '../../shared/training';
+import { matchesKnowledgeQuery, normalizeKnowledgeQuery } from '../../shared/knowledge';
 import type { LearningService } from '../../shared/learning-service';
 import type { ExperienceCard, Citation } from '../../shared/learning-domain';
 const route = useRoute();
+const router = useRouter();
 const session = useLearningState();
 const { state, busy, error, message, run } = session;
 const graph = ref<ReturnType<LearningService['graph']>>();
@@ -22,26 +24,45 @@ const selected = ref<ExperienceCard>(),
   category = ref('all'),
   focus = ref('');
 const cardStatus = ref('all');
-const filteredCards = computed(() =>
-  cards.value.filter(
-    (c) =>
-      cardStatus.value === 'all' ||
-      (cardStatus.value === 'stale' && !c.sourceValid) ||
-      (cardStatus.value === 'confirmed' && c.confirmed && c.sourceValid) ||
-      (cardStatus.value === 'draft' && !c.confirmed),
-  ),
-);
+const routeNotice = ref('');
+const searchLoading = ref(false),
+  searchError = ref(''),
+  searchedQuery = ref('');
+const drafts = new Map<string, ExperienceCard>();
 const records = computed(() => state.value?.records ?? []);
 const cards = computed(() =>
   records.value.filter((r): r is ExperienceCard & { sourceValid: boolean } => r.kind === 'card'),
 );
+const confirmedCount = computed(() => cards.value.filter((c) => c.confirmed && c.sourceValid).length);
+const allKnowledge = computed(() => state.value?.knowledge ?? []);
+const linkedKnowledge = (card: ExperienceCard) =>
+  allKnowledge.value.filter((k) => card.knowledgeIds.includes(k.id));
+const filteredCards = computed(() =>
+  cards.value.filter((c) => {
+    const knowledge = linkedKnowledge(c);
+    return (
+      (cardStatus.value === 'all' ||
+        (cardStatus.value === 'stale' && !c.sourceValid) ||
+        (cardStatus.value === 'confirmed' && c.confirmed && c.sourceValid) ||
+        (cardStatus.value === 'draft' && !c.confirmed)) &&
+      (category.value === 'all' || knowledge.some((k) => k.category === category.value)) &&
+      matchesKnowledgeQuery(
+        c.title + ' ' + c.content,
+        query.value,
+        knowledge.flatMap((k) => [k.title, k.category, ...k.aliases, ...k.tags]),
+      )
+    );
+  }),
+);
 const library = computed(() =>
-  (state.value?.knowledge ?? []).filter(
+  allKnowledge.value.filter(
     (k) =>
       (category.value === 'all' || k.category === category.value) &&
-      (k.title + k.content + k.aliases.join(' ')).toLowerCase().includes(query.value.toLowerCase()),
+      matchesKnowledgeQuery(k.title + ' ' + k.content, query.value, [k.category, ...k.aliases, ...k.tags]),
   ),
 );
+const owner = () =>
+  [settings.value.activeHandle, settings.value.activeAtcoder, settings.value.xcpcPlayer?.key].join(':');
 let graphSerial = 0,
   searchSerial = 0,
   alive = true;
@@ -51,54 +72,144 @@ onBeforeUnmount(() => {
   graphSerial++;
   searchSerial++;
 });
+function clearSearch() {
+  searchSerial++;
+  results.value = [];
+  searchedQuery.value = '';
+  searchError.value = '';
+  searchLoading.value = false;
+}
+function clearFilters() {
+  query.value = '';
+  category.value = 'all';
+  cardStatus.value = 'all';
+  clearSearch();
+}
+async function openExperience(id: string) {
+  if (!alive) return;
+  const card = cards.value.find((c) => c.id === id);
+  if (!card) {
+    routeNotice.value = '经验卡不存在或已删除，请从个人经验卡列表重新选择。';
+    section.value = 'library';
+    return;
+  }
+  if (selected.value && selected.value.id !== id)
+    drafts.set(selected.value.id, JSON.parse(JSON.stringify(selected.value)));
+  if (selected.value?.id !== id) selected.value = JSON.parse(JSON.stringify(drafts.get(id) ?? card));
+  routeNotice.value = '';
+  section.value = 'library';
+  await nextTick();
+  if (alive)
+    document.getElementById('experience-editor')?.scrollIntoView({ block: 'center', behavior: 'instant' });
+}
+async function navigateExperience(id: string) {
+  await router.push({ path: '/knowledge', query: { ...route.query, view: 'library', experience: id } });
+  await openExperience(id);
+}
 async function load() {
   await session.load();
-  if (route.query.experience && !selected.value) {
-    const card = cards.value.find((c) => c.id === route.query.experience);
-    if (card) {
-      selected.value = JSON.parse(JSON.stringify(card));
-      await nextTick();
-      document.getElementById('experience-editor')?.scrollIntoView({ block: 'center' });
-    }
+  if (!alive || error.value) return;
+  if (typeof route.query.experience === 'string') await openExperience(route.query.experience);
+  revealCard();
+}
+function revealCard() {
+  const id = route.query.card;
+  if (typeof id !== 'string' || !allKnowledge.value.length) return;
+  if (!allKnowledge.value.some((c) => c.id === id)) {
+    routeNotice.value = '知识点不存在，已显示当前可用的知识目录。';
+    return;
+  }
+  routeNotice.value = '';
+  if (!library.value.some((c) => c.id === id)) {
+    query.value = '';
+    category.value = 'all';
   }
 }
 async function loadGraph() {
-  const serial = ++graphSerial;
+  const serial = ++graphSerial,
+    scope = owner();
   graphLoading.value = true;
   error.value = '';
   try {
     const next = await api<ReturnType<LearningService['graph']>>('/learning/graph');
-    if (serial === graphSerial) graph.value = next;
+    if (alive && serial === graphSerial && scope === owner()) graph.value = next;
   } catch (e) {
-    if (serial === graphSerial) error.value = (e as Error).message;
+    if (alive && serial === graphSerial && scope === owner()) error.value = (e as Error).message;
   } finally {
-    if (serial === graphSerial) graphLoading.value = false;
+    if (alive && serial === graphSerial) graphLoading.value = false;
   }
 }
 async function search() {
-  const serial = ++searchSerial;
+  const term = normalizeKnowledgeQuery(query.value);
+  if (!term) {
+    clearSearch();
+    return;
+  }
+  const serial = ++searchSerial,
+    scope = owner();
+  searchLoading.value = true;
+  searchError.value = '';
+  results.value = [];
+  searchedQuery.value = '';
   try {
-    const next = await api<Citation[]>('/learning/search', { query: query.value });
-    if (alive && serial === searchSerial) results.value = next;
+    const next = await api<Citation[]>('/learning/search', { query: term });
+    if (alive && serial === searchSerial && scope === owner()) {
+      results.value = next;
+      searchedQuery.value = term;
+    }
   } catch (e) {
-    if (alive && serial === searchSerial) error.value = (e as Error).message;
+    if (alive && serial === searchSerial && scope === owner()) searchError.value = (e as Error).message;
+  } finally {
+    if (alive && serial === searchSerial) searchLoading.value = false;
   }
 }
 async function saveCard() {
-  if (selected.value && (await run('card', selected.value))) {
-    selected.value = undefined;
+  if (!selected.value) return;
+  const card: ExperienceCard = JSON.parse(JSON.stringify(selected.value)),
+    scope = owner();
+  drafts.set(card.id, card);
+  if ((await run('card', card)) && alive && scope === owner()) {
+    if (JSON.stringify(drafts.get(card.id)) === JSON.stringify(card)) drafts.delete(card.id);
+    if (JSON.stringify(selected.value) === JSON.stringify(card)) selected.value = undefined;
+    clearSearch();
     notify('经验卡已保存');
   }
+}
+function cancelEdit() {
+  if (selected.value) drafts.delete(selected.value.id);
+  selected.value = undefined;
+}
+async function updateCard(action: 'draft' | 'delete', card: ExperienceCard) {
+  const scope = owner();
+  const result = await run(
+    action,
+    action === 'delete' ? { id: card.id } : { problemKey: card.problemKey, sourceId: card.sourceId },
+  );
+  if (result && alive && scope === owner()) {
+    clearSearch();
+    if (action === 'delete') {
+      drafts.delete(card.id);
+      if (selected.value?.id === card.id) selected.value = undefined;
+    }
+  }
+}
+async function askAbout(value: string) {
+  question.value = value;
+  section.value = 'ask';
+  await nextTick();
+  document.getElementById('knowledge-question')?.focus();
 }
 onMounted(() => {
   void load();
 });
+watch(query, clearSearch, { flush: 'sync' });
 watch(
   () => route.query.card,
   () => {
-    category.value = 'all';
-    query.value = '';
-    section.value = 'library';
+    if (route.query.card) {
+      revealCard();
+      section.value = 'library';
+    }
   },
 );
 watch(
@@ -110,10 +221,21 @@ watch(
 );
 watch(
   () => route.query.experience,
-  () => {
-    void load();
+  (id) => {
+    if (typeof id === 'string' && state.value) void openExperience(id);
   },
 );
+watch(owner, () => {
+  clearSearch();
+  drafts.clear();
+  selected.value = undefined;
+  graph.value = undefined;
+  state.value = undefined;
+  graphSerial++;
+  routeNotice.value = '';
+  void load();
+  if (section.value === 'graph') void loadGraph();
+});
 </script>
 <template>
   <div class="page-head">
@@ -121,7 +243,7 @@ watch(
       <div class="eyebrow">LEARN / CONNECT / VERIFY</div>
       <h1>知识中心</h1>
       <RouterLink class="astra-context-link" to="/companion">与星澪讨论知识</RouterLink>
-      <p class="subtle">把每次复盘变成下次能用上的经验。</p>
+      <p class="subtle">从算法原理出发，连接自己的复盘，再用练习验证。</p>
     </div>
   </div>
   <div v-if="error" role="alert" class="alert error">
@@ -130,6 +252,7 @@ watch(
   <p v-if="session.loading.value" role="status">正在读取知识与经验…</p>
   <p v-if="graphLoading" role="status">正在读取知识图谱…</p>
   <div v-if="message" role="status" class="alert">{{ message }}</div>
+  <p v-if="routeNotice" role="status" class="alert">{{ routeNotice }}</p>
   <nav class="content-switcher learning-tabs" aria-label="知识中心内容">
     <button
       v-for="s in [
@@ -144,42 +267,74 @@ watch(
       {{ s.label }}
     </button>
   </nav>
-  <p v-if="state && !state.configured" class="alert">
+  <p v-if="state && !state.configured" class="alert knowledge-ai-note">
     未配置 AI。仍可浏览知识卡、搜索个人资料和查看历史；生成内容请先到<RouterLink to="/settings?view=ai"
       >设置与数据</RouterLink
     >配置接口。
   </p>
   <section v-show="section === 'library'" class="learning-stack">
-    <div class="learning-controls">
-      <label
-        >搜索知识与经验<input
-          v-model="query"
-          @keyup.enter="search"
-          placeholder="例如：二分边界、动态规划" /></label
-      ><button class="button" @click="search">检索资料</button
-      ><label
-        >算法领域<select v-model="category">
-          <option value="all">全部领域</option>
-          <option v-for="c in categoryNames" :key="c">{{ c }}</option>
-        </select></label
-      >
-    </div>
-    <div v-for="r in results" :key="r.id" class="panel learning-card">
-      <RouterLink :to="r.url">{{ r.title }}</RouterLink>
-      <p class="small subtle">
-        来源：{{
-          r.url.startsWith('/knowledge?card=')
-            ? '内置知识'
-            : r.url.includes('experience=')
-              ? '个人经验'
-              : '原始复盘'
-        }}
+    <div class="panel knowledge-discovery">
+      <div class="knowledge-overview">
+        <div>
+          <span class="eyebrow">YOUR ALGORITHM LIBRARY</span>
+          <h2>知识与经验库</h2>
+        </div>
+        <p>
+          <strong>{{ allKnowledge.length }}</strong> 个知识点<span> / </span
+          ><strong>{{ cards.length }}</strong> 张个人经验<span> / </span>{{ confirmedCount }} 张可用于问答
+        </p>
+      </div>
+      <form class="learning-controls knowledge-search" @submit.prevent="search">
+        <label
+          >搜索知识与经验<input
+            v-model="query"
+            type="search"
+            placeholder="知识名、别名或关键词，用空格组合" /></label
+        ><button class="button" :disabled="searchLoading || !query.trim()">
+          {{ searchLoading ? '正在检索…' : '检索资料' }}</button
+        ><label
+          >算法领域<select v-model="category">
+            <option value="all">全部领域</option>
+            <option v-for="c in categoryNames" :key="c">{{ c }}</option>
+          </select></label
+        >
+        <button type="button" class="small-button" @click="clearFilters">清空筛选</button>
+      </form>
+      <p class="small subtle filter-summary" aria-live="polite">
+        当前显示 {{ library.length }} 个知识点 ·
+        {{ filteredCards.length }} 张经验卡。输入即筛选；“检索资料”还会查找原始复盘与有效经验。
       </p>
-      <p>{{ r.excerpt }}</p>
     </div>
+    <p v-if="searchLoading" role="status" class="small subtle">正在检索内置知识、个人复盘与已确认经验…</p>
+    <p v-if="searchError" role="alert" class="alert error">
+      {{ searchError }} <button class="small-button" @click="search">重试检索</button>
+    </p>
+    <section v-if="searchedQuery" aria-label="检索结果" class="panel knowledge-results">
+      <div class="section-head">
+        <h2>“{{ searchedQuery }}”的资料</h2>
+        <span class="small subtle">{{ results.length }} 条相关来源 · 全部领域</span>
+      </div>
+      <p v-if="!results.length" class="quiet-empty">没有找到相关资料，试试知识别名或减少关键词。</p>
+      <div v-for="r in results" :key="r.id" class="knowledge-result">
+        <RouterLink :to="r.url">{{ r.title }}</RouterLink>
+        <p class="small subtle">
+          来源：{{
+            r.url.startsWith('/knowledge?card=')
+              ? '内置知识'
+              : r.url.includes('experience=')
+                ? '个人经验'
+                : '原始复盘'
+          }}
+        </p>
+        <p class="result-excerpt">{{ r.excerpt }}</p>
+      </div>
+    </section>
     <KnowledgeReader
       :cards="library"
-      :all="state?.knowledge ?? []"
+      :all="allKnowledge"
+      :experiences="cards"
+      @experience="navigateExperience"
+      @ask="askAbout"
       @graph="
         (id) => {
           section = 'graph';
@@ -187,75 +342,97 @@ watch(
         }
       "
     />
-    <h2>个人经验卡</h2>
-    <label
-      >经验状态<select v-model="cardStatus">
-        <option value="all">全部</option>
-        <option value="draft">草稿</option>
-        <option value="confirmed">已确认且来源有效</option>
-        <option value="stale">来源已失效</option>
-      </select></label
-    >
-    <p v-if="cards.length && !filteredCards.length" class="quiet-empty">当前状态没有经验卡。</p>
-    <p v-if="!cards.length" class="subtle">
-      从题目详情的“解题助手 → 经验沉淀”生成草稿，确认后才会用于算法问答和知识图谱。
-    </p>
-    <article v-for="c in filteredCards" :key="c.id" class="panel learning-card">
-      <div class="section-head">
-        <h3>{{ c.title }}</h3>
-        <span class="tag">{{ c.confirmed ? '已确认' : '草稿' }}</span>
-      </div>
-      <p v-if="!c.sourceValid" class="alert">来源已修改或删除，此卡当前不参与检索；请核对后重新保存确认。</p>
-      <Markdown :text="c.content" />
-      <div class="button-row">
-        <RouterLink :to="'/problems/' + encodeURIComponent(c.problemKey)">原始复盘</RouterLink
-        ><button class="small-button" @click="selected = JSON.parse(JSON.stringify(c))">编辑与确认</button
-        ><button
-          class="small-button"
-          :disabled="busy"
-          @click="run('draft', { problemKey: c.problemKey, sourceId: c.sourceId })"
-        >
-          刷新草稿</button
-        ><button class="small-button" :disabled="busy" @click="run('delete', { id: c.id })">
-          删除经验卡
-        </button>
-      </div>
-    </article>
-    <form
-      v-if="selected"
-      id="experience-editor"
-      class="panel learning-card learning-stack"
-      @submit.prevent="saveCard"
-    >
-      <h2>编辑经验卡</h2>
-      <label>标题<input v-model="selected.title" required /></label
-      ><label>经验内容<textarea v-model="selected.content" rows="8" /></label>
-      <div class="learning-checks">
-        <label v-for="k in state?.knowledge" :key="k.id"
-          ><input type="checkbox" :value="k.id" v-model="selected.knowledgeIds" />{{ k.title }}</label
+    <section class="knowledge-experiences learning-stack" aria-label="个人经验卡">
+      <div class="experience-heading">
+        <div>
+          <span class="eyebrow">FROM YOUR PRACTICE</span>
+          <h2>个人经验卡</h2>
+          <p class="small subtle">保留自己的判断、反例与教训。核对来源后再用于问答。</p>
+        </div>
+        <label
+          >经验状态<select v-model="cardStatus">
+            <option value="all">全部</option>
+            <option value="draft">草稿</option>
+            <option value="confirmed">已确认且来源有效</option>
+            <option value="stale">来源已失效</option>
+          </select></label
         >
       </div>
-      <label
-        ><input type="checkbox" v-model="selected.confirmed" />我已核对内容及关联知识点，允许用于检索</label
+      <p v-if="cards.length && !filteredCards.length" class="quiet-empty">
+        当前筛选没有经验卡，试试其他关键词、领域或状态。
+      </p>
+      <p v-if="!cards.length" class="subtle">
+        从题目详情的“解题助手 → 经验沉淀”生成草稿，确认后才会用于算法问答和知识图谱。
+      </p>
+      <article v-for="c in filteredCards" :key="c.id" class="panel learning-card">
+        <div class="section-head">
+          <h3>{{ c.title }}</h3>
+          <span class="tag">{{ !c.sourceValid ? '来源已失效' : c.confirmed ? '已确认' : '草稿' }}</span>
+        </div>
+        <p v-if="!c.sourceValid" class="alert">
+          来源已修改或删除，此卡当前不参与检索；请核对后重新保存确认。
+        </p>
+        <Markdown :text="c.content" />
+        <div class="experience-tags">
+          <RouterLink
+            v-for="k in linkedKnowledge(c)"
+            :key="k.id"
+            :to="{ path: '/knowledge', query: { view: 'library', card: k.id } }"
+            >{{ k.title }}</RouterLink
+          ><span v-if="!c.knowledgeIds.length" class="small subtle">尚未关联知识点</span>
+        </div>
+        <div class="button-row">
+          <RouterLink :to="'/problems/' + encodeURIComponent(c.problemKey)">原始复盘</RouterLink
+          ><button class="small-button" @click="navigateExperience(c.id)">编辑与确认</button
+          ><button class="small-button" :disabled="busy" @click="updateCard('draft', c)">刷新草稿</button
+          ><button class="small-button" :disabled="busy" @click="updateCard('delete', c)">删除经验卡</button>
+        </div>
+      </article>
+      <form
+        v-if="selected"
+        id="experience-editor"
+        class="panel learning-card learning-stack"
+        @submit.prevent="saveCard"
       >
-      <div class="button-row">
-        <button class="button" :disabled="busy">保存经验卡</button
-        ><button type="button" class="small-button" @click="selected = undefined">取消编辑</button>
-      </div>
-    </form>
+        <h2>编辑经验卡</h2>
+        <p class="small subtle">切换经验时，未保存的编辑会暂存在本页；离开知识中心前请保存。</p>
+        <label>标题<input v-model="selected.title" required maxlength="300" /></label
+        ><label>经验内容<textarea v-model="selected.content" rows="8" /></label>
+        <div class="learning-checks">
+          <label v-for="k in state?.knowledge" :key="k.id"
+            ><input type="checkbox" :value="k.id" v-model="selected.knowledgeIds" />{{ k.title }}</label
+          >
+        </div>
+        <label
+          ><input type="checkbox" v-model="selected.confirmed" />我已核对内容及关联知识点，允许用于检索</label
+        >
+        <div class="button-row">
+          <button class="button" :disabled="busy">保存经验卡</button
+          ><button type="button" class="small-button" @click="cancelEdit">取消编辑</button>
+        </div>
+      </form>
+    </section>
   </section>
   <section v-show="section === 'ask'" class="learning-stack">
     <form class="panel learning-card learning-stack" @submit.prevent="run('ask', { question })">
       <label
         >向算法助手提问<textarea
           v-model="question"
+          id="knowledge-question"
           rows="3"
           required
           maxlength="2000"
           placeholder="结合我的复盘，二分答案经常出错的原因是什么？"
-        /></label
-      ><button class="button" :disabled="busy">{{ busy ? '正在检索与回答…' : '检索并回答' }}</button>
+        />
+      </label>
+      <p class="small subtle">回答会区分资料依据与通用解释，可通过引用回到原始知识或复盘核对。</p>
+      <button class="button" :disabled="busy || !state?.configured || !question.trim()">
+        {{ busy ? '正在检索与回答…' : '检索并回答' }}
+      </button>
     </form>
+    <p v-if="!records.some((r) => r.kind === 'answer')" class="quiet-empty">
+      还没有问答记录。可从知识卡发起提问，结合自己的复盘查找原因。
+    </p>
     <article
       v-for="r in records
         .filter((r) => r.kind === 'answer')
@@ -289,6 +466,108 @@ watch(
 </template>
 
 <style scoped>
+.knowledge-ai-note {
+  display: block;
+  line-height: 1.8;
+}
+.knowledge-discovery,
+.knowledge-results {
+  padding: 24px;
+}
+.knowledge-overview,
+.experience-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.knowledge-overview h2,
+.experience-heading h2 {
+  margin: 6px 0 0;
+  font-size: 20px;
+}
+.knowledge-overview p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.knowledge-overview strong {
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.knowledge-overview p span {
+  color: var(--line);
+  margin: 0 8px;
+}
+.knowledge-search > label:first-child {
+  flex: 3;
+}
+.knowledge-search > label {
+  min-width: min(180px, 100%);
+  margin: 0;
+}
+.knowledge-search > button,
+.knowledge-experiences .button-row button {
+  font-size: 12px;
+}
+.filter-summary {
+  margin: 14px 0 0;
+  line-height: 1.7;
+}
+.knowledge-results h2 {
+  font-size: 17px;
+  margin: 0;
+}
+.knowledge-result {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.knowledge-result:last-child {
+  padding-bottom: 0;
+}
+.knowledge-result > a {
+  font-weight: 600;
+}
+.result-excerpt {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 7.2em;
+  overflow: auto;
+}
+.knowledge-experiences {
+  padding-top: 16px;
+}
+.experience-heading {
+  margin-bottom: 0;
+}
+.experience-heading p {
+  margin-bottom: 0;
+}
+.experience-heading label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 180px;
+}
+.experience-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.experience-tags a {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--accent-soft);
+  border-radius: 4px;
+  text-decoration: none;
+}
 .knowledge-answer-layout {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
@@ -300,6 +579,28 @@ watch(
   overflow-wrap: anywhere;
 }
 @media (max-width: 768px) {
+  .knowledge-discovery,
+  .knowledge-results {
+    padding: 18px;
+  }
+  .knowledge-overview,
+  .experience-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .knowledge-overview p {
+    margin: 0;
+  }
+  .knowledge-search {
+    gap: 12px;
+  }
+  .knowledge-search > label:first-child {
+    flex-basis: 100%;
+  }
+  .knowledge-search > label {
+    min-width: 100%;
+  }
   .knowledge-answer-layout {
     grid-template-columns: 1fr;
   }

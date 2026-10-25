@@ -1,5 +1,6 @@
 import { categoryNames, type CategoryName } from './training.js';
 import { fingerprint, type Citation } from './learning-domain.js';
+import { knowledgeGuides } from './knowledge-guides.js';
 
 export interface KnowledgeCard {
   id: string;
@@ -8,6 +9,7 @@ export interface KnowledgeCard {
   aliases: string[];
   tags: string[];
   prerequisites: string[];
+  summary: string;
   content: string;
 }
 const entries: [string, string, number, string[], string[], string[], string][] = [
@@ -146,7 +148,8 @@ export const knowledgeCards: KnowledgeCard[] = entries.map(
     aliases,
     tags,
     prerequisites,
-    content,
+    summary: knowledgeGuides[id]?.summary ?? content,
+    content: knowledgeGuides[id]?.content ?? content,
   }),
 );
 export function knowledgeFor(tags: string[]): string[] {
@@ -156,8 +159,17 @@ export interface SearchDocument extends Citation {
   content: string;
   aliases: string[];
 }
+export function normalizeKnowledgeQuery(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+export function matchesKnowledgeQuery(text: string, query: string, aliases: string[] = []): boolean {
+  const normalized = normalizeKnowledgeQuery(query);
+  if (!normalized) return true;
+  const searchable = normalizeKnowledgeQuery([text, ...aliases].join(' '));
+  return normalized.split(' ').every((term) => searchable.includes(term));
+}
 export function tokens(value: string): string[] {
-  const normalized = value.normalize('NFKC').toLowerCase();
+  const normalized = normalizeKnowledgeQuery(value);
   const words = normalized.match(/[a-z0-9_+]+|[\u3400-\u9fff]+/g) ?? [];
   return [
     ...new Set(
@@ -170,29 +182,37 @@ export function tokens(value: string): string[] {
   ];
 }
 export function searchDocuments(docs: SearchDocument[], query: string, limit = 8): Citation[] {
-  const terms = tokens(query);
+  const normalizedQuery = normalizeKnowledgeQuery(query),
+    terms = tokens(normalizedQuery);
   if (!terms.length) return [];
+  const groups = normalizedQuery
+    .split(' ')
+    .map(tokens)
+    .filter((group) => group.length);
   const expanded = new Set(terms);
   for (const k of knowledgeCards)
-    if ([k.title, ...k.aliases].some((a) => query.toLowerCase().includes(a.toLowerCase())))
+    if ([k.title, ...k.aliases].some((a) => normalizedQuery.includes(normalizeKnowledgeQuery(a))))
       for (const t of tokens([k.title, ...k.aliases].join(' '))) expanded.add(t);
   return docs
     .map((doc) => {
-      const title = doc.title.toLowerCase(),
-        content = doc.content.toLowerCase(),
-        aliases = doc.aliases.join(' ').toLowerCase();
+      const title = normalizeKnowledgeQuery(doc.title),
+        content = normalizeKnowledgeQuery(doc.content),
+        aliases = normalizeKnowledgeQuery(doc.aliases.join(' '));
+      const includes = (term: string) =>
+        title.includes(term) || aliases.includes(term) || content.includes(term);
+      const coverage = groups.filter((group) => group.some(includes)).length;
       const score = [...expanded].reduce(
         (n, t) =>
           n + (title.includes(t) ? 5 : 0) + (aliases.includes(t) ? 4 : 0) + (content.includes(t) ? 1 : 0),
         0,
       );
-      return { doc, score };
+      return { doc, content, score, coverage };
     })
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.doc.id.localeCompare(b.doc.id))
+    .sort((a, b) => b.coverage - a.coverage || b.score - a.score || a.doc.id.localeCompare(b.doc.id))
     .slice(0, limit)
-    .map(({ doc }) => {
-      const pos = [...expanded].map((t) => doc.content.toLowerCase().indexOf(t)).find((p) => p >= 0) ?? 0;
+    .map(({ doc, content }) => {
+      const pos = [...expanded].map((t) => content.indexOf(t)).find((p) => p >= 0) ?? 0;
       return {
         id: doc.id,
         title: doc.title,
