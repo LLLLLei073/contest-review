@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { mockCodeforces } from '../browser-fixture';
 function fixture() {
@@ -112,8 +113,8 @@ test('Astra chat, streamed tools, managed memory, account isolation and offline 
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(fixture())),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('astra_browser');
   await page.goto(target('/companion'));
   await expect(page.getByRole('heading', { name: '与星澪同行' })).toBeVisible();

@@ -2,7 +2,9 @@
 import { ref } from 'vue';
 import { Database, Download, Upload } from 'lucide-vue-next';
 import { api, notify, loadSettings, loadJob, job, recentChecks, browserMode } from '../../api';
+import { useConfirm } from '../../composables/useConfirm';
 import { backupSummary } from '../../../shared/backup-summary';
+const { confirmDialog } = useConfirm();
 const preview = ref<ReturnType<typeof backupSummary>>(),
   previewError = ref(''),
   previewLoading = ref(false);
@@ -52,7 +54,8 @@ async function selectFile(e: Event) {
 }
 async function restore() {
   if (!restoreFile.value) return;
-  if (!confirm('恢复将替换全部本地账号的数据。当前数据会先自动备份。确认恢复所选文件？')) return;
+  if (!(await confirmDialog('恢复将替换全部本地账号的数据。当前数据会先自动备份。确认恢复所选文件？')))
+    return;
   busy.value = true;
   error.value = '';
   try {
@@ -116,7 +119,9 @@ async function restore() {
         <div v-if="preview" class="backup-preview">
           <h3>待恢复文件概要 · v{{ preview.version }}</h3>
           <p>账号分区：{{ preview.profiles.join('、') || '无' }}。恢复将替换本机全部账号数据。</p>
-          <p>规划记录 {{ preview.planning }} · 引导复盘 {{ preview.workflows }} · 连战 {{ preview.battles }}</p>
+          <p>
+            规划记录 {{ preview.planning }} · 引导复盘 {{ preview.workflows }} · 连战 {{ preview.battles }}
+          </p>
           <details>
             <summary>记录数量</summary>
             <ul>
@@ -131,7 +136,8 @@ async function restore() {
     </div>
     <p v-if="restoreResult" class="alert success">恢复成功。原数据备份：{{ restoreResult }}</p>
     <p class="small subtle">
-      导出格式 v12，支持恢复 v1–v12。包含连战、算法偏好、路径、计划决策与引导进度；旧版应用可能无法读取新版备份。
+      导出格式 v12，支持恢复
+      v1–v12。包含连战、算法偏好、路径、计划决策与引导进度；旧版应用可能无法读取新版备份。
     </p>
     <button
       v-if="browserMode"

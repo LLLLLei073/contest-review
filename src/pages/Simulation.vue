@@ -3,8 +3,10 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useSection } from '../sections';
 import { useRoute } from 'vue-router';
 import { api, fullDay, notify, settings } from '../api';
+import { useConfirm } from '../composables/useConfirm';
 import type { CFContest } from '../../shared/domain';
 import type { SimulationEvent } from '../../shared/training-extras';
+const { confirmDialog } = useConfirm();
 
 type Report = {
   id: string;
@@ -103,7 +105,7 @@ async function record(problemKey: string, verdict: 'OK' | 'FAILED') {
   }
 }
 async function finish() {
-  if (!selected.value || !confirm('确定提前结束本场模拟赛？')) return;
+  if (!selected.value || !(await confirmDialog('确定提前结束本场模拟赛？'))) return;
   busy.value = true;
   try {
     selected.value = await api<Report>(`/training/simulations/${selected.value.id}`, { action: 'finish' });

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { learningReply } from '../learning-fixture';
 import type { CFSubmission } from '../../shared/domain';
@@ -88,8 +89,8 @@ test('learning loop: draft, confirm, RAG, graph, diagnosis, next-day agent, hint
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup())),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('learning_tester');
   await page.goto(info.project.name === 'pages' ? './#/problems/2000%3AA' : '/problems/2000%3AA');
   await page.getByRole('button', { name: '解题助手', exact: true }).click();

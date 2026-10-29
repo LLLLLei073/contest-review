@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router';
 import { Send, Square, Plus, Sparkles, Trash2, ArrowUpRight } from 'lucide-vue-next';
 import { api, settings, dataRevision, notify } from '../api';
+import { useConfirm } from '../composables/useConfirm';
 import { streamAgent } from '../agent';
 import { growth } from '../growth';
 import Companion from '../components/Companion.vue';
@@ -12,6 +13,7 @@ import SessionList from '../components/agent/SessionList.vue';
 import MemoryPanel from '../components/agent/MemoryPanel.vue';
 import GuidedReview from '../components/review/GuidedReview.vue';
 import type { AgentContext, AgentRecord, AgentEvent } from '../../shared/agent-domain';
+const { confirmDialog } = useConfirm();
 type Session = Extract<AgentRecord, { kind: 'session' }>;
 type Memory = Extract<AgentRecord, { kind: 'memory' }>;
 const route = useRoute();
@@ -227,7 +229,7 @@ async function removeMemory(id: string) {
 }
 async function removeSession() {
   if (busy.value || guidanceBusy.value || !selected.value) return;
-  if (!window.confirm('删除此会话及其消息？已保存的学习记录和长期记忆会保留。')) return;
+  if (!(await confirmDialog('删除此会话及其消息？已保存的学习记录和长期记忆会保留。'))) return;
   try {
     await api('/agent/session', { id: selected.value }, 'DELETE');
     selected.value = '';

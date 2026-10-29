@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { acceptConfirm } from './confirm';
 import { Store } from '../../../server/store';
 import { LearningService } from '../../../shared/learning-service';
 
@@ -58,8 +59,11 @@ export async function prepare(page: Page, pages: boolean) {
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
+  // 账号名恢复前后相同，profile-chip 会立即通过；必须等恢复真正提交完成，
+  // 否则紧随的深链跳转会读到旧数据（experience 卡 id 对不上）。
+  await expect(page.getByText(/恢复成功|备份恢复完成/).first()).toBeVisible();
   await expect(page.locator('.profile-chip')).toContainText('knowledge_reader');
   await page.goto(target(pages, '/knowledge'));
   await expect(page.getByLabel('搜索知识与经验')).toBeVisible();

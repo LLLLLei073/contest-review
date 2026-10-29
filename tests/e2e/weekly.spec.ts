@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import type { CFSubmission } from '../../shared/domain';
 
@@ -52,8 +53,8 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('weekly_tester');
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
   await expect(page.getByText('请选择本周方向')).toBeVisible();
@@ -129,8 +130,8 @@ test('weekly goal scene keeps today fixed and supports cancel, keyboard and redu
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('goal_scene_tester');
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
 

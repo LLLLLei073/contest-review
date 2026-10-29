@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { mockCodeforces } from '../browser-fixture';
 
@@ -31,8 +32,8 @@ test('all workbench pages fit three viewports and graph exposes nodes beyond the
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(backup)),
     });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('visual_audit');
   await page.goto(target('/knowledge?view=graph'));
   const table = page.getByRole('table').filter({ has: page.locator('caption', { hasText: '完整节点列表' }) });

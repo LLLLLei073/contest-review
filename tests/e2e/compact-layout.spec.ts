@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { mockCodeforces } from '../browser-fixture';
 
@@ -19,8 +20,8 @@ test('compact layouts keep summaries in view, expose details on demand and fit a
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('compact_layout');
   await page.goto(target('/statistics'));
   await expect(page.locator('.statistics-metrics')).toBeVisible();

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { emptyReview, type CFSubmission } from '../../shared/domain';
 import { weekStart } from '../../shared/weekly';
@@ -69,8 +70,8 @@ test('higher-stage conditions, complete weekly rewards, filters, evidence and of
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(fixture())),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('advanced_growth');
   await page.goto(target('/growth'));
   await expect(page.locator('.cosmetic-card')).toHaveCount(7);

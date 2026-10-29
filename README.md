@@ -60,7 +60,7 @@ npm start
 - 生成安装包：`npm run desktop:dist`，产物在 `desktop-dist/`——「回解 Setup.exe」为 NSIS 安装器（可选安装目录、自动创建桌面快捷方式），「回解.exe」为免安装便携版。
 - 本地开发运行：`npm run desktop:build`（类型检查 + 前端构建 + 打包 Electron 主进程与后端入口），再 `npm run desktop:start` 启动。
 - npm 12 及以上会默认拦截依赖的安装脚本：首次 `npm ci` 后需执行 `npm approve-scripts electron`，再 `npm rebuild electron`，否则缺少 Electron 可执行文件。
-- 数据位置：安装版/便携版存放在 `%APPDATA%/回解/data/review.sqlite`，与网页版（项目 `data/` 目录）互不影响；开发模式沿用项目 `data/`。可用应用内「备份与恢复」在两版之间迁移数据。
+- 数据位置：安装版/便携版存放在 `%APPDATA%/contest-review/data/review.sqlite`（目录名取自应用标识而非产品名「回解」），与网页版（项目 `data/` 目录）互不影响；开发模式沿用项目 `data/`。可用应用内「备份与恢复」在两版之间迁移数据。
 - 外部链接（题目、榜单等）默认用系统浏览器打开；同一时间只允许运行一个实例。
 
 ### 自动更新

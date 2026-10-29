@@ -5,6 +5,7 @@ import { BookOpen, ArrowUpRight, RefreshCw, Check, X, Orbit, Sparkles, Sun, Moon
 import { navigation } from './navigation';
 import { appearance, toggleAppearance } from './composables/useAppearance';
 import CommandPalette from './components/CommandPalette.vue';
+import ConfirmDialog from './components/ConfirmDialog.vue';
 import { growth, growthNotice, growthError, startGrowth, dismissGrowthNotice } from './growth';
 import { astraSuggestion, checkAstraSuggestion, dismissAstraSuggestion } from './agent';
 import { loadSettings, loadJob, settings, job, toast, browserMode, dataRevision } from './api';
@@ -170,11 +171,14 @@ onUnmounted(() => {
                             ? '星澪伙伴'
                             : $route.path === '/settings'
                               ? '设置与数据'
-                              : $route.path === '/battle' ? '连战' : '今日训练'
+                              : $route.path === '/battle'
+                                ? '连战'
+                                : '今日训练'
           }}</b>
         </div>
         <div class="topbar-actions">
           <CommandPalette />
+          <ConfirmDialog />
           <button
             class="appearance-toggle icon-button"
             :aria-label="appearance === 'light' ? '切换为深色模式' : '切换为明亮模式'"

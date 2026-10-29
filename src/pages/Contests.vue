@@ -4,6 +4,7 @@ import { Flag, ArrowUpRight, Save, RefreshCw, ChevronLeft, ChevronRight } from '
 import type { ContestReview, CFRating } from '../../shared/domain';
 import type { BatchJob } from '../../shared/xcpc';
 import { api, notify, job, settings, loadSettings, unixDay } from '../api';
+import { useConfirm } from '../composables/useConfirm';
 import ContestReport from '../components/ContestReport.vue';
 import ContestFilters from '../components/contests/ContestFilters.vue';
 import BatchProgress from '../components/contests/BatchProgress.vue';
@@ -39,6 +40,7 @@ const route = useRoute(),
   router = useRouter();
 const section = useSection(['reports', 'upsolve'] as const, 'reports');
 const reportView = useSection(['analysis', 'notes', 'coach', 'guided'] as const, 'analysis', 'report');
+const { confirmDialog } = useConfirm();
 const upsolve = ref<UpsolveItem[]>([]);
 const upsolveLoading = ref(false);
 let upsolveSerial = 0;
@@ -190,13 +192,13 @@ async function load() {
     if (serial === listSerial) loading.value = false;
   }
 }
-function choose(c: ContestView): boolean {
+async function choose(c: ContestView): Promise<boolean> {
   if (selected.value?.key === c.key) {
     mobileShowingReport.value = true;
     void nextTick(focusSelectedReport);
     return true;
   }
-  if (dirty.value && !confirm('比赛复盘尚未保存，确定切换吗？')) return false;
+  if (dirty.value && !(await confirmDialog('比赛复盘尚未保存，确定切换吗？'))) return false;
   selected.value = c;
   draft.value = { ...c.review };
   mobileShowingReport.value = true;
@@ -213,10 +215,10 @@ function returnToList() {
   mobileShowingReport.value = false;
   void nextTick(() => document.querySelector<HTMLElement>('.contest-list input')?.focus());
 }
-function adjacent(direction: -1 | 1) {
+async function adjacent(direction: -1 | 1) {
   const next = filtered.value[selectedIndex.value + direction];
   if (!next) return;
-  if (choose(next)) page.value = Math.floor(selectedIndex.value / pageSize) + 1;
+  if (await choose(next)) page.value = Math.floor(selectedIndex.value / pageSize) + 1;
 }
 async function save() {
   busy.value = true;
@@ -323,9 +325,13 @@ watch(
     if (s === 'completed' && p === 'running') void load();
   },
 );
-onBeforeRouteUpdate((to) => {
+onBeforeRouteUpdate(async (to) => {
   const next = typeof to.query.contest === 'string' ? to.query.contest : '';
-  return next === (selected.value?.key ?? '') || !dirty.value || confirm('比赛复盘尚未保存，确定切换吗？');
+  return (
+    next === (selected.value?.key ?? '') ||
+    !dirty.value ||
+    (await confirmDialog('比赛复盘尚未保存，确定切换吗？'))
+  );
 });
 watch(
   () => route.query,
@@ -348,7 +354,7 @@ watch(
     restoringLocation = false;
   },
 );
-onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确定离开吗？'));
+onBeforeRouteLeave(() => !dirty.value || confirmDialog('比赛复盘尚未保存，确定离开吗？'));
 </script>
 <template>
   <div class="page-head">

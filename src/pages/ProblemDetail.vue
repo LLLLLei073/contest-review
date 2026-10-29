@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import { ArrowLeft, ExternalLink, EyeOff, Clock3, Sparkles, Trash2 } from 'lucide-vue-next';
 import { api, notify, statusLabels, resultLabels, fullDate, localDate, unixTime } from '../api';
+import { useConfirm } from '../composables/useConfirm';
 import {
   verdictLabel,
   emptyReview,
@@ -22,6 +23,7 @@ import { useLearningState } from '../learningState';
 import { useSection } from '../sections';
 import LearningProblem from '../components/LearningProblem.vue';
 import { problemReturnLocation } from '../../shared/problem-filters';
+const { confirmDialog } = useConfirm();
 const route = useRoute(),
   key = String(route.params.key);
 const tab = useSection(
@@ -283,7 +285,7 @@ watch(
 onUnmounted(() => window.removeEventListener('beforeunload', unload));
 async function confirmLeave() {
   if (inFlightSave) await inFlightSave;
-  return !dirty.value || window.confirm('复盘内容尚未保存，确定离开吗？');
+  return !dirty.value || (await confirmDialog('复盘内容尚未保存，确定离开吗？'));
 }
 onBeforeRouteLeave(confirmLeave);
 onBeforeRouteUpdate((to) => {

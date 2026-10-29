@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { acceptConfirm, dismissConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 
 const url = (pages: boolean, path: string) => (pages ? './#' + path : path);
@@ -20,8 +21,8 @@ async function prepare(page: Page, pages: boolean) {
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('experience_tester');
 }
 
@@ -82,8 +83,8 @@ test('problem notes and shared assistant context survive tool switches and histo
   await expect(page.getByLabel('我目前的思路')).toHaveValue('直接输出');
   await page.getByRole('button', { name: '复盘笔记', exact: true }).click();
   await expect(page.getByLabel('当时的思路', { exact: false })).toHaveValue('未保存的思路');
-  page.once('dialog', (dialog) => dialog.dismiss());
   await page.locator('.sidebar nav').getByRole('link', { name: '错题库', exact: true }).click();
+  await dismissConfirm(page);
   await expect(page.getByRole('heading', { name: 'Experience Fixture' })).toBeVisible();
   await page.getByRole('button', { name: '保存笔记', exact: true }).click();
   await expect(page.getByText('复盘已保存', { exact: true })).toBeVisible();

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm, dismissConfirm } from './helpers/confirm';
 
 const review = { timeAllocation: '', mistakes: '', improvements: '' };
 const contests = Array.from({ length: 45 }, (_, index) => {
@@ -73,11 +74,11 @@ test('large contest list keeps filters, page and report selection; navigation pr
 
   await page.getByRole('button', { name: '补充笔记' }).click();
   await page.getByLabel('关键失误', { exact: true }).fill('未保存');
-  page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: '下一场' }).click();
+  await dismissConfirm(page);
   await expect(page.locator('.contest-editor h2')).toHaveText(contests[20].name);
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '下一场' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.contest-editor h2')).toHaveText(contests[21].name);
   await expect(page.locator('.report-score .score-value')).toHaveText('—');
   await expect(page.locator('.report-score')).toContainText('非评级场次，官方历史未提供 Performance');

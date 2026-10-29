@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { readFileSync } from 'node:fs';
 import { Store } from '../../server/store';
 import { fixtureInput } from '../analysis-fixtures';
@@ -46,8 +47,8 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('tester');
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page
@@ -113,8 +114,8 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   expect(result.version).toBe(12);
   expect(result.tables.analysis_cache).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path);
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.getByText('备份恢复完成', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

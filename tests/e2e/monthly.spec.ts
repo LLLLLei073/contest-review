@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { beijingDay } from '../../shared/monthly-report';
 import { learningReply } from '../learning-fixture';
@@ -64,8 +65,8 @@ async function restore(page: Page, pages: boolean, empty = false) {
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup(empty))),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.getByText('备份恢复完成', { exact: true })).toBeVisible();
   await expect(page.locator('.profile-chip')).toContainText('monthly_tester');
   await page.goto(pages ? './#/statistics' : '/statistics');

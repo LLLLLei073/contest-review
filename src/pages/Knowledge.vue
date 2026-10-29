@@ -174,9 +174,24 @@ async function navigateExperience(id: string) {
 }
 async function load() {
   await session.load();
-  if (!alive || error.value) return;
-  if (typeof route.query.experience === 'string') await openExperience(route.query.experience);
-  revealCard();
+  if (!alive) return;
+  const syncRoute = () => {
+    if (error.value) return;
+    if (typeof route.query.experience === 'string') void openExperience(route.query.experience);
+    revealCard();
+  };
+  if (state.value) {
+    syncRoute();
+    return;
+  }
+  // /learning/state 可能被 owner 变化触发的并发刷新作废（learningState 的 serial
+  // 竞态会丢弃较早请求的结果），此时不能立即按路由同步——否则会误报
+  // 「经验卡不存在」或丢失 card 定位。等下一次状态就绪后再同步。
+  const stop = watch(state, (value) => {
+    if (!value) return;
+    stop();
+    syncRoute();
+  });
 }
 function revealCard() {
   const id = route.query.card;

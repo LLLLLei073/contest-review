@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { BattleService } from '../../shared/battle-service';
 import { mockCodeforces } from '../browser-fixture';
@@ -10,8 +11,8 @@ async function restore(page: Page, backup: unknown, pages: boolean) {
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('battle_browser');
 }
 function seed() {

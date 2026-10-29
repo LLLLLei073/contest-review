@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import type { CFSubmission } from '../../shared/domain';
 import { mockCodeforces } from '../browser-fixture';
@@ -37,8 +38,8 @@ async function restore(page: Page, pages: boolean, count = 50) {
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(fixture(count))),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('growth_tester');
 }
 test('historical growth, unlocks, equipment persistence, pagination, account isolation and offline assets', async ({

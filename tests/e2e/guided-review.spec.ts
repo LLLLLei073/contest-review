@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { mockCodeforces } from '../browser-fixture';
 import { guidedReply } from '../guided-fixture';
@@ -70,8 +71,8 @@ test('guided review persists checkpoints, separates hypotheses and finishes with
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('guided_browser');
   await page.goto(target('/problems/9600%3AA?view=guided'));
   await page.getByRole('button', { name: '开始引导复盘' }).click();

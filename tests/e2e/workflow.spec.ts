@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { readFileSync } from 'node:fs';
 import { mockCodeforces } from '../browser-fixture';
 test.beforeEach(async ({ page }, testInfo) => {
@@ -87,8 +88,8 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   ).toHaveLength(1);
   expect(backup.tables.attempts).toHaveLength(1);
   await page.getByLabel('选择备份文件').setInputFiles(path!);
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.getByText('备份恢复完成')).toBeVisible();
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await page.getByRole('link', { name: '2000C Two Screens', exact: true }).click();
@@ -163,8 +164,8 @@ test('manual problems, ignore restore, filters and invalid backup preserve data 
     mimeType: 'application/json',
     buffer: Buffer.from('{"format":"contest-review","version":999}'),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.getByRole('alert')).toContainText('输入格式不正确');
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await expect(page.getByRole('link', { name: '2100D My unsolved problem', exact: true })).toBeVisible();

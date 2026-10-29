@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 import { localDay } from '../../shared/core-store';
 import type { CFSubmission } from '../../shared/domain';
@@ -62,8 +63,8 @@ test('restored legacy review state shows completed evaluation and explains incom
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
   const reviewed = page.locator('.daily-panel').first().locator('.daily-task');
   await expect(reviewed).toHaveCount(2);

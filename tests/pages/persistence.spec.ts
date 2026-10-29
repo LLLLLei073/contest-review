@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from '../e2e/helpers/confirm';
 import { readFileSync } from 'node:fs';
 import { Store } from '../../server/store';
 import { fixtureSubmissions } from '../cf-fixtures';
@@ -26,8 +27,8 @@ test('legacy backups, IndexedDB persistence, offline reload and tab ownership', 
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('offline_tester');
   await page.getByRole('link', { name: '错题库', exact: true }).click();
   await page.getByRole('link', { name: '2000C Two Screens', exact: true }).click();

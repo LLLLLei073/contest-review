@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { acceptConfirm } from './helpers/confirm';
 import { Store } from '../../server/store';
 test('offline-capable learning path and budget plan preview, apply, replace and revert preserve today', async ({
   page,
@@ -31,8 +32,8 @@ test('offline-capable learning path and budget plan preview, apply, replace and 
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(backup)),
   });
-  page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: '恢复此备份' }).click();
+  await acceptConfirm(page);
   await expect(page.locator('.profile-chip')).toContainText('planning_browser');
   await page.getByRole('link', { name: '今日训练', exact: true }).click();
   const original = await page.locator('.daily-panel').nth(1).locator('.daily-task strong').allTextContents();
