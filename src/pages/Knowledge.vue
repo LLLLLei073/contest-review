@@ -9,6 +9,13 @@ import KnowledgeReader from '../components/knowledge/KnowledgeReader.vue';
 import KnowledgeGraph from '../components/knowledge/KnowledgeGraph.vue';
 import { categoryNames } from '../../shared/training';
 import { matchesKnowledgeQuery, normalizeKnowledgeQuery } from '../../shared/knowledge';
+import {
+  experienceRevision,
+  readExperienceDraft,
+  writeExperienceDraft,
+  removeExperienceDraft,
+  type ExperienceDraft,
+} from '../knowledge-drafts';
 import type { LearningService } from '../../shared/learning-service';
 import type { ExperienceCard, Citation } from '../../shared/learning-domain';
 const route = useRoute();
@@ -28,13 +35,30 @@ const routeNotice = ref('');
 const searchLoading = ref(false),
   searchError = ref(''),
   searchedQuery = ref('');
-const drafts = new Map<string, ExperienceCard>();
+const drafts = ref(new Map<string, ExperienceDraft>());
+const selectedBase = ref<ExperienceCard>();
+const draftError = ref('');
+const conflictReviewed = ref(false);
+let changingEditor = false;
+const storage = () => window.localStorage;
+const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const records = computed(() => state.value?.records ?? []);
 const cards = computed(() =>
   records.value.filter((r): r is ExperienceCard & { sourceValid: boolean } => r.kind === 'card'),
 );
 const confirmedCount = computed(() => cards.value.filter((c) => c.confirmed && c.sourceValid).length);
 const allKnowledge = computed(() => state.value?.knowledge ?? []);
+const pendingDrafts = computed(() => cards.value.filter((c) => drafts.value.has(c.id)));
+const savedSelection = computed(() => cards.value.find((c) => c.id === selected.value?.id));
+const editConflict = computed(
+  () =>
+    !!(
+      selectedBase.value &&
+      savedSelection.value &&
+      experienceRevision(selectedBase.value) !== experienceRevision(savedSelection.value)
+    ),
+);
+const hasLocalEdit = computed(() => !!selected.value && drafts.value.has(selected.value.id));
 const linkedKnowledge = (card: ExperienceCard) =>
   allKnowledge.value.filter((k) => card.knowledgeIds.includes(k.id));
 const filteredCards = computed(() =>
@@ -62,7 +86,11 @@ const library = computed(() =>
   ),
 );
 const owner = () =>
-  [settings.value.activeHandle, settings.value.activeAtcoder, settings.value.xcpcPlayer?.key].join(':');
+  JSON.stringify([
+    settings.value.activeHandle,
+    settings.value.activeAtcoder ?? '',
+    settings.value.xcpcPlayer?.key ?? '',
+  ]);
 let graphSerial = 0,
   searchSerial = 0,
   alive = true;
@@ -85,17 +113,50 @@ function clearFilters() {
   cardStatus.value = 'all';
   clearSearch();
 }
+function forgetDraft(id: string) {
+  drafts.value.delete(id);
+  draftError.value = removeExperienceDraft(storage, owner(), id);
+}
+function rememberEdit() {
+  if (changingEditor || !selected.value || !selectedBase.value) return;
+  const card = selected.value;
+  if (experienceRevision(card) === experienceRevision(selectedBase.value)) {
+    if (drafts.value.has(card.id)) forgetDraft(card.id);
+    return;
+  }
+  const draft: ExperienceDraft = { version: 1, base: copy(selectedBase.value), card: copy(card) };
+  drafts.value.set(card.id, draft);
+  draftError.value = writeExperienceDraft(storage, owner(), draft);
+}
+function setEditor(card?: ExperienceCard, base?: ExperienceCard) {
+  changingEditor = true;
+  selectedBase.value = base ? copy(base) : undefined;
+  selected.value = card ? copy(card) : undefined;
+  conflictReviewed.value = false;
+  changingEditor = false;
+}
+async function clearExperienceRoute(id: string) {
+  if (route.path === '/knowledge' && route.query.experience === id) {
+    const next = { ...route.query };
+    delete next.experience;
+    await router.replace({ path: '/knowledge', query: next });
+  }
+}
 async function openExperience(id: string) {
   if (!alive) return;
   const card = cards.value.find((c) => c.id === id);
   if (!card) {
+    setEditor();
     routeNotice.value = '经验卡不存在或已删除，请从个人经验卡列表重新选择。';
     section.value = 'library';
     return;
   }
-  if (selected.value && selected.value.id !== id)
-    drafts.set(selected.value.id, JSON.parse(JSON.stringify(selected.value)));
-  if (selected.value?.id !== id) selected.value = JSON.parse(JSON.stringify(drafts.get(id) ?? card));
+  if (selected.value?.id !== id) {
+    const draft = drafts.value.get(id);
+    setEditor(draft?.card ?? card, draft?.base ?? card);
+    // A previously checked box cannot confirm a changed or deleted source.
+    if (!card.sourceValid && selected.value) selected.value.confirmed = false;
+  }
   routeNotice.value = '';
   section.value = 'library';
   await nextTick();
@@ -164,20 +225,46 @@ async function search() {
   }
 }
 async function saveCard() {
-  if (!selected.value) return;
-  const card: ExperienceCard = JSON.parse(JSON.stringify(selected.value)),
+  if (!selected.value || !selectedBase.value || (editConflict.value && !conflictReviewed.value)) return;
+  const card = copy(selected.value),
+    base = copy(selectedBase.value),
     scope = owner();
-  drafts.set(card.id, card);
-  if ((await run('card', card)) && alive && scope === owner()) {
-    if (JSON.stringify(drafts.get(card.id)) === JSON.stringify(card)) drafts.delete(card.id);
-    if (JSON.stringify(selected.value) === JSON.stringify(card)) selected.value = undefined;
+  const result = await run('card', card);
+  if (result?.kind === 'card' && alive && scope === owner()) {
+    const current = drafts.value.get(card.id);
+    if (current && experienceRevision(current.card) === experienceRevision(card)) forgetDraft(card.id);
+    else if (current && experienceRevision(current.base) === experienceRevision(base)) {
+      // Rebase later keystrokes on the version that just finished saving.
+      const next = { ...current, base: copy(result) };
+      drafts.value.set(card.id, next);
+      draftError.value = writeExperienceDraft(storage, scope, next);
+    }
+    if (selected.value?.id === card.id) {
+      if (experienceRevision(selected.value) === experienceRevision(card)) {
+        setEditor();
+        await clearExperienceRoute(card.id);
+      } else {
+        selectedBase.value = copy(result);
+        rememberEdit();
+      }
+    }
     clearSearch();
     notify('经验卡已保存');
   }
 }
-function cancelEdit() {
-  if (selected.value) drafts.delete(selected.value.id);
-  selected.value = undefined;
+async function closeEdit(discard = false) {
+  const id = selected.value?.id;
+  if (!id) return;
+  if (discard) forgetDraft(id);
+  setEditor();
+  await clearExperienceRoute(id);
+}
+function useSavedVersion() {
+  const card = savedSelection.value;
+  if (!card) return;
+  forgetDraft(card.id);
+  setEditor(card, card);
+  if (!card.sourceValid && selected.value) selected.value.confirmed = false;
 }
 async function updateCard(action: 'draft' | 'delete', card: ExperienceCard) {
   const scope = owner();
@@ -188,8 +275,9 @@ async function updateCard(action: 'draft' | 'delete', card: ExperienceCard) {
   if (result && alive && scope === owner()) {
     clearSearch();
     if (action === 'delete') {
-      drafts.delete(card.id);
-      if (selected.value?.id === card.id) selected.value = undefined;
+      forgetDraft(card.id);
+      if (selected.value?.id === card.id) setEditor();
+      await clearExperienceRoute(card.id);
     }
   }
 }
@@ -203,6 +291,33 @@ onMounted(() => {
   void load();
 });
 watch(query, clearSearch, { flush: 'sync' });
+watch(selected, rememberEdit, { deep: true, flush: 'sync' });
+watch(cards, (current) => {
+  for (const card of current) {
+    if (drafts.value.has(card.id)) continue;
+    const result = readExperienceDraft(storage, owner(), card.id);
+    if (result.error) draftError.value = result.error;
+    if (result.draft) {
+      // A response may have been committed before the browser was closed.
+      if (experienceRevision(result.draft.card) === experienceRevision(card)) forgetDraft(card.id);
+      else drafts.value.set(card.id, result.draft);
+    }
+  }
+});
+watch(
+  () => (savedSelection.value ? experienceRevision(savedSelection.value) : ''),
+  () => {
+    conflictReviewed.value = false;
+  },
+);
+watch(
+  () => [savedSelection.value?.id, savedSelection.value?.sourceValid] as const,
+  ([id, valid], [previousId, previousValid]) => {
+    if (id === selected.value?.id && valid === false && (previousId !== id || previousValid !== false)) {
+      selected.value!.confirmed = false;
+    }
+  },
+);
 watch(
   () => route.query.card,
   () => {
@@ -223,12 +338,14 @@ watch(
   () => route.query.experience,
   (id) => {
     if (typeof id === 'string' && state.value) void openExperience(id);
+    else if (!id) setEditor();
   },
 );
 watch(owner, () => {
   clearSearch();
-  drafts.clear();
-  selected.value = undefined;
+  setEditor();
+  drafts.value.clear();
+  draftError.value = '';
   graph.value = undefined;
   state.value = undefined;
   graphSerial++;
@@ -333,6 +450,8 @@ watch(owner, () => {
       :cards="library"
       :all="allKnowledge"
       :experiences="cards"
+      :owner="owner()"
+      :active="section === 'library'"
       @experience="navigateExperience"
       @ask="askAbout"
       @graph="
@@ -358,6 +477,23 @@ watch(owner, () => {
           </select></label
         >
       </div>
+      <p v-if="draftError" role="alert" class="alert">{{ draftError }}</p>
+      <section v-if="pendingDrafts.length" class="panel pending-edits" aria-label="待保存编辑">
+        <h3>
+          继续未完成的编辑 <span class="small subtle">{{ pendingDrafts.length }} 张</span>
+        </h3>
+        <p class="small subtle">本浏览器按账号暂存；尚未写入经验库，也不会用于问答。换设备前请保存经验卡。</p>
+        <div class="button-row">
+          <button
+            v-for="card in pendingDrafts"
+            :key="card.id"
+            class="small-button"
+            @click="navigateExperience(card.id)"
+          >
+            继续编辑：{{ drafts.get(card.id)?.card.title || card.title }}
+          </button>
+        </div>
+      </section>
       <p v-if="cards.length && !filteredCards.length" class="quiet-empty">
         当前筛选没有经验卡，试试其他关键词、领域或状态。
       </p>
@@ -384,7 +520,17 @@ watch(owner, () => {
         <div class="button-row">
           <RouterLink :to="'/problems/' + encodeURIComponent(c.problemKey)">原始复盘</RouterLink
           ><button class="small-button" @click="navigateExperience(c.id)">编辑与确认</button
-          ><button class="small-button" :disabled="busy" @click="updateCard('draft', c)">刷新草稿</button
+          ><button
+            class="small-button"
+            :disabled="busy || c.edited || drafts.has(c.id)"
+            :title="
+              c.edited || drafts.has(c.id)
+                ? '已有手工编辑，请使用编辑与确认，避免覆盖内容。'
+                : '根据原始复盘重新生成草稿'
+            "
+            @click="updateCard('draft', c)"
+          >
+            刷新草稿</button
           ><button class="small-button" :disabled="busy" @click="updateCard('delete', c)">删除经验卡</button>
         </div>
       </article>
@@ -395,9 +541,33 @@ watch(owner, () => {
         @submit.prevent="saveCard"
       >
         <h2>编辑经验卡</h2>
-        <p class="small subtle">切换经验时，未保存的编辑会暂存在本页；离开知识中心前请保存。</p>
+        <p class="small subtle" role="status">
+          {{
+            hasLocalEdit
+              ? draftError
+                ? '编辑尚未成功暂存，请先保存经验卡。'
+                : '编辑已暂存在本浏览器，刷新后可继续。'
+              : '修改会按账号暂存在本浏览器；保存后才会更新经验库。'
+          }}
+        </p>
+        <p v-if="savedSelection && !savedSelection.sourceValid" class="alert">
+          来源已修改或删除，原确认已取消。请查看原始复盘、核对内容后重新勾选确认；来源已删除时无法保存。
+        </p>
+        <RouterLink :to="'/problems/' + encodeURIComponent(selected.problemKey)"
+          >查看原始复盘并核对来源 →</RouterLink
+        >
+        <div v-if="editConflict" class="alert draft-conflict" role="alert">
+          <p>这张卡的已保存版本发生变化。你的本地编辑已保留，请对照后再保存。</p>
+          <details>
+            <summary>查看当前已保存版本</summary>
+            <h3>{{ savedSelection?.title }}</h3>
+            <Markdown :text="savedSelection?.content ?? ''" />
+          </details>
+          <label><input v-model="conflictReviewed" type="checkbox" />我已对照当前版本，保存本地编辑</label>
+          <button type="button" class="small-button" @click="useSavedVersion">使用当前已保存版本</button>
+        </div>
         <label>标题<input v-model="selected.title" required maxlength="300" /></label
-        ><label>经验内容<textarea v-model="selected.content" rows="8" /></label>
+        ><label>经验内容<textarea v-model="selected.content" rows="8" maxlength="50000" /></label>
         <div class="learning-checks">
           <label v-for="k in state?.knowledge" :key="k.id"
             ><input type="checkbox" :value="k.id" v-model="selected.knowledgeIds" />{{ k.title }}</label
@@ -407,9 +577,11 @@ watch(owner, () => {
           ><input type="checkbox" v-model="selected.confirmed" />我已核对内容及关联知识点，允许用于检索</label
         >
         <div class="button-row">
-          <button class="button" :disabled="busy">保存经验卡</button
-          ><button type="button" class="small-button" @click="cancelEdit">取消编辑</button>
+          <button class="button" :disabled="busy || (editConflict && !conflictReviewed)">保存经验卡</button>
+          <button type="button" class="small-button" @click="closeEdit()">保留草稿并关闭</button>
+          <button type="button" class="small-button" @click="closeEdit(true)">取消编辑</button>
         </div>
+        <p class="small subtle">“取消编辑”会丢弃此卡的本地修改，已保存的经验卡不受影响。</p>
       </form>
     </section>
   </section>
@@ -542,6 +714,34 @@ watch(owner, () => {
 }
 .knowledge-experiences {
   padding-top: 16px;
+}
+.pending-edits {
+  padding: 20px;
+}
+.pending-edits h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.pending-edits .button-row {
+  flex-wrap: wrap;
+}
+.pending-edits button {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.draft-conflict {
+  display: grid;
+  gap: 12px;
+}
+.draft-conflict p {
+  margin: 0;
+}
+.draft-conflict label {
+  margin: 0;
+}
+.draft-conflict details {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .experience-heading {
   margin-bottom: 0;

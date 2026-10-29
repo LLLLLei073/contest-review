@@ -96,6 +96,8 @@ export interface PerformanceRating {
   value: number | null;
   bound: 'lower' | 'upper' | null;
   method: 'rank' | 'difficulty' | null;
+  /** 样本不足 20 名有分对手 / 难度覆盖不足 80% 时标记，UI 以低置信度呈现。 */
+  confidence?: 'low';
   samples: number;
   reason: string;
   seed: number | null;
@@ -167,7 +169,8 @@ function estimatePerformance(
   ratings: AnalysisCache['ratings'],
   handle: string,
   ownRating: number | null,
-  eligible: boolean,
+  gates: { rank: boolean; difficulty: boolean },
+  unsettled: Set<string>,
 ): PerformanceRating {
   const base: PerformanceRating = {
     version: '1.0',
@@ -179,12 +182,13 @@ function estimatePerformance(
     seed: null,
     targetRank: null,
   };
-  if (!eligible)
+  if (!gates.rank && !gates.difficulty)
     return {
       ...base,
-      reason: '需要已结束且未封榜的个人参赛、完整赛时提交及已确定的判定。',
+      reason: '需要已结束且未封榜的个人参赛；难度估算还要求完整的赛时提交历史。',
     };
-  if (session.type === 'CONTESTANT' && ownRating !== null) {
+  // 名次来自官方榜单，与本人提交是否完整同步、评测是否全部明确无关。
+  if (gates.rank && session.type === 'CONTESTANT' && ownRating !== null) {
     const oldRatings = new Map(
       ratings.filter((r) => r.oldRating > 0).map((r) => [r.handle.toLowerCase(), r.oldRating]),
     );
@@ -195,7 +199,8 @@ function estimatePerformance(
         const rating = oldRatings.get(name);
         return name !== handle.toLowerCase() && rating !== undefined ? [{ rank: r.rank, rating }] : [];
       });
-      if (opponents.length >= 20) {
+      // 8 名有分对手即可估算；20 以下标记低置信度（Div3/4 大量首次参赛者被过滤）。
+      if (opponents.length >= 8) {
         const actualRank =
           1 +
           opponents.filter((r) => r.rank < own.rank).length +
@@ -205,21 +210,38 @@ function estimatePerformance(
         const seed = expected(ownRating);
         const targetRank = Math.sqrt(seed * actualRank);
         const inverse = inverseRating(targetRank, expected);
+        const lowConfidence = opponents.length < 20;
         return {
           ...base,
           ...inverse,
           method: 'rank',
           samples: opponents.length,
+          ...(lowConfidence ? { confidence: 'low' as const } : {}),
           seed,
           targetRank,
-          reason: `同场 ${opponents.length} 名有赛前 Rating 的个人选手；预期名次 ${seed.toFixed(1)}，实际名次 ${actualRank.toFixed(1)}，几何平均 ${targetRank.toFixed(1)}。`,
+          reason: `同场 ${opponents.length} 名有赛前 Rating 的个人选手${
+            lowConfidence ? '（样本较少，低置信度）' : ''
+          }；预期名次 ${seed.toFixed(1)}，实际名次 ${actualRank.toFixed(1)}，几何平均 ${targetRank.toFixed(1)}。`,
         };
       }
     }
   }
-  const rated = timeline.filter((p) => p.rating !== undefined && p.rating > 0);
-  if (timeline.length < 3 || rated.length < 3 || rated.length / timeline.length < 0.8)
-    return { ...base, reason: '名次对照不足；难度估算至少需要 3 道有难度的题，且覆盖完整题集的 80%。' };
+  if (!gates.difficulty)
+    return {
+      ...base,
+      reason:
+        session.type === 'CONTESTANT'
+          ? '名次对照不足：本人未出现在榜单，或同场有赛前 Rating 的对手少于 8 人；提交历史尚未完整，无法难度估算。'
+          : '非正式参赛只能用难度估算，但提交历史尚未完整，暂无法估算。',
+    };
+  // 未判定（TESTING/未知）的题目既不可靠为 AC 也不可靠为失败：剔除后再估算。
+  const usable = timeline.filter((p) => !unsettled.has(p.index));
+  const rated = usable.filter((p) => p.rating !== undefined && p.rating > 0);
+  if (rated.length < 2 || rated.length / timeline.length < 0.5)
+    return {
+      ...base,
+      reason: '难度估算至少需要 2 道有难度的题，且覆盖完整题集的 50%；名次对照也未能给出结果。',
+    };
   const solved = rated.filter((p) => p.ac !== null).length;
   const target = (rated.length * (solved + 0.5)) / (rated.length + 1);
   const expected = (rating: number) => rated.reduce((sum, p) => sum + 1 - ratingChance(rating, p.rating!), 0);
@@ -235,13 +257,17 @@ function estimatePerformance(
       if (expected(mid) < target) low = mid;
       else high = mid;
     }
+  const lowConfidence = rated.length / timeline.length < 0.8 || rated.length < 3 || unsettled.size > 0;
   return {
     ...base,
     value: bound === 'lower' ? 0 : bound === 'upper' ? 4000 : Math.round((low + high) / 2),
     bound,
     method: 'difficulty',
     samples: rated.length,
-    reason: `低置信度难度估算：${rated.length}/${timeline.length} 题有难度，赛时 AC ${solved} 题；平滑目标完成数 ${target.toFixed(2)}。`,
+    ...(lowConfidence ? { confidence: 'low' as const } : {}),
+    reason: `难度估算${
+      lowConfidence ? '（低置信度）' : ''
+    }：${rated.length}/${timeline.length} 题有难度，赛时 AC ${solved} 题；平滑目标完成数 ${target.toFixed(2)}。`,
   };
 }
 const personal = (p: CFSubmission['author']) =>
@@ -501,6 +527,11 @@ export function analyzeContest(input: AnalysisInput): ContestAnalysis[] {
         ? Math.round(valid.reduce((n, p) => n + p.weight * p.score!, 0) / eligibleWeight)
         : null;
     const contestOldRating = ownChange?.oldRating ?? input.contest.rating?.oldRating;
+    const unsettledIndexes = new Set(
+      session.submissions
+        .filter((s) => s.verdict !== 'OK' && !failures.has(s.verdict ?? ''))
+        .map((s) => s.problem.index),
+    );
     const performanceRating = estimatePerformance(
       session,
       timeline,
@@ -508,13 +539,13 @@ export function analyzeContest(input: AnalysisInput): ContestAnalysis[] {
       cache?.ratings ?? [],
       handle,
       session.type === 'CONTESTANT' && contestOldRating && contestOldRating > 0 ? contestOldRating : null,
-      !!cache &&
-        finished &&
-        complete &&
-        !unsettled &&
-        session.start !== null &&
-        session.duration !== null &&
-        !session.team,
+      {
+        // 名次来自榜单：与提交是否完整同步、评测是否明确无关。
+        rank: !!cache && finished && session.start !== null && session.duration !== null && !session.team,
+        difficulty:
+          !!cache && finished && complete && session.start !== null && session.duration !== null && !session.team,
+      },
+      unsettledIndexes,
     );
     const advice: Advice[] = [];
     const add = (

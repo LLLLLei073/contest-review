@@ -64,6 +64,31 @@ test('CF performance uses geometric mean rank, tied rated positions and rating b
   );
 });
 
+test('rank method tolerates a small rated pool with low-confidence marking', () => {
+  const data = fixtureInput();
+  // 21 → 12 人（11 名有分对手）：原门槛（20）失效，现在仍用名次反推并标记低置信度
+  data.cache!.standings.rows = data.cache!.standings.rows.filter((r) => {
+    const handle = r.party.members[0].handle;
+    return handle === 'tester' || Number(handle.slice(4)) < 11;
+  });
+  data.cache!.ratings = data.cache!.ratings.filter((r) => r.handle === 'tester' || Number(r.handle.slice(4)) < 11);
+  const small = analyzeContest(data)[0].performanceRating;
+  assert.equal(small.method, 'rank');
+  assert.equal(small.samples, 10);
+  assert.equal(small.confidence, 'low');
+  assert.ok(small.value !== null);
+  // 7 名有分对手：低于 8 人门槛 → 回落难度估算
+  data.cache!.standings.rows = data.cache!.standings.rows.filter(
+    (r) => r.party.members[0].handle === 'tester' || Number(r.party.members[0].handle.slice(4)) < 7,
+  );
+  data.cache!.ratings = data.cache!.ratings.filter(
+    (r) => r.handle === 'tester' || Number(r.handle.slice(4)) < 7,
+  );
+  const tooSmall = analyzeContest(data)[0].performanceRating;
+  assert.equal(tooSmall.method, 'difficulty');
+  assert.ok(tooSmall.value !== null);
+});
+
 test('difficulty fallback covers virtual and unrated rounds, but not incomplete or practice results', () => {
   const data = fixtureInput();
   data.contest = { ...data.contest, rating: undefined };
@@ -83,9 +108,24 @@ test('difficulty fallback covers virtual and unrated rounds, but not incomplete 
   data.submissions = [submission(60, 100, 'OK', 'A', 'VIRTUAL', 1731000000)];
   report = analyzeContest(data)[0];
   assert.equal(report.performanceRating.method, 'difficulty');
+  // 2/3 有难度（66% ≥ 50%）仍可估算，标记低置信度
   data.cache!.standings.problems[1].rating = undefined;
-  assert.equal(analyzeContest(data)[0].performanceRating.value, null);
+  report = analyzeContest(data)[0];
+  assert.equal(report.performanceRating.method, 'difficulty');
+  assert.equal(report.performanceRating.samples, 2);
+  assert.equal(report.performanceRating.confidence, 'low');
+  assert.ok(report.performanceRating.value !== null);
   data.cache!.standings.problems[1].rating = 1400;
+  // 未判定题目从难度统计剔除：A/B/C 中 C 未判定 → 剩余 2/3 可估算
+  data.submissions = [
+    submission(61, 100, 'OK', 'A', 'VIRTUAL', 1731000000),
+    submission(62, 200, 'TESTING', 'C', 'VIRTUAL', 1731000000),
+  ];
+  report = analyzeContest(data).find((s) => s.session.type === 'VIRTUAL')!;
+  assert.equal(report.performanceRating.method, 'difficulty');
+  assert.equal(report.performanceRating.samples, 2);
+  assert.equal(report.performanceRating.confidence, 'low');
+  assert.ok(report.performanceRating.value !== null);
   data.submissions = [submission(60, 100, 'OK', 'A', 'PRACTICE')];
   data.cache!.standings.rows = [];
   assert.equal(analyzeContest(data).length, 0);
@@ -173,7 +213,10 @@ test('future ratings and future pace history never change an old report; incompl
   assert.equal(analyzeContest(data)[0].parts[3].score, null);
   data.cache!.submissionsComplete = false;
   assert.ok(analyzeContest(data)[0].parts.every((p) => p.score === null));
-  assert.equal(analyzeContest(data)[0].performanceRating.value, null);
+  // 名次来自榜单：提交历史不完整不再使表现分失效，仅难度估算被暂停
+  const withheld = analyzeContest(data)[0].performanceRating;
+  assert.equal(withheld.method, 'rank');
+  assert.ok(withheld.value !== null);
 });
 test('unsettled contest is provisional; advice thresholds and no unsupported negative diagnosis', () => {
   const data = fixtureInput();

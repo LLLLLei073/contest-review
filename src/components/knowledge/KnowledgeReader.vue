@@ -1,13 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import type { KnowledgeCard } from '../../../shared/knowledge';
 import type { ExperienceCard } from '../../../shared/learning-domain';
 import Markdown from '../Markdown.vue';
+import {
+  readKnowledgeReading,
+  writeKnowledgeReading,
+  rememberKnowledgeReading,
+  toggleKnowledgeFavorite,
+  type KnowledgeReading,
+  type ReadingStorage,
+} from '../../knowledge-reading';
 const props = defineProps<{
   cards: KnowledgeCard[];
   all: KnowledgeCard[];
   experiences: (ExperienceCard & { sourceValid: boolean })[];
+  owner: string;
+  active: boolean;
 }>();
 const emit = defineEmits<{
   graph: [id: string];
@@ -16,6 +26,64 @@ const emit = defineEmits<{
 }>();
 const route = useRoute();
 const selected = computed(() => props.cards.find((c) => c.id === route.query.card) ?? props.cards[0]);
+const reading = ref<KnowledgeReading>({ favorites: [], recent: [] });
+const readingWarning = ref('');
+const favoriteCards = computed(() =>
+  reading.value.favorites.flatMap((id) => props.all.filter((card) => card.id === id)),
+);
+const recentCards = computed(() =>
+  reading.value.recent.flatMap((id) => props.all.filter((card) => card.id === id)),
+);
+let lastRead = '';
+function browserStorage(): ReadingStorage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+function persistReading() {
+  readingWarning.value = writeKnowledgeReading(
+    props.owner,
+    reading.value,
+    props.all.map((card) => card.id),
+    browserStorage(),
+  );
+}
+function toggleFavorite() {
+  if (!selected.value) return;
+  reading.value = toggleKnowledgeFavorite(reading.value, selected.value.id);
+  persistReading();
+}
+watch(
+  [() => props.owner, () => props.all.map((card) => card.id).join('|')],
+  () => {
+    lastRead = '';
+    const saved = readKnowledgeReading(
+      props.owner,
+      props.all.map((card) => card.id),
+      browserStorage(),
+    );
+    reading.value = saved.value;
+    readingWarning.value = saved.warning;
+  },
+  { immediate: true },
+);
+watch(
+  [() => props.owner, () => props.active, () => route.query.card, () => selected.value?.id],
+  () => {
+    const id = route.query.card;
+    // A filtered list may display its first card automatically. Only an explicit
+    // route selection counts as reading, and only while the reader is visible.
+    if (!props.active || typeof id !== 'string' || selected.value?.id !== id) return;
+    const key = JSON.stringify([props.owner, id]);
+    if (key === lastRead) return;
+    lastRead = key;
+    reading.value = rememberKnowledgeReading(reading.value, id);
+    persistReading();
+  },
+  { immediate: true },
+);
 const successors = computed(() =>
   props.all.filter((c) => c.prerequisites.includes(selected.value?.id ?? '')),
 );
@@ -28,6 +96,37 @@ const cardLink = (id: string) => ({
 });
 </script>
 <template>
+  <section class="panel knowledge-shelf" aria-label="我的知识书架">
+    <div class="shelf-heading">
+      <h2>我的知识书架</h2>
+      <p class="small subtle">按当前账号保存在本浏览器，阅读记录不计入掌握度。</p>
+    </div>
+    <p v-if="readingWarning" role="status" class="alert reading-warning">{{ readingWarning }}</p>
+    <div class="shelf-groups">
+      <nav aria-label="收藏知识">
+        <h3>
+          收藏知识 <span>{{ favoriteCards.length }}</span>
+        </h3>
+        <div v-if="favoriteCards.length" class="shelf-links">
+          <RouterLink v-for="card in favoriteCards" :key="card.id" :to="cardLink(card.id)">
+            {{ card.title }}
+          </RouterLink>
+        </div>
+        <p v-else class="small subtle">在正文中收藏常用知识，方便下次复习。</p>
+      </nav>
+      <nav aria-label="最近阅读">
+        <h3>
+          最近阅读 <span>{{ recentCards.length }} / 6</span>
+        </h3>
+        <div v-if="recentCards.length" class="shelf-links">
+          <RouterLink v-for="card in recentCards" :key="card.id" :to="cardLink(card.id)">
+            {{ card.title }}
+          </RouterLink>
+        </div>
+        <p v-else class="small subtle">从目录打开知识点后，会在这里保留最近阅读。</p>
+      </nav>
+    </div>
+  </section>
   <div v-if="cards.length" class="knowledge-reader">
     <nav class="panel knowledge-index" aria-label="知识目录">
       <div class="index-heading">
@@ -62,6 +161,13 @@ const cardLink = (id: string) => ({
         </div>
       </header>
       <div class="reading-actions">
+        <button
+          class="small-button favorite-button"
+          :aria-pressed="reading.favorites.includes(selected.id)"
+          @click="toggleFavorite"
+        >
+          {{ reading.favorites.includes(selected.id) ? '取消收藏' : '收藏知识' }}
+        </button>
         <RouterLink :to="{ path: '/battle', query: { skill: selected.id } }" class="button"
           >开始连战 →</RouterLink
         >
@@ -125,6 +231,69 @@ const cardLink = (id: string) => ({
   <p v-else class="quiet-empty">没有匹配的内置知识，试试别名或其他领域。</p>
 </template>
 <style scoped>
+.knowledge-shelf {
+  padding: 20px 24px;
+}
+.shelf-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.shelf-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.shelf-heading p {
+  margin: 0;
+}
+.shelf-groups {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 16px;
+}
+.shelf-groups h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.shelf-groups h3 span {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.shelf-groups p {
+  margin: 0;
+}
+.shelf-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shelf-links a {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  text-decoration: none;
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.shelf-links a:hover {
+  color: var(--highlight);
+  background: var(--accent-soft);
+}
+.reading-warning {
+  margin-bottom: 0;
+}
+.favorite-button[aria-pressed='true'] {
+  color: var(--highlight);
+  border-color: var(--highlight);
+  background: var(--accent-soft);
+}
 .knowledge-reader {
   display: grid;
   grid-template-columns: 224px minmax(0, 1fr);
@@ -307,6 +476,13 @@ const cardLink = (id: string) => ({
   }
 }
 @media (max-width: 700px) {
+  .knowledge-shelf {
+    padding: 18px;
+  }
+  .shelf-groups {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
   .knowledge-reader {
     grid-template-columns: 1fr;
   }

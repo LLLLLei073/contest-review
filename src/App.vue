@@ -51,8 +51,8 @@ onMounted(async () => {
   }
   window.addEventListener('resize', onResize);
   try {
-    await loadSettings();
-    await loadJob();
+    // 两份初始化数据互不依赖，并行拉取让首屏更早渲染
+    await Promise.all([loadSettings(), loadJob()]);
   } catch (e) {
     initError.value = (e as Error).message;
   } finally {

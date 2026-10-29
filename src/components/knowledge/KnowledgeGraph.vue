@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import type { LearningService } from '../../../shared/learning-service';
 import { categoryNames } from '../../../shared/training';
+import { filterKnowledgeGraph } from '../../../shared/knowledge-graph';
 const props = defineProps<{ graph: ReturnType<LearningService['graph']>; initialFocus?: string }>();
 const focus = ref(props.initialFocus ?? ''),
   query = ref(''),
@@ -15,28 +16,17 @@ const labels: Record<string, string> = {
 };
 watch(
   () => props.initialFocus,
-  (v) => (focus.value = v ?? ''),
+  (v) => select(v ?? ''),
 );
-const neighbors = computed(
-  () =>
-    new Set([
-      focus.value,
-      ...props.graph.edges.flatMap((e) =>
-        e.from === focus.value ? [e.to] : e.to === focus.value ? [e.from] : [],
-      ),
-    ]),
+const filtered = computed(() =>
+  filterKnowledgeGraph(props.graph, {
+    focus: focus.value,
+    query: query.value,
+    category: category.value,
+    kind: kind.value,
+  }),
 );
-const nodes = computed(() =>
-  props.graph.nodes
-    .filter(
-      (n) =>
-        (!focus.value || neighbors.value.has(n.id)) &&
-        (category.value === 'all' || n.category === category.value) &&
-        (kind.value === 'all' || n.kind === kind.value) &&
-        (!query.value || (n.label + ' ' + n.id).toLowerCase().includes(query.value.toLowerCase())),
-    )
-    .sort((a, b) => Number(b.id === focus.value) - Number(a.id === focus.value)),
-);
+const nodes = computed(() => filtered.value.nodes);
 const drawing = computed(() =>
   nodes.value.slice(0, 40).map((n, i, all) => ({
     ...n,
@@ -45,7 +35,7 @@ const drawing = computed(() =>
   })),
 );
 const edges = computed(() =>
-  props.graph.edges.flatMap((e) => {
+  filtered.value.edges.flatMap((e) => {
     const a = drawing.value.find((n) => n.id === e.from),
       b = drawing.value.find((n) => n.id === e.to);
     return a && b ? [{ ...e, a, b }] : [];
@@ -59,9 +49,10 @@ function select(id: string) {
 }
 </script>
 <template>
-  <section class="learning-stack">
+  <section class="learning-stack" aria-label="知识图谱">
     <div class="learning-controls">
-      <label>检索图谱节点<input v-model="query" placeholder="名称或题号" /></label
+      <label
+        >检索图谱节点<input v-model="query" type="search" placeholder="名称、别名或题号，用空格组合" /></label
       ><label
         >节点类型<select v-model="kind">
           <option value="all">全部类型</option>
@@ -72,28 +63,20 @@ function select(id: string) {
           <option value="all">全部领域</option>
           <option v-for="c in categoryNames" :key="c">{{ c }}</option>
         </select></label
-      ><button
-        class="small-button"
-        @click="
-          focus = '';
-          query = '';
-          category = 'all';
-          kind = 'all';
-        "
-      >
-        显示全部关系
-      </button>
+      ><button class="small-button" @click="select('')">显示全部关系</button>
     </div>
-    <p>
-      共 {{ graph.nodes.length }} 个节点 · 当前匹配 {{ nodes.length }} 个 · 画布显示
-      {{ drawing.length }} 个。下方列表包含全部匹配结果。
+    <p class="small subtle" aria-live="polite">
+      共 {{ graph.nodes.length }} 个节点 · 当前匹配 {{ nodes.length }} 个 · 画布显示 {{ drawing.length }} 个 ·
+      {{ filtered.edges.length }} 条匹配关系。下方列表包含全部匹配结果。
     </p>
-    <p v-if="focus" class="alert">
-      当前邻域：{{
-        graph.nodes.find((n) => n.id === focus)?.label ?? '节点已失效，请重置'
-      }}。点击列表中的“展开”切换中心。
-    </p>
-    <div class="panel learning-graph">
+    <div v-if="focus" class="alert graph-scope" role="status">
+      <span
+        >搜索范围：{{ graph.nodes.find((n) => n.id === focus)?.label ?? '节点已失效' }}及其直接关联。</span
+      >
+      <button class="small-button" @click="focus = ''">退出邻域，保留筛选</button>
+    </div>
+    <p v-else class="small subtle">搜索范围：全部图谱。展开节点可查看直接关联，并重置筛选。</p>
+    <div v-if="drawing.length" class="panel learning-graph">
       <svg viewBox="0 0 840 480" role="img" aria-label="算法知识关系图">
         <line
           v-for="(e, i) in edges"
@@ -154,11 +137,17 @@ function select(id: string) {
           </tr>
         </tbody>
       </table>
-      <p v-if="!nodes.length" class="quiet-empty">没有匹配节点，请调整检索条件。</p>
-      <details
-        v-for="(e, i) in graph.edges.filter((e) => !focus || e.from === focus || e.to === focus)"
-        :key="i"
-      >
+      <div v-if="!nodes.length" class="quiet-empty">
+        <p>当前范围内没有匹配节点，可减少关键词或重置筛选。</p>
+        <button class="small-button" @click="select('')">重置并显示全部节点</button>
+      </div>
+      <h3>
+        当前节点之间的关系 <span class="small subtle">{{ filtered.edges.length }} 条</span>
+      </h3>
+      <p v-if="nodes.length && !filtered.edges.length" class="small subtle">
+        当前筛选的节点之间没有直接关系；展开节点可查看它的关联。
+      </p>
+      <details v-for="(e, i) in filtered.edges" :key="i">
         <summary>
           {{ graph.nodes.find((n) => n.id === e.from)?.label }} →
           {{ graph.nodes.find((n) => n.id === e.to)?.label }} · {{ e.relation }}
@@ -169,3 +158,14 @@ function select(id: string) {
     </div>
   </section>
 </template>
+<style scoped>
+.graph-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.graph-scope .small-button {
+  font-size: 12px;
+}
+</style>

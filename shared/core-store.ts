@@ -243,6 +243,23 @@ export interface DatabaseLike {
 }
 export class CoreStore {
   learningEpoch = 0;
+  /**
+   * 写版本号：任何表/外部命名空间写入都会自增，是派生结果缓存
+   * （analysis/contests/statistics/problems/insights）的完整失效信号。
+   * 派生值都是 (表内容, 日期) 的纯函数，而所有写入都经过
+   * put()/externalPut()/externalDelete() 或 restore() 的显式自增。
+   */
+  writeEpoch = 0;
+  // 派生结果记忆化：同一 writeEpoch 内重复读取直接复用（派生计算是页面的主要耗时）。
+  // 返回的是共享引用，调用方只读、不得原地修改。
+  private contestsMemo: { epoch: number; handle: string; rows: ContestRow[] } | null = null;
+  private analysisMemo: {
+    epoch: number;
+    handle: string;
+    map: Map<number, Omit<AnalysisReport, 'task'>>;
+  } | null = null;
+  private problemsMemo: { epoch: number; handle: string; rows: ProblemRow[] } | null = null;
+  private statisticsMemo: { epoch: number; map: Map<string, Statistics> } | null = null;
   constructor(
     public db: DatabaseLike,
     private beforeRestore?: (backup: unknown) => string | null,
@@ -317,6 +334,7 @@ export class CoreStore {
     return r ? JSON.parse(r.value) : undefined;
   }
   put(table: Table, profile: string, key: string, value: unknown) {
+    this.writeEpoch++;
     this.db
       .prepare(
         `INSERT INTO ${table}(profile,key,value) VALUES(?,?,?) ON CONFLICT(profile,key) DO UPDATE SET value=excluded.value`,
@@ -344,6 +362,7 @@ export class CoreStore {
     ).map((row) => JSON.parse(row.value) as T);
   }
   externalPut(namespace: string, key: string, value: unknown) {
+    this.writeEpoch++;
     this.db
       .prepare(
         'INSERT INTO external(namespace,key,value) VALUES(?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value',
@@ -351,6 +370,7 @@ export class CoreStore {
       .run(namespace, key, JSON.stringify(value));
   }
   externalDelete(namespace: string, key: string) {
+    this.writeEpoch++;
     this.db.prepare('DELETE FROM external WHERE namespace=? AND key=?').run(namespace, key);
   }
   setting(key: string): string {
@@ -362,6 +382,8 @@ export class CoreStore {
   setSetting(key: string, value: string) {
     if (['active', 'atcoder-active', 'xcpc-active', 'luogu-active'].includes(key) && this.setting(key) !== value)
       this.learningEpoch++;
+    // settings 裸 SQL 写入不经 put()；账号/模式变化改变派生结果的输入，需失效缓存
+    this.writeEpoch++;
     this.db
       .prepare(
         'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
@@ -443,6 +465,8 @@ export class CoreStore {
   activate(handle: string) {
     handleSchema.parse(handle);
     if (this.active() !== handle) this.learningEpoch++;
+    // 与 setSetting 同理：裸 SQL 切换活跃账号会改变派生结果的输入
+    this.writeEpoch++;
     this.transaction(() => {
       this.db.prepare('INSERT OR IGNORE INTO profiles(handle) VALUES(?)').run(handle);
       this.db
@@ -1450,6 +1474,9 @@ export class CoreStore {
     this.put('training_meta', h, 'recent', trainingMetaSchema.parse({ recentCheckedAt: now.toISOString() }));
   }
   problems(h: string): ProblemRow[] {
+    // 返回缓存的共享引用：调用方只读（过滤/映射/排序作用于副本），不得原地修改行对象
+    if (this.problemsMemo?.epoch === this.writeEpoch && this.problemsMemo.handle === h)
+      return this.problemsMemo.rows;
     const subs = this.all<CFSubmission>('submissions', h);
     const aggregate = new Map<string, { solved: boolean; failures: number; submissionCount: number }>();
     for (const s of subs) {
@@ -1468,13 +1495,15 @@ export class CoreStore {
         }[]
       ).map((r) => [r.key, reviewSchema.parse(JSON.parse(r.value))]),
     );
-    return this.all<Problem>('problems', h)
+    const rows = this.all<Problem>('problems', h)
       .filter((p) => p.manual || reviews.has(p.key))
       .map((p) => ({
         ...p,
         review: reviews.get(p.key) || emptyReview(),
         ...(aggregate.get(p.key) || { solved: false, failures: 0, submissionCount: 0 }),
       }));
+    this.problemsMemo = { epoch: this.writeEpoch, handle: h, rows };
+    return rows;
   }
   detail(h: string, key: string) {
     const problem = this.problems(h).find((p) => p.key === key);
@@ -1531,6 +1560,8 @@ export class CoreStore {
     return attempt;
   }
   contests(h: string): ContestRow[] {
+    if (this.contestsMemo?.epoch === this.writeEpoch && this.contestsMemo.handle === h)
+      return this.contestsMemo.rows;
     const submissions = this.all<CFSubmission>('submissions', h),
       problems = this.all<Problem>('problems', h);
     const saved = this.all<CFContest & { rating?: CFRating }>('contests', h);
@@ -1538,7 +1569,7 @@ export class CoreStore {
       ...saved.map((c) => c.id),
       ...problems.map((p) => p.contestId).filter((n): n is number => n !== null),
     ]);
-    return [...ids]
+    const rows = [...ids]
       .map((id) => {
         const c = saved.find((c) => c.id === id),
           subs = submissions.filter((s) => s.contestId === id || s.problem.contestId === id);
@@ -1592,12 +1623,20 @@ export class CoreStore {
         };
       })
       .sort((a, b) => (b.startTimeSeconds || b.id) - (a.startTimeSeconds || a.id));
+    this.contestsMemo = { epoch: this.writeEpoch, handle: h, rows };
+    return rows;
   }
   analysis(
     h: string,
     id: number,
     submissions = this.all<CFSubmission>('submissions', h),
   ): Omit<AnalysisReport, 'task'> {
+    const memo =
+      this.analysisMemo?.epoch === this.writeEpoch && this.analysisMemo.handle === h
+        ? this.analysisMemo.map
+        : null;
+    const hit = memo?.get(id);
+    if (hit) return hit;
     const contests = this.all<CFContest & { rating?: CFRating }>('contests', h);
     const cache = this.get<AnalysisCache>('analysis_cache', h, String(id));
     const contest = contests.find((c) => c.id === id) ?? { id, name: `Codeforces ${id}` };
@@ -1606,7 +1645,7 @@ export class CoreStore {
       .map((p) => ({ ...p, contestId: p.contestId ?? undefined, rating: p.rating ?? undefined }));
     if (!cache && !contests.some((c) => c.id === id) && !problems.length) throw new Error('比赛不存在');
     const complete = this.all<SyncJob>('jobs', h).some((j) => j.mode === 'full' && j.status === 'completed');
-    return {
+    const report = {
       handle: h,
       contestId: id,
       fetchedAt: cache?.fetchedAt ?? null,
@@ -1625,8 +1664,16 @@ export class CoreStore {
         })),
       warnings: cache?.warnings ?? ['尚未获取完整榜单和题集，联网后可补充分析。'],
     };
+    if (!this.analysisMemo || this.analysisMemo.epoch !== this.writeEpoch || this.analysisMemo.handle !== h)
+      this.analysisMemo = { epoch: this.writeEpoch, handle: h, map: new Map() };
+    this.analysisMemo.map.set(id, report);
+    return report;
   }
   statistics(h: string, now = new Date()): Statistics {
+    // 统计的所有日期逻辑（到期、趋势、题单）都以自然日为粒度，同日结果一致
+    const key = h + '|' + localDay(now);
+    const hit = this.statisticsMemo?.epoch === this.writeEpoch ? this.statisticsMemo.map.get(key) : undefined;
+    if (hit) return hit;
     const allRows = this.problems(h),
       rows = allRows.filter((p) => !p.review.ignored),
       attempts = this.all<Attempt>('attempts', h);
@@ -1674,7 +1721,7 @@ export class CoreStore {
         newCompleted: plan?.newKeys.filter((key) => ac.has(key)).length ?? 0,
       });
     }
-    return {
+    const result = {
       total: rows.length,
       unsolved: rows.filter((p) => !p.solved).length,
       mastered: rows.filter((p) => p.review.status === 'mastered').length,
@@ -1693,8 +1740,15 @@ export class CoreStore {
       mastery,
       dailyTraining,
     };
+    if (!this.statisticsMemo || this.statisticsMemo.epoch !== this.writeEpoch)
+      this.statisticsMemo = { epoch: this.writeEpoch, map: new Map() };
+    this.statisticsMemo.map.set(key, result);
+    return result;
   }
   combinedStatistics(source: 'all' | 'cf' | 'atcoder' | 'luogu' = 'all', now = new Date()): Statistics {
+    const key = 'combined|' + source + '|' + localDay(now);
+    const hit = this.statisticsMemo?.epoch === this.writeEpoch ? this.statisticsMemo.map.get(key) : undefined;
+    if (hit) return hit;
     const profiles = [
       ...(source !== 'atcoder' && source !== 'luogu' && this.active() ? [this.active()] : []),
       ...(source !== 'cf' && source !== 'luogu' && this.activeAtcoder()
@@ -1751,7 +1805,7 @@ export class CoreStore {
       }
       return merged;
     });
-    return {
+    const result = {
       total: sum('total'),
       unsolved: sum('unsolved'),
       mastered: sum('mastered'),
@@ -1769,6 +1823,10 @@ export class CoreStore {
       })),
       dailyTraining,
     };
+    if (!this.statisticsMemo || this.statisticsMemo.epoch !== this.writeEpoch)
+      this.statisticsMemo = { epoch: this.writeEpoch, map: new Map() };
+    this.statisticsMemo.map.set(key, result);
+    return result;
   }
   latestJob(h: string) {
     return this.all<SyncJob>('jobs', h).at(-1) || null;
@@ -2325,6 +2383,8 @@ export class CoreStore {
         }
     });
     this.learningEpoch++;
+    // restore 的 DELETE 裸 SQL 不经过 put()，末尾显式失效一次（put 路径已多次自增也无妨）
+    this.writeEpoch++;
     return { backupPath };
   }
 }

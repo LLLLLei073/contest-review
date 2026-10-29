@@ -50,16 +50,23 @@ async function load() {
   error.value = '';
   try {
     const currentSource = source.value;
-    const next = await api<Statistics>('/statistics?source=' + currentSource);
+    // 两段数据互不依赖，并行发起；次要数据失败不阻塞主统计展示
+    const overview = activeSection.value === 'overview';
+    const [next, extra] = await Promise.all([
+      api<Statistics>('/statistics?source=' + currentSource),
+      (overview
+        ? api<NonNullable<typeof weekly.value>>('/training/weekly')
+        : api<typeof reasonTrend.value>('/training/reason-trend?source=' + currentSource)
+      ).catch((e: Error) => {
+        if (alive && serial === loadSerial) error.value = e.message;
+        return null;
+      }),
+    ]);
     if (!alive || serial !== loadSerial) return;
     stats.value = next;
-    if (activeSection.value === 'overview') {
-      const nextWeekly = await api<NonNullable<typeof weekly.value>>('/training/weekly');
-      if (alive && serial === loadSerial) weekly.value = nextWeekly;
-    } else {
-      const nextTrend = await api<typeof reasonTrend.value>('/training/reason-trend?source=' + currentSource);
-      if (alive && serial === loadSerial) reasonTrend.value = nextTrend;
-    }
+    if (overview) {
+      if (extra) weekly.value = extra as NonNullable<typeof weekly.value>;
+    } else if (extra) reasonTrend.value = extra as typeof reasonTrend.value;
   } catch (e) {
     if (alive && serial === loadSerial) error.value = (e as Error).message;
   } finally {

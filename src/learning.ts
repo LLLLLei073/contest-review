@@ -1,13 +1,20 @@
 import { api, notify } from './api';
-export async function checkLearningAgent() {
-  try {
-    const result = await api<{ message?: string; fallback?: boolean }>('/learning/agent', {
-      automatic: true,
-    });
-    if (result.fallback) notify(result.message || 'AI 调整失败，沿用规则题单');
-  } catch {
-    /* 正常练习不依赖 AI 可用性，失败信息保存在学习中心。 */
-  }
+// 一次挂载可能触发多次检查（题单 + 近期提交 + 手动操作）：共享同一请求，避免并发重复调用
+let learningAgentInFlight: Promise<void> | null = null;
+export function checkLearningAgent() {
+  learningAgentInFlight ??= (async () => {
+    try {
+      const result = await api<{ message?: string; fallback?: boolean }>('/learning/agent', {
+        automatic: true,
+      });
+      if (result.fallback) notify(result.message || 'AI 调整失败，沿用规则题单');
+    } catch {
+      /* 正常练习不依赖 AI 可用性，失败信息保存在学习中心。 */
+    } finally {
+      learningAgentInFlight = null;
+    }
+  })();
+  return learningAgentInFlight;
 }
 // Stored ZIP: 无压缩，避免依赖服务或阻塞浏览器；UTF-8 文件名。
 export function downloadFiles(name: string, files: Record<string, string>) {

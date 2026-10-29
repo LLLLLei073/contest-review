@@ -130,7 +130,26 @@ function solvedProblems(store: CoreStore, profile: string): Problem[] {
 const emptyMastery = () =>
   masteryAreas([], [], [], new Map<string, ProblemRow['review']>(), problemKey);
 
+// 汇总是 (表内容, 日期, 激活账号) 的纯函数：writeEpoch 变化或日期/账号变化即失效。
+// /insights 在 dataRevision 连发时不再重复 4 遍掌握度与全量比赛重算。
+const insightsCache = new WeakMap<CoreStore, { key: string; value: InsightsPayload }>();
+
 export function buildInsights(store: CoreStore, now = new Date()): InsightsPayload {
+  const cacheKey = [
+    store.writeEpoch,
+    localDay(now),
+    store.active(),
+    store.activeAtcoder(),
+    store.activeLuogu(),
+  ].join('|');
+  const cached = insightsCache.get(store);
+  if (cached && cached.key === cacheKey) return cached.value;
+  const payload = computeInsights(store, now);
+  insightsCache.set(store, { key: cacheKey, value: payload });
+  return payload;
+}
+
+function computeInsights(store: CoreStore, now: Date): InsightsPayload {
   const cfHandle = store.active(),
     atcoderHandle = store.activeAtcoder(),
     luoguUid = store.activeLuogu(),
