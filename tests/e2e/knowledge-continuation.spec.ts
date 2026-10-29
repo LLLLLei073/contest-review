@@ -233,6 +233,9 @@ test('unavailable browser storage preserves current editing and still allows an 
     });
   });
   await page.goto(target(pages, '/knowledge?card=binary-search&experience=' + cards.boundary));
+  // pages 版是 hash 路由：若已在同一路径下，goto 只改 hash、不重载文档，
+  // addInitScript 不会生效，需要显式 reload 让 localStorage 禁用脚本注入。
+  await page.reload();
   const article = page.getByRole('article', { name: '知识正文' });
   await article.getByRole('button', { name: '收藏知识', exact: true }).click();
   await expect(page.getByRole('region', { name: '我的知识书架' })).toContainText(
