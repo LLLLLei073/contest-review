@@ -43,6 +43,8 @@ function browserStorage(): ReadingStorage | undefined {
   }
 }
 function persistReading() {
+  // ids 尚未加载时归一化会把收藏清空，此时禁止写回，防止启动竞态覆盖已存数据。
+  if (!restored.value) return;
   readingWarning.value = writeKnowledgeReading(
     props.owner,
     reading.value,
@@ -50,6 +52,8 @@ function persistReading() {
     browserStorage(),
   );
 }
+const readingSignature = () => JSON.stringify([props.owner, props.all.map((card) => card.id).join('|')]);
+const restored = ref('');
 function toggleFavorite() {
   if (!selected.value) return;
   reading.value = toggleKnowledgeFavorite(reading.value, selected.value.id);
@@ -66,6 +70,7 @@ watch(
     );
     reading.value = saved.value;
     readingWarning.value = saved.warning;
+    restored.value = props.all.length ? readingSignature() : '';
   },
   { immediate: true },
 );
@@ -76,6 +81,7 @@ watch(
     // A filtered list may display its first card automatically. Only an explicit
     // route selection counts as reading, and only while the reader is visible.
     if (!props.active || typeof id !== 'string' || selected.value?.id !== id) return;
+    if (!restored.value || restored.value !== readingSignature()) return;
     const key = JSON.stringify([props.owner, id]);
     if (key === lastRead) return;
     lastRead = key;

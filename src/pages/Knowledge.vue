@@ -78,13 +78,18 @@ const filteredCards = computed(() =>
     );
   }),
 );
-const library = computed(() =>
-  allKnowledge.value.filter(
+const library = computed(() => {
+  const matches = allKnowledge.value.filter(
     (k) =>
       (category.value === 'all' || k.category === category.value) &&
       matchesKnowledgeQuery(k.title + ' ' + k.content, query.value, [k.category, ...k.aliases, ...k.tags]),
-  ),
-);
+  );
+  // 身份字段（标题/别名/标签）命中的排在正文顺带提及之前：输入 "dp" 时
+  // 目录与自动展示的正文应是「动态规划」，而不是正文含「树形 DP」的树与遍历。
+  const identityRank = (k: (typeof allKnowledge.value)[number]) =>
+    matchesKnowledgeQuery('', query.value, [k.title, k.category, ...k.aliases, ...k.tags]) ? 0 : 1;
+  return matches.slice().sort((a, b) => identityRank(a) - identityRank(b));
+});
 const owner = () =>
   JSON.stringify([
     settings.value.activeHandle,

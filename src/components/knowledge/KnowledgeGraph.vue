@@ -71,7 +71,7 @@ function select(id: string) {
     </p>
     <div v-if="focus" class="alert graph-scope" role="status">
       <span
-        >搜索范围：{{ graph.nodes.find((n) => n.id === focus)?.label ?? '节点已失效' }}及其直接关联。</span
+        >当前邻域：{{ graph.nodes.find((n) => n.id === focus)?.label ?? '节点已失效' }} 及其直接关联。</span
       >
       <button class="small-button" @click="focus = ''">退出邻域，保留筛选</button>
     </div>
