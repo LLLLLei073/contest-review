@@ -1,8 +1,9 @@
 {
   "name": "contest-review",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "electron-dist/main.cjs",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -14,16 +15,21 @@
     "test:e2e": "playwright test",
     "check": "vue-tsc --noEmit",
     "check:cf": "tsx scripts/check-codeforces.ts",
-    "format": "prettier --write src server shared scripts tests *.ts *.json index.html README.md",
+    "format": "prettier --write src server shared scripts electron tests *.ts *.json index.html README.md",
     "build:pages": "vue-tsc --noEmit && vite build --mode pages && node scripts/build-atcoder-resources.mjs && node scripts/build-offline.mjs",
     "preview:pages": "vite preview --mode pages --host 127.0.0.1 --port 4173",
-    "test:pages": "playwright test --config playwright.pages.config.ts"
+    "test:pages": "playwright test --config playwright.pages.config.ts",
+    "desktop:build": "npm run build && node scripts/build-desktop.mjs",
+    "desktop:start": "electron electron-dist/main.cjs",
+    "desktop:dist": "npm run desktop:build && electron-builder --win",
+    "desktop:publish": "npm run desktop:build && electron-builder --win --publish always"
   },
   "dependencies": {
     "@fastify/static": "^8.2.0",
     "@langchain/core": "^1.2.17",
     "@langchain/langgraph": "^1.4.21",
     "@langchain/openai": "^1.6.2",
+    "electron-updater": "^6.8.11",
     "fastify": "^5.6.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.22",
@@ -43,10 +49,60 @@
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-vue": "^6.0.0",
     "concurrently": "^9.2.0",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
     "prettier": "^3.9.8",
     "tsx": "^4.20.0",
     "typescript": "~5.9.2",
     "vite": "^7.1.0",
     "vue-tsc": "^3.0.0"
+  },
+  "allowScripts": {
+    "electron@45.1.0": true,
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "description": "竞赛复盘与训练工作台（桌面版）",
+  "author": "LLLLLei073",
+  "build": {
+    "appId": "com.lei073.contestreview",
+    "productName": "回解",
+    "publish": {
+      "provider": "github",
+      "owner": "LLLLLei073",
+      "repo": "contest-review",
+      "releaseType": "release"
+    },
+    "asar": false,
+    "directories": {
+      "output": "desktop-dist"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-dist/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "回解"
+    }
   }
 }

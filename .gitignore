@@ -15,3 +15,8 @@ playwright-report/
 .mimosa/
 .zcode/
 .tmp/
+.npm-cache/
+.electron-cache/
+.electron-builder-cache/
+electron-dist/
+desktop-dist/

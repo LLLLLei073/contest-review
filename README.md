@@ -53,6 +53,22 @@ npm start
 
 功能入口、旧链接兼容和交互改动见 [体验优化说明](docs/experience.md)。
 
+## 桌面版（Windows）
+
+桌面版与本地 SQLite 版功能完全一致：同一个 Fastify 后端与 SQLite 数据库由 Electron 以子进程方式承载，界面运行在独立窗口中，无需浏览器，也不需要终端窗口常驻。
+
+- 生成安装包：`npm run desktop:dist`，产物在 `desktop-dist/`——「回解 Setup.exe」为 NSIS 安装器（可选安装目录、自动创建桌面快捷方式），「回解.exe」为免安装便携版。
+- 本地开发运行：`npm run desktop:build`（类型检查 + 前端构建 + 打包 Electron 主进程与后端入口），再 `npm run desktop:start` 启动。
+- npm 12 及以上会默认拦截依赖的安装脚本：首次 `npm ci` 后需执行 `npm approve-scripts electron`，再 `npm rebuild electron`，否则缺少 Electron 可执行文件。
+- 数据位置：安装版/便携版存放在 `%APPDATA%/回解/data/review.sqlite`，与网页版（项目 `data/` 目录）互不影响；开发模式沿用项目 `data/`。可用应用内「备份与恢复」在两版之间迁移数据。
+- 外部链接（题目、榜单等）默认用系统浏览器打开；同一时间只允许运行一个实例。
+
+### 自动更新
+
+- 安装版会在启动 15 秒后检查一次 GitHub Releases，之后每 6 小时复查；发现新版本即后台静默下载，完成后弹窗询问「重启更新 / 稍后」。选「稍后」会在下次正常退出时自动安装。检查或下载失败只写主进程日志，不影响使用。
+- 便携版无法自我替换（Electron 更新机制限制），不参与自动更新；需要时从 Release 页重新下载。
+- 发布新版本：把 `package.json` 的 `version` 升一位，然后执行 `GH_TOKEN=$(gh auth token) npm run desktop:publish`（Git Bash；PowerShell 用 `$env:GH_TOKEN = gh auth token`）。该命令构建并把安装器、便携版与 `latest.yml` 一起发布到 GitHub Releases——`latest.yml` 是客户端发现新版本的清单，不要手工改动。
+
 ## 第一次使用
 
 1. 打开「设置与数据」→「账号连接」→「Codeforces」，输入自己的 handle 并绑定；再到「同步状态」开始导入。新用户名需要联网验证，已有账号可离线切换。
