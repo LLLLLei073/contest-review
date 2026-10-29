@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue';
+import { fullDate } from '../../api';
 import type { AgentRecord } from '../../../shared/agent-domain';
 const open = defineModel<boolean>({ required: true }),
   memories = defineModel<Extract<AgentRecord, { kind: 'memory' }>[]>('memories', { required: true }),
@@ -39,7 +40,7 @@ watch(
     <article v-for="m in memories" :key="m.id" class="astra-memory-item">
       <label :for="'memory-' + m.id">已记住的偏好</label
       ><textarea :id="'memory-' + m.id" v-model="m.content" rows="3" maxlength="2000" />
-      <p class="small subtle">来源：用户明确表达 · {{ new Date(m.createdAt).toLocaleString('zh-CN') }}</p>
+      <p class="small subtle">来源：用户明确表达 · {{ fullDate(m.createdAt) }}</p>
       <details>
         <summary>来源消息编号</summary>
         <code>{{ m.sourceId }}</code>

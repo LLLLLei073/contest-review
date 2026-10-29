@@ -55,7 +55,9 @@ export async function api<T>(
   const recent = path === '/training/recent' || (method !== 'GET' && path.startsWith('/training/battle/'));
   if (recent) recentChecks.value++;
   try {
-    if (browserMode) {
+    // Literal check (not the exported browserMode): Rollup can only drop this
+    // branch — and the browser bundle it imports — when the condition folds to false.
+    if (import.meta.env.VITE_BROWSER) {
       const result = await (await import('./browser/api')).browserApi<T>(path, body, method);
       learningFeedback(path, method, result);
       return result;
@@ -87,7 +89,17 @@ export function dateLabel(value: string | null | undefined) {
 export function fullDate(value: string) {
   return new Date(value).toLocaleString('zh-CN');
 }
+export function fullDay(value: string) {
+  return new Date(value).toLocaleDateString('zh-CN');
+}
+export const unixTime = (seconds: number) => new Date(seconds * 1000).toLocaleString('zh-CN');
+export const unixDay = (seconds: number) => new Date(seconds * 1000).toLocaleDateString('zh-CN');
 export const statusLabels = { pending: '待复盘', reviewing: '复习中', mastered: '已掌握' };
+export const battleStatusLabels: Record<string, string> = {
+  active: '进行中',
+  paused: '已中断',
+  ended: '已结束',
+};
 export const resultLabels = { independent: '独立做对', hint: '借助提示', failed: '仍未做出' };
 export function localDate(value: string) {
   const d = new Date(value);

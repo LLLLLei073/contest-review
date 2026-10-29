@@ -225,12 +225,6 @@ svg {
   font-family: inherit;
   margin-top: 0;
 }
-.note-line {
-  width: 25px;
-  height: 2px;
-  background: var(--surface-raised);
-  margin: 12px 0 10px;
-}
 .sidebar-bottom {
   margin-top: auto;
 }
@@ -576,12 +570,6 @@ svg {
   border-radius: 50%;
   color: var(--muted);
 }
-.dashboard-bottom {
-  display: grid;
-  grid-template-columns: minmax(0, 1.75fr) minmax(250px, 1fr);
-  gap: 22px;
-  margin-top: 25px;
-}
 .quiet-empty {
   padding: 30px;
   color: var(--muted);
@@ -589,72 +577,10 @@ svg {
   text-align: center;
   line-height: 1.8;
 }
-.pending-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 17px 25px;
-  border-top: 1px solid var(--line);
-}
-.pending-row:hover {
-  background: var(--paper);
-}
 .row-number {
   font-family: Consolas, monospace;
   font-size: 10px;
   color: var(--muted);
-}
-.pending-row > div {
-  flex: 1;
-}
-.pending-row strong {
-  font-size: 12px;
-  font-weight: 500;
-}
-.pending-row small {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 5px;
-}
-.practice-note {
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 27px;
-  background: var(--surface-raised);
-  display: flex;
-  flex-direction: column;
-}
-.practice-note .eyebrow {
-  font-size: 8px;
-  color: var(--muted);
-}
-.practice-note h2 {
-  font-family: 'STSong', 'SimSun', serif;
-  line-height: 1.9;
-  font-size: 22px;
-  color: var(--muted);
-  margin: 20px 0 12px;
-  font-weight: 500;
-}
-.practice-note p {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 2;
-}
-.note-bottom {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 26px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-  font-size: 7px;
-  letter-spacing: 1.5px;
-  color: var(--muted);
-}
-.note-bottom span {
-  font-size: 18px;
-  line-height: 1;
 }
 .workspace footer {
   display: flex;
@@ -869,17 +795,6 @@ svg {
   to {
     opacity: 0.25;
   }
-}
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: color-mix(in srgb, var(--accent-soft) 33%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  backdrop-filter: blur(3px);
 }
 .modal {
   max-height: 90vh;
@@ -1849,9 +1764,6 @@ svg {
     padding-left: 12px;
     padding-right: 12px;
   }
-  .dashboard-bottom {
-    grid-template-columns: 1.4fr 1fr;
-  }
   .page-head h1 {
     font-size: 27px;
   }
@@ -1897,9 +1809,6 @@ svg {
   }
   .detail-side > .quiet-button {
     grid-column: 1/-1;
-  }
-  .dashboard-bottom {
-    grid-template-columns: 1fr 1fr;
   }
   .metrics {
     gap: 10px;
@@ -2008,13 +1917,9 @@ svg {
   .metric strong {
     font-size: 34px;
   }
-  .dashboard-bottom,
   .two-columns,
   .contest-layout {
     grid-template-columns: 1fr;
-  }
-  .practice-note {
-    padding: 24px;
   }
   .welcome-card {
     padding: 22px;
@@ -2199,6 +2104,30 @@ svg {
 }
 .report-toolbar h3 {
   margin: 0;
+}
+.report-actions {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.score-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0 0;
+}
+.score-badge {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.score-badge.low {
+  color: var(--reward);
+  background: var(--reward-soft);
+  border-color: transparent;
 }
 .report-score {
   background: var(--accent-soft);
@@ -3559,6 +3488,7 @@ details[open] > :not(summary) {
     background: var(--accent-soft);
     color: var(--green);
   }
+  /* mastery-view-* is composed dynamically in Statistics.vue ('mastery-view-' + view). */
   .mastery-view-chart .mastery-list,
   .mastery-view-list .mastery-radar {
     display: none;
@@ -3626,11 +3556,6 @@ details[open] > :not(summary) {
   flex-wrap: wrap;
   margin-bottom: 1.5rem;
 }
-.learning-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
-  gap: 1rem;
-}
 .learning-card {
   padding: 1.4rem;
   overflow-wrap: anywhere;
@@ -3685,9 +3610,6 @@ details[open] > :not(summary) {
 }
 .learning-graph g {
   cursor: pointer;
-}
-.learning-selected {
-  outline: 2px solid var(--danger);
 }
 .learning-table {
   overflow-x: auto;
@@ -3768,8 +3690,7 @@ h2[tabindex='-1']:focus {
     margin: 12px 14px 10px;
   }
   .sidebar-note p,
-  .sidebar-note > span,
-  .sidebar-note .note-line {
+  .sidebar-note > span {
     display: none;
   }
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { fullDay } from '../../api';
 import type { AgentRecord } from '../../../shared/agent-domain';
 const props = defineProps<{
   sessions: Extract<AgentRecord, { kind: 'session' }>[];
@@ -36,7 +37,7 @@ const filtered = computed(() =>
       :disabled="busy"
       @click="emit('select', s.id)"
     >
-      {{ title(s) }}<small>{{ new Date(s.createdAt).toLocaleDateString('zh-CN') }}</small>
+      {{ title(s) }}<small>{{ fullDay(s.createdAt) }}</small>
     </button>
     <p v-if="!filtered.length" class="small subtle">没有匹配的会话。</p>
   </div>

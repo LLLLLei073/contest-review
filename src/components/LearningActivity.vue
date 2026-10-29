@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { fullDate } from '../api';
 import Markdown from './Markdown.vue';
 import type { useLearningState } from '../learningState';
 import type { LearningRecord } from '../../shared/learning-domain';
@@ -65,7 +66,7 @@ async function evaluate(id: string, result: 'independent' | 'hint' | 'failed') {
         <template v-if="r.kind === 'diagnosis'"
           ><h2>
             {{ r.period === '30' ? '近 30 天' : '全部历史' }} ·
-            {{ new Date(r.createdAt).toLocaleString('zh-CN') }}
+            {{ fullDate(r.createdAt) }}
           </h2>
           <p v-for="w in r.warnings" :key="w" class="subtle">{{ w }}</p>
           <div v-for="(f, i) in r.findings" :key="i">
@@ -139,9 +140,7 @@ async function evaluate(id: string, result: 'independent' | 'hint' | 'failed') {
             撤回此版本
           </button></template
         >
-        <p v-else-if="r.kind === 'agent-run'">
-          {{ new Date(r.createdAt).toLocaleString('zh-CN') }} · {{ r.message }}
-        </p>
+        <p v-else-if="r.kind === 'agent-run'">{{ fullDate(r.createdAt) }} · {{ r.message }}</p>
       </article>
     </section>
     <section v-if="mode === 'transfers'" class="learning-stack">

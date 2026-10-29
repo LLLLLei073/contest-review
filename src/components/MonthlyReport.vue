@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { api, settings, dataRevision } from '../api';
+import { api, battleStatusLabels, settings, dataRevision } from '../api';
 import {
   beijingDay,
   type MonthlyAlgorithmReport,
@@ -22,8 +22,7 @@ let sequence = 0,
   alive = true;
 const max = computed(() => Math.max(1, ...(report.value?.days.map((d) => d.submissions) ?? [])));
 const kindLabel = { official: '正式参赛', virtual: '虚拟参赛', other: '其他参赛', window: '仅赛时提交' };
-const battleStatus = (status: string) =>
-  ({ active: '进行中', paused: '已中断', ended: '已结束' })[status] ?? status;
+const battleStatus = (status: string) => battleStatusLabels[status] ?? status;
 const summary = computed(() =>
   report.value
     ? [

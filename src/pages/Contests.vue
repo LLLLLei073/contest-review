@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Flag, ArrowUpRight, Save, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 import type { ContestReview, CFRating } from '../../shared/domain';
 import type { BatchJob } from '../../shared/xcpc';
-import { api, notify, job, settings, loadSettings } from '../api';
+import { api, notify, job, settings, loadSettings, unixDay } from '../api';
 import ContestReport from '../components/ContestReport.vue';
 import ContestFilters from '../components/contests/ContestFilters.vue';
 import BatchProgress from '../components/contests/BatchProgress.vue';
@@ -437,11 +437,7 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
               <span>{{
                 c.source === 'cf' ? 'CF #' + c.id : c.source === 'atcoder' ? 'AtCoder' : 'XCPC'
               }}</span
-              ><span>{{
-                c.startTimeSeconds
-                  ? new Date(c.startTimeSeconds * 1000).toLocaleDateString('zh-CN')
-                  : '时间待补全'
-              }}</span>
+              ><span>{{ c.startTimeSeconds ? unixDay(c.startTimeSeconds) : '时间待补全' }}</span>
             </div>
             <h3>{{ c.name }}</h3>
             <div class="tag-line">
@@ -590,18 +586,21 @@ onBeforeRouteLeave(() => !dirty.value || confirm('比赛复盘尚未保存，确
                   v-if="selected.source === 'cf'"
                   :key="`${settings.activeHandle}:${selected.id}:${batch?.id}:${batch?.status}`"
                   :contest-id="Number(selected.id)"
+                  :contest="selected"
                   @updated="load"
                 />
                 <AtcoderReport
                   v-else-if="selected.source === 'atcoder'"
                   :key="`${settings.activeAtcoder}:${selected.id}:${batch?.id}:${batch?.status}`"
                   :contest-id="String(selected.id)"
+                  :contest="selected"
                   @updated="load"
                 />
                 <XcpcReport
                   v-else
                   :key="`${settings.xcpcPlayer?.key}:${selected.id}:${settings.xcpcMode}:${batch?.id}:${batch?.status}`"
                   :slug="String(selected.id)"
+                  :contest="selected"
                   @updated="load"
                 />
               </div>

@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useSection } from '../sections';
 import { useRoute } from 'vue-router';
-import { api, notify, settings } from '../api';
+import { api, fullDay, notify, settings } from '../api';
 import type { CFContest } from '../../shared/domain';
 import type { SimulationEvent } from '../../shared/training-extras';
 
@@ -286,7 +286,7 @@ onUnmounted(() => clearInterval(timer));
               view = 'session';
             "
           >
-            {{ session.contestName }} · {{ new Date(session.startedAt).toLocaleDateString('zh-CN') }} · AC
+            {{ session.contestName }} · {{ fullDay(session.startedAt) }} · AC
             {{ session.solved }}
           </button>
         </div>

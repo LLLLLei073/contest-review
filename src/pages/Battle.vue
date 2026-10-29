@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { api, settings } from '../api';
+import { api, battleStatusLabels, settings } from '../api';
 import { knowledgeCards } from '../../shared/knowledge';
 import type { BattleRecord, BattleState } from '../../shared/battle-service';
 
@@ -40,8 +40,7 @@ const label = (value: string | null) =>
   })[value ?? 'accepted'];
 const themeOf = (s: { skillId: string; custom?: { theme: string } | null }) =>
   s.custom?.theme || title(s.skillId);
-const recordStatus = (status: string) =>
-  ({ active: '进行中', paused: '已中断', ended: '已结束' })[status] ?? status;
+const recordStatus = (status: string) => battleStatusLabels[status] ?? status;
 const summaryBusy = ref('');
 let alive = true,
   generation = 0,
@@ -287,8 +286,9 @@ onBeforeUnmount(() => {
             {{ current.problem.key.replace(':', '') }} · 难度 {{ current.problem.rating }} · 匹配标签：{{
               current.problem.tags
                 .filter((t) =>
-                  (session!.custom?.tags ??
-                    knowledgeCards.find((c) => c.id === session!.skillId)!.tags).includes(t),
+                  (
+                    session!.custom?.tags ?? knowledgeCards.find((c) => c.id === session!.skillId)!.tags
+                  ).includes(t),
                 )
                 .join(' / ')
             }}
@@ -425,7 +425,8 @@ onBeforeUnmount(() => {
       </div>
       <p class="small subtle">
         每轮连战（含被中断的场次）都会自动归入战报：主题、耗时与题目数量一目了然；结束的场次自动生成 AI 总结。
-        连续独立完成的加成从 1.1× 递增至 1.5×，跳过、记录失败或使用提示会重置；奖励计入统计掌握度与知识掌握概率。
+        连续独立完成的加成从 1.1× 递增至
+        1.5×，跳过、记录失败或使用提示会重置；奖励计入统计掌握度与知识掌握概率。
       </p>
       <p v-if="recordsError" role="alert" class="alert error">{{ recordsError }}</p>
       <p v-else-if="!records?.length" class="quiet-empty">
@@ -451,19 +452,13 @@ onBeforeUnmount(() => {
             <ul v-if="r.summary.advice.length" class="battle-advice">
               <li v-for="a in r.summary.advice" :key="a">{{ a }}</li>
             </ul>
-            <button
-              class="small-button"
-              :disabled="summaryBusy === r.id"
-              @click="summarize(r.id)"
-            >
+            <button class="small-button" :disabled="summaryBusy === r.id" @click="summarize(r.id)">
               {{ summaryBusy === r.id ? '重新生成中…' : '重新生成总结' }}
             </button>
           </details>
           <p v-else-if="r.status !== 'active'" class="small subtle">尚未生成 AI 总结。</p>
           <div class="battle-actions">
-            <button v-if="r.id !== session?.id" class="small-button" @click="load(r.id)">
-              查看详情
-            </button>
+            <button v-if="r.id !== session?.id" class="small-button" @click="load(r.id)">查看详情</button>
             <button
               v-if="r.status === 'paused' && r.id !== session?.id"
               class="small-button"

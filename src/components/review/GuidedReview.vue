@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { api, settings, dataRevision } from '../../api';
+import { api, dataRevision, fullDate, settings } from '../../api';
 import { streamAgent } from '../../agent';
 import type { AgentContext, AgentEvent, AgentRecord } from '../../../shared/agent-domain';
 import {
@@ -224,7 +224,7 @@ onBeforeUnmount(() => {
               ? context.source.toUpperCase() + ' · ' + context.contestId
               : ''
         }}
-        · 已保存 {{ new Date(workflow.updatedAt).toLocaleString('zh-CN') }}
+        · 已保存 {{ fullDate(workflow.updatedAt) }}
       </p>
       <p>{{ workflow.summary }}</p>
       <p v-if="busy" role="status">

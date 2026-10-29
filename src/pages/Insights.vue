@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { api, browserMode, dataRevision, loadSettings, notify, settings } from '../api';
+import {
+  api,
+  battleStatusLabels,
+  browserMode,
+  dataRevision,
+  fullDate,
+  loadSettings,
+  notify,
+  settings,
+  unixDay,
+} from '../api';
 import type { SyncJob } from '../../shared/domain';
 import type { InsightsPayload } from '../../shared/insights';
 import RadarChart from '../components/charts/RadarChart.vue';
@@ -38,8 +48,7 @@ const platformNames: Record<string, string> = {
 };
 const accountOf = (platform: 'cf' | 'atcoder' | 'luogu') =>
   insights.value?.accounts.find((a) => a.platform === platform);
-const battleStatus = (status: string) =>
-  ({ active: '进行中', paused: '已中断', ended: '已结束' })[status] ?? status;
+const battleStatus = (status: string) => battleStatusLabels[status] ?? status;
 
 async function load() {
   const serial = ++loadSerial;
@@ -232,7 +241,7 @@ const ratingChart = computed(() => {
         dots: s.data.map((p) => ({
           x: x(p.t).toFixed(1),
           y: y(p.rating).toFixed(1),
-          label: `${s.name} ${p.rating} · ${new Date(p.t * 1000).toLocaleDateString('zh-CN')}`,
+          label: `${s.name} ${p.rating} · ${unixDay(p.t)}`,
         })),
       })),
   };
@@ -273,7 +282,7 @@ const activityChart = computed(() => {
 
 const anyBound = computed(() => !!insights.value?.accounts.some((a) => a.bound));
 function formatDateTime(value: string | null) {
-  return value ? new Date(value).toLocaleString('zh-CN') : '尚未同步';
+  return value ? fullDate(value) : '尚未同步';
 }
 
 onMounted(() => {
@@ -326,7 +335,9 @@ onBeforeUnmount(() => {
       <template v-if="accountOf(platform)?.bound">
         <p class="account-name">
           {{ accountOf(platform)!.name || accountOf(platform)!.handle }}
-          <small v-if="platform === 'luogu' && accountOf(platform)!.handle">UID {{ accountOf(platform)!.handle }}</small>
+          <small v-if="platform === 'luogu' && accountOf(platform)!.handle"
+            >UID {{ accountOf(platform)!.handle }}</small
+          >
         </p>
         <dl class="account-facts">
           <div>
@@ -350,17 +361,19 @@ onBeforeUnmount(() => {
             <dd>{{ formatDateTime(accountOf(platform)!.lastSync) }}</dd>
           </div>
         </dl>
-        <button
-          class="primary"
-          :disabled="busy === platform || running"
-          @click="sync(platform)"
-        >
+        <button class="primary" :disabled="busy === platform || running" @click="sync(platform)">
           {{
             platform === 'cf'
-              ? (cfJob?.status === 'running' ? `同步中 · ${cfJob.message}` : '同步数据')
+              ? cfJob?.status === 'running'
+                ? `同步中 · ${cfJob.message}`
+                : '同步数据'
               : platform === 'atcoder'
-                ? (atcoderJob?.status === 'running' ? `同步中 · ${atcoderJob.message}` : '同步数据')
-                : (luoguJob?.status === 'running' ? `同步中 · ${luoguJob.message}` : '同步数据')
+                ? atcoderJob?.status === 'running'
+                  ? `同步中 · ${atcoderJob.message}`
+                  : '同步数据'
+                : luoguJob?.status === 'running'
+                  ? `同步中 · ${luoguJob.message}`
+                  : '同步数据'
           }}
         </button>
         <p
@@ -522,9 +535,13 @@ onBeforeUnmount(() => {
           </circle>
         </template>
       </svg>
-      <p v-else class="quiet-empty">暂无比赛 Rating 记录：绑定账号并完成同步后，Codeforces 与 AtCoder 的 Rated 比赛历史会显示在这里。</p>
+      <p v-else class="quiet-empty">
+        暂无比赛 Rating 记录：绑定账号并完成同步后，Codeforces 与 AtCoder 的 Rated 比赛历史会显示在这里。
+      </p>
       <div v-if="ratingChart" class="chart-legend">
-        <span v-for="s in ratingChart.series" :key="s.name"><i :style="{ background: s.color }"></i>{{ s.name }}</span>
+        <span v-for="s in ratingChart.series" :key="s.name"
+          ><i :style="{ background: s.color }"></i>{{ s.name }}</span
+        >
       </div>
     </section>
 
@@ -553,13 +570,15 @@ onBeforeUnmount(() => {
         :series="radarProps"
         labels
         aria-label="各平台算法领域掌握度雷达图"
-        :tooltip="(axis) => radarProps.map((s) => `${s.name}：${radarAxes[axis]} ${s.values[axis]} 分`).join('；')"
+        :tooltip="
+          (axis) => radarProps.map((s) => `${s.name}：${radarAxes[axis]} ${s.values[axis]} 分`).join('；')
+        "
       />
       <details class="chart-caption">
         <summary>口径说明</summary>
         <p>
-          与训练统计页一致：已掌握 100、独立做对 85、借助提示 45、仍未做出 15，未重做时 AC
-          70、失败 20，样本不足向 50 收敛。AtCoder 与洛谷的题目只有在复盘里标注过领域才会计入对应维度。
+          与训练统计页一致：已掌握 100、独立做对 85、借助提示 45、仍未做出 15，未重做时 AC 70、失败
+          20，样本不足向 50 收敛。AtCoder 与洛谷的题目只有在复盘里标注过领域才会计入对应维度。
         </p>
       </details>
     </section>
@@ -574,7 +593,10 @@ onBeforeUnmount(() => {
                 v-for="seg in col.segments"
                 v-show="seg.value"
                 :key="seg.label"
-                :style="{ height: col.total ? (seg.value / col.total) * 100 + '%' : '0', background: seg.color }"
+                :style="{
+                  height: col.total ? (seg.value / col.total) * 100 + '%' : '0',
+                  background: seg.color,
+                }"
                 :title="`${seg.label}：${seg.value} 题`"
               ></span>
             </div>
@@ -594,7 +616,10 @@ onBeforeUnmount(() => {
                 v-for="seg in col.segments"
                 v-show="seg.value"
                 :key="seg.label"
-                :style="{ height: col.total ? (seg.value / col.total) * 100 + '%' : '0', background: seg.color }"
+                :style="{
+                  height: col.total ? (seg.value / col.total) * 100 + '%' : '0',
+                  background: seg.color,
+                }"
                 :title="`${col.month} ${seg.label}：${seg.value} 次提交`"
               ></span>
             </div>

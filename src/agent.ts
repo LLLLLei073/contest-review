@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { api, browserMode } from './api';
+import { api } from './api';
 import type { AgentEvent, AgentRecord } from '../shared/agent-domain';
 
 export const astraSuggestion = ref<Extract<AgentRecord, { kind: 'suggestion' }> | null>(null);
@@ -24,7 +24,8 @@ export async function streamAgent(
   onEvent: (event: AgentEvent) => void,
   signal: AbortSignal,
 ) {
-  if (browserMode) {
+  // Literal check so the server build drops the in-browser agent runtime (and langchain).
+  if (import.meta.env.VITE_BROWSER) {
     const { browserRuntime } = await import('./browser/database');
     const runtime = await browserRuntime();
     runtime.assertWritable();

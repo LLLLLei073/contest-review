@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import { ArrowLeft, ExternalLink, EyeOff, Clock3, Sparkles, Trash2 } from 'lucide-vue-next';
-import { api, notify, statusLabels, resultLabels, fullDate, localDate } from '../api';
+import { api, notify, statusLabels, resultLabels, fullDate, localDate, unixTime } from '../api';
 import {
   verdictLabel,
   emptyReview,
@@ -51,7 +51,12 @@ const learningOpened = ref(tab.value === 'assistant' && tool.value !== 'code');
 watch([tab, tool], () => {
   if (tab.value === 'assistant' && tool.value !== 'code') learningOpened.value = true;
 });
-const data = ref<{ problem: ProblemRow; submissions: CFSubmission[]; attempts: Attempt[]; battle?: import('../../shared/battle-domain').BattleReward[] } | null>(null),
+const data = ref<{
+    problem: ProblemRow;
+    submissions: CFSubmission[];
+    attempts: Attempt[];
+    battle?: import('../../shared/battle-domain').BattleReward[];
+  } | null>(null),
   draft = ref<Review>(emptyReview()),
   snapshot = ref(''),
   error = ref(''),
@@ -404,7 +409,7 @@ onBeforeRouteUpdate((to) => {
                   }}</small
                 >
               </div>
-              <time>{{ fullDate(new Date(s.creationTimeSeconds * 1000).toISOString()) }}</time>
+              <time>{{ unixTime(s.creationTimeSeconds) }}</time>
               <button
                 class="small-button"
                 :disabled="!!fetchingSubmission"

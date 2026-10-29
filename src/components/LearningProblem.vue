@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
-import { api } from '../api';
+import { api, fullDate } from '../api';
 import { downloadFiles } from '../learning';
 import type { LearningRecord } from '../../shared/learning-domain';
 import type { AiReviewRecord } from '../../shared/ai-review';
@@ -108,7 +108,7 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
         >经验来源<select v-model="sourceId">
           <option value="">已保存的复盘与代码</option>
           <option v-for="r in aiReviews" :key="r.id" :value="r.id">
-            AI 分析 · {{ new Date(r.createdAt).toLocaleString('zh-CN') }}
+            AI 分析 · {{ fullDate(r.createdAt) }}
           </option>
         </select></label
       ><button
@@ -148,7 +148,7 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
       <p class="small subtle">提示按顺序解锁。本次练习使用提示后，评价采用“借助提示”，不推进独立完成阶段。</p>
       <details v-for="h in hints" :key="h.id">
         <template v-if="h.kind === 'hint'"
-          ><summary>第 {{ h.level }} 级 · {{ new Date(h.createdAt).toLocaleString('zh-CN') }}</summary>
+          ><summary>第 {{ h.level }} 级 · {{ fullDate(h.createdAt) }}</summary>
           <Markdown :text="h.content"
         /></template>
       </details>
@@ -173,7 +173,7 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
       ><label>导入本机对拍报告<input type="file" accept=".json" @change="importReport" /></label>
       <article v-for="b in bundles" :key="b.id" class="learning-card panel">
         <template v-if="b.kind === 'bundle'"
-          ><h3>{{ b.language }} · {{ new Date(b.createdAt).toLocaleString('zh-CN') }}</h3>
+          ><h3>{{ b.language }} · {{ fullDate(b.createdAt) }}</h3>
           <p>
             {{
               b.status === 'suggested'

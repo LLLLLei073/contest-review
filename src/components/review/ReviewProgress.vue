@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { RotateCcw } from 'lucide-vue-next';
+import { fullDay } from '../../api';
 import { nextReviewState, type Review } from '../../../shared/domain';
 const props = defineProps<{
   review: Review;
@@ -52,9 +53,7 @@ const expected = computed(() =>
     </button>
     <p v-if="review.awaitingEvaluation" class="small subtle">
       按当前评价选择，保存后{{
-        expected.nextReview
-          ? '预计于 ' + new Date(expected.nextReview).toLocaleDateString('zh-CN') + ' 再复习'
-          : '完成第五轮独立验证'
+        expected.nextReview ? '预计于 ' + fullDay(expected.nextReview) + ' 再复习' : '完成第五轮独立验证'
       }}。提示帮助仍由实际记录校验。
     </p>
     <div v-if="review.ignored" class="alert">此题已忽略，不会出现在复习队列中。</div>

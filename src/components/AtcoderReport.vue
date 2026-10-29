@@ -1,15 +1,55 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ArrowUpRight, RefreshCw } from 'lucide-vue-next';
-import { api, fullDate } from '../api';
+import { ArrowUpRight, ImageDown, RefreshCw } from 'lucide-vue-next';
+import { api, fullDate, fullDay, unixDay, unixTime } from '../api';
+import { failures } from '../../shared/domain';
 import type { AtcoderReport } from '../../shared/atcoder';
-const props = defineProps<{ contestId: string }>();
+import { useContestCard } from '../composables/useContestCard';
+const props = defineProps<{
+  contestId: string;
+  contest?: { name?: string; startTimeSeconds?: number } | null;
+}>();
 const emit = defineEmits<{ updated: [] }>();
 const report = ref<AtcoderReport | null>(null),
   error = ref(''),
   busy = ref(false);
+const { cardError, downloadCard: runCard } = useContestCard();
 let requestNumber = 0;
-let initialReadSettled = false;
+const downloadCard = () =>
+  runCard(
+    report.value
+      ? {
+          platform: 'atcoder',
+          title: props.contest?.name ?? `AtCoder ${props.contestId}`,
+          dateText: props.contest?.startTimeSeconds
+            ? unixDay(props.contest.startTimeSeconds)
+            : report.value.official?.endTime
+              ? fullDay(report.value.official.endTime)
+              : '',
+          typeText: report.value.official
+            ? report.value.official.rated
+              ? '评级场次'
+              : '非评级场次'
+            : undefined,
+          performance:
+            report.value.official?.performance != null
+              ? { value: report.value.official.performance, bound: null, label: 'AtCoder 官方 Performance' }
+              : null,
+          facts: [
+            { label: '赛时 AC', value: `${report.value.solved} 题` },
+            { label: '赛时失败', value: `${report.value.failures} 次` },
+            {
+              label: '首次 AC',
+              value: report.value.firstAcMinutes === null ? '—' : `${report.value.firstAcMinutes} 分钟`,
+            },
+            ...(report.value.official?.place != null
+              ? [{ label: '官方排名', value: `#${report.value.official.place}` }]
+              : []),
+          ],
+          fileName: `atcoder-${props.contestId}-card.png`,
+        }
+      : null,
+  );
 const problemRows = computed(() => {
   const map = new Map<string, AtcoderReport['inContest']>();
   for (const item of report.value?.inContest ?? [])
@@ -18,16 +58,7 @@ const problemRows = computed(() => {
     key,
     first: items[0].time,
     firstAc: items.find((s) => s.verdict === 'OK')?.time ?? null,
-    failures: items.filter((s) =>
-      [
-        'WRONG_ANSWER',
-        'TIME_LIMIT_EXCEEDED',
-        'MEMORY_LIMIT_EXCEEDED',
-        'RUNTIME_ERROR',
-        'COMPILATION_ERROR',
-        'OUTPUT_LIMIT_EXCEEDED',
-      ].includes(s.verdict),
-    ).length,
+    failures: items.filter((s) => failures.has(s.verdict)).length,
     items,
   }));
 });
@@ -42,17 +73,11 @@ async function load(refresh = false) {
     );
     if (current !== requestNumber) return;
     report.value = next;
-    if (!initialReadSettled) {
-      initialReadSettled = true;
-    }
     if (refresh) emit('updated');
   } catch (e) {
     if (current === requestNumber) error.value = (e as Error).message;
   } finally {
     if (current === requestNumber) busy.value = false;
-    if (current === requestNumber && !initialReadSettled) {
-      initialReadSettled = true;
-    }
   }
 }
 onMounted(() => load());
@@ -62,7 +87,6 @@ onBeforeUnmount(() => {
 watch(
   () => props.contestId,
   () => {
-    initialReadSettled = false;
     report.value = null;
     void load();
   },
@@ -77,10 +101,16 @@ watch(
   <section class="auto-report" aria-label="AtCoder 比赛报告">
     <div class="report-toolbar">
       <h3>AtCoder 比赛分析</h3>
-      <button class="secondary" :disabled="busy" @click="load(true)">
-        <RefreshCw :size="15" />{{ busy ? '正在更新…' : '刷新分析' }}
-      </button>
+      <div class="report-actions">
+        <button class="secondary" :disabled="busy" @click="load(true)">
+          <RefreshCw :size="15" />{{ busy ? '正在更新…' : '刷新分析' }}
+        </button>
+        <button class="secondary" :disabled="!report" @click="downloadCard">
+          <ImageDown :size="15" />下载卡片
+        </button>
+      </div>
     </div>
+    <p v-if="cardError" class="alert error" role="alert">{{ cardError }}</p>
     <p class="small subtle">
       官方排名、Performance 和 Rating 来自 AtCoder 公开历史；赛时数据与建议仅依据已同步提交的当前判定。
     </p>
@@ -180,8 +210,8 @@ watch(
             <span class="small subtle">失败 {{ row.failures }} 次</span>
           </div>
           <p class="small subtle">
-            首次提交 {{ fullDate(new Date(row.first * 1000).toISOString()) }} · 首次 AC
-            {{ row.firstAc === null ? '—' : fullDate(new Date(row.firstAc * 1000).toISOString()) }}
+            首次提交 {{ unixTime(row.first) }} · 首次 AC
+            {{ row.firstAc === null ? '—' : unixTime(row.firstAc) }}
           </p>
           <ol class="submission-timeline">
             <li v-for="item in row.items" :key="item.id">
@@ -191,17 +221,9 @@ watch(
                 rel="noopener noreferrer"
                 :class="{
                   accepted: item.verdict === 'OK',
-                  failed: [
-                    'WRONG_ANSWER',
-                    'TIME_LIMIT_EXCEEDED',
-                    'MEMORY_LIMIT_EXCEEDED',
-                    'RUNTIME_ERROR',
-                    'COMPILATION_ERROR',
-                    'OUTPUT_LIMIT_EXCEEDED',
-                  ].includes(item.verdict),
+                  failed: failures.has(item.verdict),
                 }"
-                >{{ fullDate(new Date(item.time * 1000).toISOString()) }} · {{ item.verdict }}
-                <small>#{{ item.id }}</small></a
+                >{{ unixTime(item.time) }} · {{ item.verdict }} <small>#{{ item.id }}</small></a
               >
             </li>
           </ol>

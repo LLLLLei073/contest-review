@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
-import { RefreshCw, ArrowUpRight } from 'lucide-vue-next';
-import { api } from '../api';
+import { computed } from 'vue';
+import { RefreshCw, ArrowUpRight, ImageDown } from 'lucide-vue-next';
+import { fullDate, unixDay } from '../api';
 import type { XcpcHistory, XcpcReport } from '../../shared/xcpc';
-const props = defineProps<{ slug: string }>();
+import { useAnalysisPolling } from '../composables/useAnalysisPolling';
+import { useContestCard } from '../composables/useContestCard';
+const props = defineProps<{
+  slug: string;
+  contest?: { name?: string; startTimeSeconds?: number } | null;
+}>();
 const emit = defineEmits<{ updated: [] }>();
 type Response = {
   history: XcpcHistory;
@@ -11,48 +16,70 @@ type Response = {
   mode: 'official' | 'all';
   task: { status: string; message: string };
 };
-const data = ref<Response | null>(null),
-  error = ref(''),
-  busy = ref(false);
+const {
+  state: data,
+  error,
+  busy,
+  refresh,
+} = useAnalysisPolling<Response>({
+  readPath: `/xcpc/contests/${encodeURIComponent(props.slug)}/analysis`,
+  refreshPath: `/xcpc/contests/${encodeURIComponent(props.slug)}/analysis/refresh`,
+  onUpdated: () => emit('updated'),
+  shouldAutoRefresh: (next) => !next.report,
+});
+const { cardError, downloadCard: runCard } = useContestCard();
 const team = computed(() =>
   data.value?.report?.detail.teams.find((t) =>
     t.members.some((m) => m.key === data.value?.report?.playerKey),
   ),
 );
-let alive = true,
-  timer: ReturnType<typeof setTimeout> | undefined;
-async function read(auto = false) {
-  try {
-    const next = await api<Response>(`/xcpc/contests/${encodeURIComponent(props.slug)}/analysis`);
-    if (!alive) return;
-    const wasRunning = data.value?.task.status === 'running';
-    data.value = next;
-    if (next.task.status === 'running') timer = setTimeout(() => void read(), 1200);
-    else if (wasRunning) emit('updated');
-    if (auto && !next.report && next.task.status === 'idle' && navigator.onLine) await refresh();
-  } catch (e) {
-    if (alive) error.value = (e as Error).message;
-  } finally {
-  }
-}
-async function refresh() {
-  busy.value = true;
-  error.value = '';
-  clearTimeout(timer);
-  try {
-    data.value = await api<Response>(`/xcpc/contests/${encodeURIComponent(props.slug)}/analysis/refresh`, {});
-    timer = setTimeout(() => void read(), 1100);
-  } catch (e) {
-    if (alive) error.value = (e as Error).message;
-  } finally {
-    if (alive) busy.value = false;
-  }
-}
-onMounted(() => void read(true));
-onBeforeUnmount(() => {
-  alive = false;
-  clearTimeout(timer);
-});
+const displayedPerf = computed(() =>
+  data.value
+    ? data.value.mode === 'official'
+      ? data.value.history.official && data.value.history.ratedOfficial
+        ? data.value.history.perfOfficial
+        : null
+      : data.value.history.rated
+        ? data.value.history.perf
+        : null
+    : null,
+);
+const displayedRank = computed(() =>
+  data.value
+    ? data.value.mode === 'official'
+      ? (data.value.history.rankOfficial ?? data.value.history.rank)
+      : data.value.history.rank
+    : null,
+);
+const downloadCard = () =>
+  runCard(
+    data.value
+      ? {
+          platform: 'xcpc',
+          title: props.contest?.name ?? `XCPC ${props.slug}`,
+          dateText: props.contest?.startTimeSeconds ? unixDay(props.contest.startTimeSeconds) : '',
+          typeText: data.value.report?.detail.category,
+          performance:
+            displayedPerf.value != null
+              ? { value: displayedPerf.value, bound: null, label: 'XCPC 来源表现分' }
+              : null,
+          facts: [
+            { label: '队伍', value: data.value.history.teamName },
+            {
+              label: '排名',
+              value: `#${displayedRank.value ?? '—'} / ${
+                data.value.mode === 'official'
+                  ? (data.value.history.teamCountOfficial ?? data.value.history.teamCount)
+                  : data.value.history.teamCount
+              }`,
+            },
+            { label: '完成', value: `${data.value.history.solved ?? '—'} 题` },
+            ...(team.value ? [{ label: '罚时', value: String(team.value.penalty) }] : []),
+          ],
+          fileName: `xcpc-${props.slug}-card.png`,
+        }
+      : null,
+  );
 </script>
 <template>
   <RouterLink
@@ -63,15 +90,21 @@ onBeforeUnmount(() => {
   <section class="auto-report" aria-label="XCPC 比赛报告">
     <div class="report-toolbar">
       <h3>XCPC 来源报告</h3>
-      <button class="secondary" :disabled="busy || data?.task.status === 'running'" @click="refresh">
-        <RefreshCw :size="15" />{{ data?.task.status === 'running' ? '获取中…' : '刷新来源数据' }}
-      </button>
+      <div class="report-actions">
+        <button class="secondary" :disabled="busy || data?.task.status === 'running'" @click="refresh">
+          <RefreshCw :size="15" />{{ data?.task.status === 'running' ? '获取中…' : '刷新来源数据' }}
+        </button>
+        <button class="secondary" :disabled="!data" @click="downloadCard">
+          <ImageDown :size="15" />下载卡片
+        </button>
+      </div>
     </div>
+    <p v-if="cardError" class="alert error" role="alert">{{ cardError }}</p>
     <p class="small subtle">
       表现分来自 XCPC Rating 的队伍成绩，不是本站 Codeforces 百分制综合分。仅正式口径会隐藏打星参赛的表现分。
     </p>
     <p v-if="data?.report" class="small subtle">
-      报告更新：{{ new Date(data.report.fetchedAt).toLocaleString('zh-CN') }} ·
+      报告更新：{{ fullDate(data.report.fetchedAt) }} ·
       <a :href="data.report.sourceUrl" target="_blank" rel="noopener noreferrer"
         >查看数据来源 <ArrowUpRight :size="13"
       /></a>
@@ -85,15 +118,7 @@ onBeforeUnmount(() => {
         <div>
           <span class="eyebrow">XCPC / {{ data.mode === 'official' ? '仅正式' : '所有参赛' }}口径</span>
           <div class="score-value">
-            {{
-              data.mode === 'official'
-                ? data.history.official && data.history.ratedOfficial
-                  ? (data.history.perfOfficial ?? '—')
-                  : '—'
-                : data.history.rated
-                  ? (data.history.perf ?? '—')
-                  : '—'
-            }}
+            {{ displayedPerf ?? '—' }}
           </div>
           <strong>来源表现分</strong>
         </div>

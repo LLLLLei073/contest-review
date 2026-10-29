@@ -1,13 +1,13 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
-export const motionTokens = {
+const motionTokens = {
   fast: 180,
   standard: 320,
   stiffness: 220,
   damping: 27,
 } as const;
 
-export function springStep(value: number, velocity: number, target: number, dt: number) {
+function springStep(value: number, velocity: number, target: number, dt: number) {
   const delta = Math.min(Math.max(dt, 0), 1 / 30);
   const nextVelocity =
     velocity + ((target - value) * motionTokens.stiffness - velocity * motionTokens.damping) * delta;

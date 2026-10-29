@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue';
-import { api, dataRevision, settings } from '../../api';
+import { api, dataRevision, fullDate, settings } from '../../api';
 import { knowledgeCards } from '../../../shared/knowledge';
 import { localDay } from '../../../shared/core-store';
 import {
@@ -242,7 +242,7 @@ watch(owner, () => {
       <details v-if="mode === 'path' && state.paths.length > 1" class="panel planning-history">
         <summary>查看原路径与目标变化</summary>
         <p v-for="path in state.paths" :key="path.id">
-          {{ new Date(path.createdAt).toLocaleString('zh-CN') }} ·
+          {{ fullDate(path.createdAt) }} ·
           {{ path.path.nodes.map((n) => n.title).join(' → ') || '未指定目标' }}
         </p>
       </details>

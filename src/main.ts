@@ -1,6 +1,5 @@
 import { createApp } from 'vue';
 import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router';
-import { browserMode } from './api';
 import App from './App.vue';
 import Dashboard from './pages/Dashboard.vue';
 import './styles/tokens.css';
@@ -10,7 +9,8 @@ import './styles/astra.css';
 import { initializeAppearance } from './composables/useAppearance';
 initializeAppearance();
 const router = createRouter({
-  history: browserMode ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
+  // Literal branch: only one history implementation survives per build mode.
+  history: import.meta.env.VITE_BROWSER ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(),
   scrollBehavior: (to, from, saved) => {
     if (saved) return saved;
     // Section and tool switches update the query without leaving the page.
@@ -45,7 +45,7 @@ router.beforeEach((to) => {
   if (target) return { path: target.path, query: { ...to.query, view: target.view }, replace: true };
 });
 createApp(App).use(router).mount('#app');
-if (browserMode && 'serviceWorker' in navigator && import.meta.env.PROD) {
+if (import.meta.env.VITE_BROWSER && 'serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register(import.meta.env.BASE_URL + 'sw.js', { scope: import.meta.env.BASE_URL })

@@ -62,6 +62,11 @@ test('automatic report, evidence, cache reload, notes and backup compatibility',
   await page.locator('.report-deep-dive').first().locator('summary').click();
   await expect(page.locator('.timeline-problem').nth(1)).toContainText('未尝试');
   await expect(page.locator('.advice-card').first()).toContainText('3 次失败');
+  // 战报卡片下载：canvas 生成的 PNG
+  const cardDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: '下载卡片', exact: true }).click();
+  const card = await cardDownload;
+  expect(card.suggestedFilename()).toBe('contest-9000-card.png');
   await page.getByRole('button', { name: '补充笔记' }).click();
   await page.getByLabel('关键失误', { exact: true }).fill('自动分析后的补充笔记');
   await page.getByRole('button', { name: '保存比赛复盘' }).click();

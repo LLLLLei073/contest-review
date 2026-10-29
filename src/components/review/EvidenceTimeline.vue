@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { fullDate } from '../../api';
 import type { LearningEvidence } from '../../../shared/learning-evidence';
 const props = defineProps<{ events: LearningEvidence[] }>();
 const filter = ref('all');
@@ -27,7 +28,7 @@ const labels = {
     <p v-if="!visible.length" class="quiet-empty">此类型暂时没有记录。</p>
     <ol>
       <li v-for="event in visible" :key="event.id">
-        <time>{{ event.at ? new Date(event.at).toLocaleString('zh-CN') : '时间未记录' }}</time>
+        <time>{{ event.at ? fullDate(event.at) : '时间未记录' }}</time>
         <div>
           <h3>{{ event.title }}</h3>
           <span class="badge">{{
