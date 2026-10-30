@@ -1,6 +1,6 @@
 # 高阶星澪素材生成记录
 
-使用内置 imagegen，以现有 signal.png 为身份和画风参考。以下为四次独立生成的完整提示；资产保存在 src/assets/companion/，各自采用新姿势、服装和道具。
+使用内置 imagegen，以现有 signal 图为身份和画风参考。以下为四次独立生成的完整提示；资产保存在 src/assets/companion/，各自采用新姿势、服装和道具。提示中的 .png 是生成时的母本文件名，仓库现保存为同名 .webp（经 `scripts/build-companion-webp.mjs` 压缩）。
 
 ## atlas.png
 

@@ -45,7 +45,7 @@
 
 ## 原创素材
 
-工具：内置 imagegen。资源：`src/assets/companion/signal.png`、`orbit.png`、`nova.png`，均保留透明通道，由 Vite 打包并纳入 Pages 离线缓存。
+工具：内置 imagegen。资源：`src/assets/companion/signal.webp`、`orbit.webp`、`nova.webp`，均保留透明通道，由 Vite 打包并纳入 Pages 离线缓存。生成图先存 PNG，再经 `node scripts/build-companion-webp.mjs --prune` 压成 WebP（q90 / alphaQuality 100 / smartSubsample false，勿降参——q82 会在半透明光晕区出噪点）。
 
 三套素材使用同一原创成年角色“星澪 / ASTRA”，银白短发与侧辫、青色眼睛、温和神情、日系二维游戏插画。生成提示如下（外观变体以基础图为参考）：
 
@@ -53,7 +53,7 @@
 2. **ORBIT**：保留基础角色脸、发型和神情，改为深蓝高领领航制服、象牙白短披肩、金色滚边和星形发饰，手抱金色透明平板；同样构图及画风，透明背景，无场景或文字。
 3. **NOVA**：保留基础角色身份，深蓝与象牙白探索夹克、珊瑚红围巾和发饰，一手投影几何星形、一手持小平板；同样构图及画风，透明背景，无场景或文字。
 
-四套高阶素材为 `atlas.png`、`observatory.png`、`aurora.png`、`voyager.png`，使用内置 imagegen，以基础图作为人物身份参考，分别设计星图长衣与星盘、观测制服与望远镜、极光研究外套与几何投影、领航长衣与导航档案。不是对旧素材进行换色；完整生成提示见 [素材提示记录](growth-assets-prompts.md)。所有图片随 Vite 构建纳入离线缓存。
+四套高阶素材为 `atlas.webp`、`observatory.webp`、`aurora.webp`、`voyager.webp`，使用内置 imagegen，以基础图作为人物身份参考，分别设计星图长衣与星盘、观测制服与望远镜、极光研究外套与几何投影、领航长衣与导航档案。不是对旧素材进行换色；完整生成提示见 [素材提示记录](growth-assets-prompts.md)。所有图片随 Vite 构建纳入离线缓存。
 
 ## 验证
 
