@@ -100,7 +100,7 @@ onUnmounted(() => {
   <div class="app-shell">
     <aside class="sidebar">
       <RouterLink to="/" class="brand"
-        ><span class="brand-mark"><BookOpen :size="23" /></span
+        ><span class="brand-mark"><BookOpen :size="18" /></span
         ><span>回解<small>CONTEST REVIEW</small></span></RouterLink
       >
       <div class="nav-caption">你的算法训练工作台</div>

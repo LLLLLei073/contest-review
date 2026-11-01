@@ -145,7 +145,7 @@ svg {
   align-items: center;
   gap: 11px;
   padding-left: 9px;
-  font-size: 25px;
+  font-size: 21px;
   font-weight: 750;
   letter-spacing: 2px;
 }
@@ -158,8 +158,8 @@ svg {
   color: var(--muted);
 }
 .brand-mark {
-  width: 40px;
-  height: 44px;
+  width: 32px;
+  height: 36px;
   background: var(--green);
   display: grid;
   place-items: center;
@@ -175,7 +175,7 @@ svg {
 .sidebar nav {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 .sidebar nav a,
 .sidebar-bottom > a {
@@ -184,7 +184,7 @@ svg {
   gap: 13px;
   color: var(--muted);
   font-size: 13px;
-  padding: 9px 12px;
+  padding: 6px 12px;
   border-radius: 8px;
 }
 .sidebar nav a.active,
@@ -231,7 +231,7 @@ svg {
 .local-status {
   font-size: 10px;
   color: var(--muted);
-  padding: 18px 9px 0;
+  padding: 8px 9px 0;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2508,7 +2508,7 @@ svg {
 .sidebar nav {
   position: relative;
   isolation: isolate;
-  gap: 3px;
+  gap: 2px;
 }
 .nav-indicator {
   position: absolute;
@@ -2927,19 +2927,16 @@ details[open] > :not(summary) {
   font-size: clamp(25px, 2vw, 31px);
 }
 .sidebar {
-  padding-top: 22px;
   background: var(--sidebar-surface);
-  padding: 26px 18px 18px;
+  padding: 16px 18px 14px;
   overflow-y: auto;
 }
 .nav-caption {
-  margin-top: 30px;
-  margin: 24px 12px 10px;
+  margin: 10px 12px 8px;
   font-size: 10px;
 }
 .sidebar-note {
-  margin-top: 24px;
-  margin: 24px 12px 16px;
+  margin: 10px 12px 10px;
 }
 .panel {
   border-radius: 12px;
@@ -3661,7 +3658,7 @@ h2[tabindex='-1']:focus {
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.08em;
-  margin: 9px 12px 3px;
+  margin: 6px 12px 2px;
 }
 
 .nav-group-label:first-of-type {
@@ -3669,12 +3666,12 @@ h2[tabindex='-1']:focus {
 }
 
 .sidebar-growth {
-  margin-top: 14px;
+  margin-top: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--highlight);
-  padding-block: 12px;
+  padding-block: 7px;
   border-top: 1px solid var(--line);
 }
 
@@ -3684,14 +3681,23 @@ h2[tabindex='-1']:focus {
   color: var(--muted);
 }
 
-/* 导航 10 项后，矮视口收起装饰性格言，把空间留给导航与成长徽章 */
-@media (max-height: 960px) {
-  .sidebar-note {
-    margin: 12px 14px 10px;
-  }
-  .sidebar-note p,
-  .sidebar-note > span {
+/* 侧边栏须在矮窗口内免滚动看全 10 项导航：装饰性格言一律收起，只留成长徽章 */
+.sidebar-note p,
+.sidebar-note > span {
+  display: none;
+}
+
+/* 常规密度下侧边栏内容约 596px；更矮的窗口（如 150% 缩放的笔记本）再收起副标题、压紧链接。
+   仅限带文字的桌面侧栏宽度：≤950px 的图标栏与底部标签栏有各自的尺寸规则。 */
+@media (max-height: 600px) and (min-width: 951px) {
+  .nav-caption {
     display: none;
+  }
+  .sidebar nav {
+    margin-top: 10px;
+  }
+  .sidebar nav a {
+    padding-block: 4px;
   }
 }
 
