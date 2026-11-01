@@ -13,6 +13,7 @@ import {
   loadSettings,
   loadJob,
   job,
+  jobLoaded,
   notify,
   fullDate,
   browserMode,
@@ -32,9 +33,7 @@ const accountPlatform = useSection(
   ['cf', 'atcoder', 'luogu', 'xcpc'] as const,
   'cf',
   'platform',
-  savedPlatform === 'atcoder' || savedPlatform === 'xcpc' || savedPlatform === 'luogu'
-    ? savedPlatform
-    : 'cf',
+  savedPlatform === 'atcoder' || savedPlatform === 'xcpc' || savedPlatform === 'luogu' ? savedPlatform : 'cf',
 );
 const handle = ref(settings.value.activeHandle),
   busy = ref(false),
@@ -95,7 +94,7 @@ async function bindAtcoder(value = atcoderHandle.value) {
     await loadSettings();
     atcoderHandle.value = settings.value.activeAtcoder ?? '';
     await loadAtcoder();
-    notify('AtCoder 用户名已绑定，请同步公开提交');
+    notify('AtCoder 用户名已绑定，点击「同步 AtCoder 提交」导入公开提交');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -116,9 +115,7 @@ async function syncAtcoder(mode: 'full' | 'incremental' = 'incremental', resume 
   }
 }
 const luoguUidError = computed(() =>
-  luoguUid.value && !/^\d{1,10}$/.test(luoguUid.value)
-    ? '请输入个人主页地址中的纯数字 UID。'
-    : '',
+  luoguUid.value && !/^\d{1,10}$/.test(luoguUid.value) ? '请输入个人主页地址中的纯数字 UID。' : '',
 );
 async function loadLuogu() {
   const data = await api<{
@@ -136,7 +133,7 @@ async function bindLuogu(value = luoguUid.value) {
     await loadSettings();
     luoguUid.value = settings.value.activeLuogu ?? '';
     await loadLuogu();
-    notify(`洛谷用户 ${data.user?.name ?? ''}已绑定，请同步提交记录`);
+    notify(`洛谷用户 ${data.user?.name ?? ''} 已绑定`);
   } catch (e) {
     luoguError.value = (e as Error).message;
   } finally {
@@ -173,7 +170,7 @@ async function bind(value = handle.value) {
     await loadSettings();
     await loadJob();
     handle.value = settings.value.activeHandle;
-    notify('用户名已绑定，点击同步开始导入');
+    notify(job.value ? '用户名已绑定' : '用户名已绑定，点击下方「立即同步」导入提交记录');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -352,7 +349,7 @@ async function sync(mode = 'incremental', resume = false) {
               <span class="section-icon"><Link2 :size="20" /></span>
               <div>
                 <h2>洛谷账号</h2>
-                <p>使用个人主页的数字 UID 绑定；提交记录来自洛谷站内接口，仅本地模式可同步。</p>
+                <p>使用个人主页的数字 UID 绑定，读取昵称与通过题数。</p>
               </div>
             </div>
             <span v-if="settings.activeLuogu" class="badge mastered">已绑定</span>
@@ -378,7 +375,11 @@ async function sync(mode = 'incremental', resume = false) {
           </p>
           <p v-if="luoguError" class="field-error" role="alert">{{ luoguError }}</p>
           <p v-if="settings.activeLuogu" class="small subtle">
-            {{ luoguName ? `已绑定 ${luoguName}（UID ${settings.activeLuogu}）` : `已绑定 UID ${settings.activeLuogu}` }}
+            {{
+              luoguName
+                ? `已绑定 ${luoguName}（UID ${settings.activeLuogu}）`
+                : `已绑定 UID ${settings.activeLuogu}`
+            }}
             <template v-if="luoguJob">
               ·
               {{
@@ -402,7 +403,9 @@ async function sync(mode = 'incremental', resume = false) {
             同步洛谷提交 →
           </button>
           <p v-if="browserMode" class="small subtle">在线版受浏览器跨域限制，洛谷同步仅本地模式可用。</p>
-          <p class="small subtle">洛谷仅提供较近一段的提交记录，历史深度有限；失败题会按规则进入复习。</p>
+          <p class="small subtle">
+            洛谷改版后，提交记录需要登录才能查看，目前无法自动同步，只能读取主页信息；如洛谷重新开放，同步会自动恢复。
+          </p>
         </section>
         <section
           v-show="settingsSection === 'accounts' && accountPlatform === 'cf'"
@@ -434,6 +437,12 @@ async function sync(mode = 'incremental', resume = false) {
             </button>
           </form>
           <p id="cf-handle-error" v-if="handleError" class="field-error" role="alert">{{ handleError }}</p>
+          <template v-if="settings.activeHandle && jobLoaded && !job">
+            <p class="small subtle" role="status">已绑定，还没有导入提交记录。</p>
+            <button class="small-button" :disabled="recentChecks > 0 || busy" @click="sync()">
+              立即同步 Codeforces 提交 →
+            </button>
+          </template>
           <div v-if="settings.handles.length > 1" class="profile-switch">
             <span class="small subtle">本机账号分区</span
             ><button

@@ -4,6 +4,8 @@ export const browserMode = import.meta.env.VITE_STORAGE_MODE === 'browser';
 export const settings = ref<Settings>({ activeHandle: '', handles: [] });
 let settingsRead = 0;
 export const job = ref<SyncJob | null>(null);
+// 区分「尚未读取」与「确实没有同步记录」，避免「尚未同步」提示在启动时闪现
+export const jobLoaded = ref(false);
 export const toast = ref('');
 export const dataRevision = ref(0);
 export const recentChecks = ref(0);
@@ -82,6 +84,7 @@ export async function loadSettings() {
 }
 export async function loadJob() {
   job.value = await api<SyncJob | null>('/sync');
+  jobLoaded.value = true;
 }
 export function dateLabel(value: string | null | undefined) {
   return value ? new Date(value).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '—';

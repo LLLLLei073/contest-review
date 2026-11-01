@@ -61,10 +61,26 @@ const date = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numer
 let atcoderTimer: ReturnType<typeof setInterval> | undefined;
 let previousAtcoderStatus = '';
 let loadSerial = 0;
+let latestLoad: Promise<boolean> | undefined;
 let goalSerial = 0;
 let revealTimer: ReturnType<typeof setTimeout> | undefined;
 
-async function load() {
+function load() {
+  const pending = loadDay();
+  latestLoad = pending;
+  return pending;
+}
+// load() 被更新的一次（如近期提交核对完成后的刷新）取代时会返回 false，
+// 这不是读取失败：改为等待最后一次加载，以它的结果为准。
+async function settledLoad() {
+  let pending = load();
+  for (;;) {
+    const ok = await pending;
+    if (ok || !latestLoad || pending === latestLoad) return ok;
+    pending = latestLoad;
+  }
+}
+async function loadDay() {
   const serial = ++loadSerial;
   if (!settings.value.activeHandle && !settings.value.activeAtcoder) {
     day.value = null;
@@ -135,7 +151,7 @@ async function saveGoal(value: { mode: 'focus' | 'balanced'; categories: Categor
     await api('/training/weekly', value, 'PUT');
     if (serial !== goalSerial || `${settings.value.activeHandle}:${settings.value.activeAtcoder}` !== handle)
       return;
-    const refreshed = await load();
+    const refreshed = await settledLoad();
     if (!refreshed) throw new Error('目标已保存，但题单读取失败。请重试以刷新今日安排。');
     if (serial !== goalSerial || `${settings.value.activeHandle}:${settings.value.activeAtcoder}` !== handle)
       return;
@@ -233,7 +249,10 @@ watch(
       <h1>今日训练</h1>
       <p>复习旧题，学习新知。每栏按今天的安排保持固定。</p>
     </div>
-    <div class="button-row"><RouterLink to="/battle" class="button primary">开始连战 →</RouterLink><span class="date-chip"><CalendarDays :size="16" />{{ date }}</span></div>
+    <div class="button-row">
+      <RouterLink to="/battle" class="button primary">开始连战 →</RouterLink
+      ><span class="date-chip"><CalendarDays :size="16" />{{ date }}</span>
+    </div>
   </div>
   <div class="training-navigation">
     <nav class="content-switcher" aria-label="今日训练内容">

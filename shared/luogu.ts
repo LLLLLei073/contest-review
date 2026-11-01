@@ -2,10 +2,12 @@ import { z } from 'zod';
 import type { CoreStore } from './core-store.js';
 import type { CFSubmission, SyncJob } from './domain.js';
 
-// 洛谷没有官方开放 API，这里使用站点的 _contentOnly JSON 接口（社区文档
-// https://0f-0b.github.io/luogu-api-docs）。该接口仅返回较近一段提交记录，
-// 且不允许浏览器跨域访问：纯浏览器模式（GitHub Pages）无法同步洛谷，只有
-// 本地服务器模式可用。历史深度与接口形态都可能变化，失败时要给出可读错误。
+// 洛谷没有官方开放 API（社区文档 https://0f-0b.github.io/luogu-api-docs）。
+// 2026 年起站点换成新前端（lentille）：旧的 `_contentOnly=1` 一律返回 HTML，
+// 需带 `x-lentille-request: content-only` 请求头才返回 JSON
+// `{ status, template, data }`。用户主页仍公开，但提交记录列表要求登录（401），
+// 因此现在只支持绑定账号和读取主页信息，无法再匿名同步提交记录。纯浏览器模式
+// （GitHub Pages）另受跨域拦截。接口形态随时可能再变，失败时要给出可读错误。
 export const luoguUidSchema = z
   .string()
   .trim()
@@ -132,9 +134,25 @@ export interface LuoguClientLike {
   cancel(): void;
 }
 interface LuoguEnvelope {
+  // 新前端：{ status, template, data }，出错时 template 为 'error'
+  status?: number;
+  template?: string;
+  data?: unknown;
+  // 旧前端 `_contentOnly`：{ code, currentData }
   code?: number;
   errorMessage?: string;
   currentData?: unknown;
+}
+export const LUOGU_LOGIN_REQUIRED =
+  '洛谷现在要求登录后才能查看提交记录，暂时无法自动同步洛谷提交；账号绑定和主页信息不受影响。';
+// 站点明确拒绝（未登录、用户不存在、无权限）时抛出，重试不会改变结果。
+export class LuoguRejectedError extends Error {}
+function luoguFailure(status: number, envelope: LuoguEnvelope): Error {
+  const data = (envelope.data ?? {}) as { errorMessage?: string; errorData?: { needLogin?: boolean } };
+  if (status === 401 || data.errorData?.needLogin) return new LuoguRejectedError(LUOGU_LOGIN_REQUIRED);
+  if (status === 404) return new LuoguRejectedError('洛谷用户不存在，请核对个人主页地址中的 UID');
+  const message = data.errorMessage || envelope.errorMessage || `洛谷接口返回 ${status}`;
+  return status === 403 ? new LuoguRejectedError(message) : new Error(message);
 }
 export class LuoguClient implements LuoguClientLike {
   private tail: Promise<unknown> = Promise.resolve();
@@ -159,27 +177,30 @@ export class LuoguClient implements LuoguClientLike {
         if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
         this.last = Date.now();
         try {
-          const response = await this.fetcher(`${this.base}${path}&_contentOnly=1`, {
+          const response = await this.fetcher(`${this.base}${path}`, {
             signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]),
             headers: {
               Accept: 'application/json',
-              'x-luogu-type': 'content-only',
+              'x-lentille-request': 'content-only',
               'User-Agent': 'contest-review/1.0',
             },
           });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (!(response.headers.get('content-type') ?? '').includes('json'))
+            throw new Error(`洛谷返回了网页而不是数据（HTTP ${response.status}）`);
           const envelope = (await response.json()) as LuoguEnvelope;
-          if (envelope.code !== 200)
-            throw new Error(envelope.errorMessage || `洛谷接口返回 ${envelope.code}`);
-          return parse(envelope.currentData);
+          const status = envelope.status ?? envelope.code ?? response.status;
+          if (status !== 200 || envelope.template === 'error') throw luoguFailure(status, envelope);
+          return parse(envelope.data ?? envelope.currentData);
         } catch (e) {
           error = e;
+          if (e instanceof LuoguRejectedError) break;
           if (i < retries - 1) await new Promise((resolve) => setTimeout(resolve, 1500 * 2 ** i));
         }
       }
-      const message = String(error);
+      if (error instanceof LuoguRejectedError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
       throw new Error(
-        message.includes('Failed to fetch') || message.includes('fetch failed')
+        message.includes('Failed to fetch')
           ? '洛谷同步仅本地模式可用（浏览器直连被跨域拦截）'
           : '洛谷接口暂不可用：' + message,
       );
@@ -188,7 +209,7 @@ export class LuoguClient implements LuoguClientLike {
     return next;
   }
   user(uid: string) {
-    return this.request<LuoguUser>(`/user/${encodeURIComponent(uid)}?`, (data) => {
+    return this.request<LuoguUser>(`/user/${encodeURIComponent(uid)}`, (data) => {
       const user = (data as { user?: Record<string, unknown> }).user;
       if (!user) throw new Error('洛谷用户不存在');
       return {
@@ -200,15 +221,12 @@ export class LuoguClient implements LuoguClientLike {
     });
   }
   records(uid: string, page: number) {
-    return this.request<LuoguPage>(
-      `/record/list?user=${encodeURIComponent(uid)}&page=${page}`,
-      (data) => {
-        const records = (data as { records?: unknown }).records;
-        if (!records) throw new Error('提交记录不可见（可能需要登录或用户不存在）');
-        const parsed = luoguRecordListSchema.parse(records);
-        return { count: parsed.count, perPage: parsed.perPage, result: parsed.result };
-      },
-    );
+    return this.request<LuoguPage>(`/record/list?user=${encodeURIComponent(uid)}&page=${page}`, (data) => {
+      const records = (data as { records?: unknown }).records;
+      if (!records) throw new Error('提交记录不可见（可能需要登录或用户不存在）');
+      const parsed = luoguRecordListSchema.parse(records);
+      return { count: parsed.count, perPage: parsed.perPage, result: parsed.result };
+    });
   }
 }
 
@@ -292,9 +310,7 @@ export class LuoguService {
       }
       const incremental = job.mode === 'incremental',
         prevMaxId = incremental
-          ? this.store
-              .all<CFSubmission>('submissions', profile)
-              .reduce((n, s) => Math.max(n, s.id), 0)
+          ? this.store.all<CFSubmission>('submissions', profile).reduce((n, s) => Math.max(n, s.id), 0)
           : 0;
       let page = job.cursor,
         pagesThisRun = 0,

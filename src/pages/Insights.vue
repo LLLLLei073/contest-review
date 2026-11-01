@@ -92,7 +92,7 @@ async function bindHandle() {
     await loadSettings();
     handle.value = settings.value.activeHandle;
     await load();
-    notify('Codeforces 用户名已绑定，点击同步开始导入');
+    notify('Codeforces 用户名已绑定，点击「同步数据」导入提交');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -108,7 +108,7 @@ async function bindAtcoder() {
     await loadSettings();
     atcoderHandle.value = settings.value.activeAtcoder ?? '';
     await load();
-    notify('AtCoder 用户名已绑定，点击同步导入提交');
+    notify('AtCoder 用户名已绑定，点击「同步数据」导入提交');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -126,7 +126,7 @@ async function bindLuogu() {
     luoguUser.value = data.user;
     await loadSettings();
     await load();
-    notify(`洛谷用户 ${data.user?.name ?? ''} 已绑定，点击同步导入提交`);
+    notify(`洛谷用户 ${data.user?.name ?? ''} 已绑定`);
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -377,10 +377,12 @@ onBeforeUnmount(() => {
           }}
         </button>
         <p
-          v-if="platform !== 'cf' && (platform === 'atcoder' ? atcoderJob : luoguJob)?.status === 'failed'"
+          v-if="
+            (platform === 'cf' ? cfJob : platform === 'atcoder' ? atcoderJob : luoguJob)?.status === 'failed'
+          "
           class="account-error"
         >
-          {{ (platform === 'atcoder' ? atcoderJob : luoguJob)?.message }}
+          {{ (platform === 'cf' ? cfJob : platform === 'atcoder' ? atcoderJob : luoguJob)?.message }}
         </p>
       </template>
       <template v-else>
@@ -426,7 +428,9 @@ onBeforeUnmount(() => {
         <p v-if="platform === 'luogu' && browserMode" class="account-error">
           在线版受浏览器跨域限制，洛谷同步仅本地模式可用。
         </p>
-        <p v-if="platform === 'luogu'" class="account-note">洛谷仅提供较近一段的提交记录，历史深度有限。</p>
+        <p v-if="platform === 'luogu'" class="account-note">
+          洛谷改版后提交记录需要登录才能查看，目前只能读取主页信息。
+        </p>
       </template>
     </div>
   </section>
