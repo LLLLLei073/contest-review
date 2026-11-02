@@ -62,6 +62,8 @@ npm start
 - npm 12 及以上会默认拦截依赖的安装脚本：首次 `npm ci` 后需执行 `npm approve-scripts electron`，再 `npm rebuild electron`，否则缺少 Electron 可执行文件。
 - 数据位置：安装版/便携版存放在 `%APPDATA%/contest-review/data/review.sqlite`（目录名取自应用标识而非产品名「回解」），与网页版（项目 `data/` 目录）互不影响；开发模式沿用项目 `data/`。可用应用内「备份与恢复」在两版之间迁移数据。
 - 外部链接（题目、榜单等）默认用系统浏览器打开；同一时间只允许运行一个实例。
+- 后端与主进程都由 esbuild 打成单文件，安装包只随附主进程需要的 `electron-updater`，因此 `package.json` 的 `dependencies` 仅含这一项，其余依赖都放在 `devDependencies`（`npm ci` 照常全部安装）。新增后端依赖时请放进 `devDependencies`，否则会被整棵打进安装包，便携版每次启动都要先解压上万个文件。
+- 若项目位于带低完整性（Low）标签的目录（例如被沙箱工具改过权限的桌面文件夹），从那里启动的 exe 会以低完整性运行，Electron 会立即退出，安装包也无法写入。`desktop:build` 会自动给 `desktop-dist/` 设置 Medium 标签。打包请使用默认的 electron-builder 缓存，不要把 `ELECTRON_BUILDER_CACHE` 指向项目目录。同理，不要把安装包或便携版拷回桌面再运行。
 
 ### 自动更新
 
