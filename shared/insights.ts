@@ -162,13 +162,18 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
       handle: cfHandle,
       name: cfHandle,
       bound: !!cfHandle,
+      // contests 列表按开赛时间从新到旧排序，不能直接取末条；这里取评级
+      // 更新时间最新的一场，与下方 ratings 趋势的最后一个点保持一致。
       rating:
         cfHandle && store.contests(cfHandle).length
           ? (store
               .contests(cfHandle)
-              .map((r) => r.rating?.newRating ?? null)
-              .filter((n): n is number => n !== null)
-              .at(-1) ?? null)
+              .filter((r) => !!r.rating)
+              .sort(
+                (a, b) =>
+                  (b.rating!.ratingUpdateTimeSeconds ?? 0) - (a.rating!.ratingUpdateTimeSeconds ?? 0) ||
+                  b.id - a.id,
+              )[0]?.rating?.newRating ?? null)
           : null,
       solved: cfHandle ? solvedProblems(store, cfProfile).length : 0,
       officialSolved: null,
@@ -184,7 +189,10 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
         if (!atcoderHandle) return null;
         const history = store.externalGet(atcoderNamespace(atcoderHandle), 'history');
         if (!history) return null;
-        const entries = atcoderHistorySchema.parse(history).entries.filter((e) => e.IsRated);
+        const entries = atcoderHistorySchema
+          .parse(history)
+          .entries.filter((e) => e.IsRated)
+          .sort((a, b) => Date.parse(a.EndTime) - Date.parse(b.EndTime));
         return entries.length ? entries.at(-1)!.NewRating : null;
       })(),
       solved: atcoderHandle ? solvedProblems(store, atcProfile).length : 0,
