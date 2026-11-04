@@ -87,6 +87,31 @@ async function load() {
     memories.value = memory;
     preferences.value = prefs;
     if (!list.some((s) => s.id === selected.value)) selected.value = list.at(-1)?.id ?? '';
+    if (typeof route.query.sessionId === 'string') {
+      const rows =
+        await api<import('../../shared/training-continuation').TrainingContinuation[]>(
+          '/training/continuations',
+        );
+      if (g !== generation) return;
+      if (
+        !rows.some(
+          (r) =>
+            r.kind === 'workflow' &&
+            r.id === route.query.workflowId &&
+            new URL(r.href, 'https://local.invalid').searchParams.get('sessionId') === route.query.sessionId,
+        ) ||
+        !list.some((s) => s.id === route.query.sessionId)
+      ) {
+        guided.value = false;
+        selected.value = '';
+        error.value = '续接流程已完成或失效，请返回今日训练刷新。';
+        return;
+      }
+      selected.value = route.query.sessionId;
+      guided.value = true;
+      await loadHistory();
+      return;
+    }
     const ctx = context();
     if (ctx.kind !== 'general' && !list.some((s) => JSON.stringify(s.context) === JSON.stringify(ctx)))
       await create();

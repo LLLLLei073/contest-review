@@ -1,3 +1,6 @@
+import { trainingContinuations } from '../../shared/training-continuation';
+import { unsupportedBackup } from '../../shared/backup-status';
+import { backupSummary } from '../../shared/backup-summary';
 import { z } from 'zod';
 import { growthRoute } from '../../shared/growth';
 import { LearningService } from '../../shared/learning-service';
@@ -55,14 +58,23 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
   });
   let result: unknown;
   try {
-    if (route === '/training/battle' || route.startsWith('/training/battle/')) {
+    if (route === '/training/continuations' && method === 'GET') result = trainingContinuations(store);
+    else if (route === '/backup/summary' && method === 'GET') result = backupSummary(store.backup());
+    else if (route === '/backup/automatic' && method === 'GET') result = unsupportedBackup;
+    else if (route === '/training/battle' || route.startsWith('/training/battle/')) {
       const ai = new AiReviewer();
       const battle = new BattleService(store, undefined, {
         themeMapper: (theme) => mapTheme(store, ai, theme),
         summarizer: (session) => generateBattleSummary(store, ai, session),
       });
-      result = await battle.route(route.slice('/training/battle'.length).replace(/^\//, ''), method, body,
-        training, cf, () => !!sync.running || !!analysis.running || hub.isBusy());
+      result = await battle.route(
+        route.slice('/training/battle'.length).replace(/^\//, ''),
+        method,
+        body,
+        training,
+        cf,
+        () => !!sync.running || !!analysis.running || hub.isBusy(),
+      );
     } else if (route.startsWith('/agent/')) {
       const { AgentService } = await import('../../shared/agent-service');
       result = await new AgentService(store, undefined, () => runtime.flush()).route(
@@ -223,7 +235,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
         .parse(body);
       if (!store.activeLuogu()) throw new Error('请先绑定洛谷 UID');
       result = luogu.start(store.activeLuogu(), mode, resume);
-    } else if (route === '/insights' && method === 'GET') result = buildInsights(store); else if (/^\/xcpc\/contests\/[^/]+\/analysis$/.test(route) && method === 'GET')
+    } else if (route === '/insights' && method === 'GET') result = buildInsights(store);
+    else if (/^\/xcpc\/contests\/[^/]+\/analysis$/.test(route) && method === 'GET')
       result = hub.getReport(decodeURIComponent(route.split('/')[3]));
     else if (/^\/xcpc\/contests\/[^/]+\/analysis\/refresh$/.test(route) && method === 'POST')
       result = hub.startReport(decodeURIComponent(route.split('/')[3]));

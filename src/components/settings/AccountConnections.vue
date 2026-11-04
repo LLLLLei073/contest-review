@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { settings } from '../../api';
+import { usePlatformHealth, platformStatusLabel } from '../../composables/usePlatformHealth';
+const { platforms } = usePlatformHealth();
+import { settings, fullDate } from '../../api';
 defineProps<{ platform: string }>();
 const emit = defineEmits<{ select: [platform: 'cf' | 'atcoder' | 'luogu' | 'xcpc'] }>();
 </script>
@@ -18,7 +20,14 @@ const emit = defineEmits<{ select: [platform: 'cf' | 'atcoder' | 'luogu' | 'xcpc
     >
       <strong>{{ item.title }}</strong
       ><span>{{ item.name || '尚未连接' }}</span
-      ><small>{{ item.name ? '当前档案' : '绑定公开账号' }}</small>
+      ><small>{{ platformStatusLabel[platforms.find((p) => p.id === item.id)?.status ?? 'unbound'] }}</small>
+      <small v-if="item.name"
+        >最近成功：{{
+          platforms.find((p) => p.id === item.id)?.lastSuccess
+            ? fullDate(platforms.find((p) => p.id === item.id)!.lastSuccess!)
+            : '暂无记录'
+        }}</small
+      >
     </button>
   </div>
 </template>

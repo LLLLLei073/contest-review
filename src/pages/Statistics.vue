@@ -5,7 +5,7 @@ import type { Statistics } from '../../shared/domain';
 import type { WeeklyGoal } from '../../shared/weekly';
 import { useSection } from '../sections';
 import { useLearningState } from '../learningState';
-import RadarChart from '../components/charts/RadarChart.vue';
+import BattleStatistics from '../components/BattleStatistics.vue';
 const LearningActivity = defineAsyncComponent(() => import('../components/LearningActivity.vue'));
 const PlanningWorkspace = defineAsyncComponent(() => import('../components/training/PlanningWorkspace.vue'));
 import MonthlyReport from '../components/MonthlyReport.vue';
@@ -14,11 +14,11 @@ const stats = ref<Statistics | null>(null),
   loading = ref(true);
 const source = useSection(['all', 'cf', 'atcoder', 'luogu'] as const, 'all', 'source');
 const activeSection = useSection(
-  ['overview', 'monthly', 'activity', 'diagnosis', 'knowledge'] as const,
+  ['overview', 'monthly', 'activity', 'diagnosis', 'knowledge', 'battles'] as const,
   'overview',
 );
 const activityPart = useSection(['records', 'distribution', 'reasons'] as const, 'records', 'chart');
-const masteryView = ref<'chart' | 'list'>('chart');
+
 const learning = useLearningState();
 const activityOpened = ref(activeSection.value === 'diagnosis');
 watch(activeSection, () => {
@@ -113,6 +113,7 @@ onBeforeUnmount(() => {
         { id: 'activity', label: '练习趋势' },
         { id: 'diagnosis', label: '学情诊断' },
         { id: 'knowledge', label: '知识状态' },
+        { id: 'battles', label: '连战记录' },
       ]"
       :key="item.id"
       :class="{ active: activeSection === item.id }"
@@ -137,6 +138,7 @@ onBeforeUnmount(() => {
       {{ item.label }}
     </button>
   </nav>
+  <BattleStatistics v-if="activeSection === 'battles'" />
   <LearningActivity
     v-if="activityOpened"
     v-show="activeSection === 'diagnosis'"
@@ -216,50 +218,13 @@ onBeforeUnmount(() => {
           {{ stats.dailyTraining.at(-1)?.newAssigned ?? 0 }}</span
         >
       </div>
-      <section
-        v-show="activeSection === 'overview'"
-        class="panel mastery-panel statistics-mastery"
-        :class="'mastery-view-' + masteryView"
-      >
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">LEARNING PROFILE</span>
-            <h2>算法领域掌握度</h2>
-            <p>结合提交与独立重做；AtCoder 仅纳入手动标注领域的题，样本不足时向中性值收敛。</p>
-          </div>
-        </div>
-        <div class="mastery-display-switch" role="group" aria-label="掌握度展示方式">
-          <button :aria-pressed="masteryView === 'chart'" @click="masteryView = 'chart'">雷达图</button>
-          <button :aria-pressed="masteryView === 'list'" @click="masteryView = 'list'">领域明细</button>
-        </div>
-        <div class="mastery-content">
-          <RadarChart
-            :axes="stats.mastery.map((area) => area.name)"
-            :series="[{ name: '掌握度', values: stats.mastery.map((area) => area.score) }]"
-            aria-label="八个算法领域的掌握度雷达图"
-            :tooltip="(i) => (stats ? `${stats.mastery[i].name}：${stats.mastery[i].score} 分，${stats.mastery[i].samples} 题` : '')"
-          />
-          <div class="mastery-list">
-            <div v-for="area in stats.mastery" :key="area.name" class="mastery-row">
-              <span>{{ area.name }}</span
-              ><strong
-                >{{ area.samples ? area.score : '样本不足' }}<small v-if="area.samples"> / 100</small></strong
-              ><small>{{ area.samples }} 题</small>
-            </div>
-          </div>
-        </div>
+      <section v-show="activeSection === 'overview'" class="panel statistics-mastery">
+        <h2>学习诊断</h2>
+        <p>训练统计关注复习与独立重做；平台成绩、能力雷达和样本数集中在数据总览。</p>
         <div class="button-row">
-          <RouterLink to="/?view=path">按薄弱领域规划学习路径 →</RouterLink
-          ><RouterLink to="/problems?status=pending">补充尚未完成的复盘 →</RouterLink>
+          <RouterLink :to="'/insights?source=' + source + '#mastery'">查看算法领域掌握度 →</RouterLink
+          ><button @click="activeSection = 'diagnosis'">查看学情诊断</button>
         </div>
-        <details class="chart-caption mastery-caption">
-          <summary>查看掌握度计算口径</summary>
-          <p>
-            每道有明确结果的题按唯一题目计数，可计入多个算法领域。已掌握 100、最近独立做对 85、借助提示
-            45、仍未做出 15；未重做时 CF AC 70、明确失败 20。领域得分 = (题目得分之和 + 3 × 50) ÷ (样本数 +
-            3)，四舍五入；0 样本为 50，表示数据不足，不代表已经掌握。新知题按 1 ÷ (掌握度 + 10) 分配领域配额。
-          </p>
-        </details>
       </section>
       <details
         v-show="activeSection === 'activity' && activityPart === 'records'"
@@ -383,3 +348,12 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.content-switcher {
+  flex-wrap: nowrap;
+}
+.content-switcher button {
+  white-space: nowrap;
+}
+</style>

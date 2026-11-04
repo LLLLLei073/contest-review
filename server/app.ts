@@ -1,3 +1,7 @@
+import { trainingContinuations } from '../shared/training-continuation.js';
+import { AutomaticBackup } from './automatic-backup.js';
+import { unsupportedBackup } from '../shared/backup-status.js';
+import { backupSummary } from '../shared/backup-summary.js';
 import Fastify from 'fastify';
 import { Readable } from 'node:stream';
 import { AgentService } from '../shared/agent-service.js';
@@ -56,6 +60,7 @@ export async function buildApp(
   store: Store,
   cf: CFClient = new CodeforcesClient(),
   options: {
+    desktop?: boolean;
     dev?: boolean;
     logger?: boolean;
     pageSize?: number;
@@ -170,6 +175,27 @@ export async function buildApp(
     if (sync.running || analysis.running || hub.isBusy() || atcoder.running || luogu.running)
       throw new Error('请等待当前同步或比赛分析完成');
   };
+  const automatic = options.desktop
+    ? new AutomaticBackup(
+        store,
+        () => !!sync.running || !!analysis.running || hub.isBusy() || !!atcoder.running || !!luogu.running,
+      )
+    : null;
+  automatic?.start();
+  app.addHook('onClose', async () => {
+    automatic?.stop();
+  });
+  app.get('/api/training/continuations', async () => trainingContinuations(store));
+  app.get('/api/backup/summary', async () => backupSummary(store.backup()));
+  app.get('/api/backup/automatic', async () => automatic?.status() ?? unsupportedBackup);
+  app.put('/api/backup/automatic', async (req) => {
+    if (!automatic) throw new Error('此运行方式不支持自动落盘备份');
+    return automatic.configure(z.object({ enabled: z.boolean() }).parse(req.body).enabled);
+  });
+  app.post('/api/backup/automatic/run', async () => {
+    if (!automatic) throw new Error('此运行方式不支持自动落盘备份');
+    return automatic.run(true);
+  });
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/settings', async () => ({
     activeHandle: store.active(),
@@ -350,11 +376,19 @@ export async function buildApp(
   app.get('/api/training/battle', async () => battle().state());
   app.get('/api/training/battle/records', async () => battle().records());
   app.get<{ Params: { '*': string } }>('/api/training/battle/*', async (req) =>
-    battle().route(req.params['*'] ?? '', 'GET', undefined, training, cf, () => true));
+    battle().route(req.params['*'] ?? '', 'GET', undefined, training, cf, () => true),
+  );
   app.post('/api/training/battle', async (req) => battle().start(req.body));
   app.post<{ Params: { '*': string } }>('/api/training/battle/*', async (req) =>
-    battle().route(req.params['*'] ?? '', 'POST', req.body, training, cf,
-      () => !!sync.running || !!analysis.running || hub.isBusy()));
+    battle().route(
+      req.params['*'] ?? '',
+      'POST',
+      req.body,
+      training,
+      cf,
+      () => !!sync.running || !!analysis.running || hub.isBusy(),
+    ),
+  );
   app.get('/api/training/weekly', async () => store.weeklyProgress());
   app.put('/api/training/weekly', async (req) => store.saveWeeklyGoal(req.body));
   app.get('/api/training/upsolve', async () => store.upsolveItems());
@@ -576,8 +610,7 @@ export async function buildApp(
   });
   app.get('/api/statistics', async (req) =>
     store.combinedStatistics(
-      z.object({ source: z.enum(['all', 'cf', 'atcoder', 'luogu']).default('all') }).parse(req.query)
-        .source,
+      z.object({ source: z.enum(['all', 'cf', 'atcoder', 'luogu']).default('all') }).parse(req.query).source,
     ),
   );
   app.get('/api/statistics/monthly', async (req) => monthlyReport(store, req.query));

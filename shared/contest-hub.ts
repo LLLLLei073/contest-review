@@ -33,6 +33,15 @@ export class ContestHub {
     private atcoder?: AtcoderService,
   ) {
     this.xcpc = xcpc ?? new XcpcClient();
+    const key = store.setting('xcpc-active');
+    if (key) {
+      try {
+        const health = JSON.parse(store.setting('xcpc-health:' + key) || '{}');
+        if (health.status === 'running') this.health(key, 'interrupted', '程序已重启，请重新更新比赛资料。');
+      } catch {
+        /* Older installations may not have health metadata. */
+      }
+    }
     for (const j of store.externalAll<BatchJob>('batch'))
       if (j.status === 'running')
         store.externalPut('batch', j.id, {
@@ -62,9 +71,35 @@ export class ContestHub {
   async search(name: string) {
     return this.xcpc.search(name);
   }
+  private health(key: string, status: 'running' | 'completed' | 'failed' | 'interrupted', error?: string) {
+    let previous: { lastSuccess?: string; lastAttempt?: string } = {};
+    try {
+      previous = JSON.parse(this.store.setting('xcpc-health:' + key) || '{}');
+    } catch {}
+    this.store.setSetting(
+      'xcpc-health:' + key,
+      JSON.stringify({
+        lastSuccess: status === 'completed' ? new Date().toISOString() : previous.lastSuccess,
+        lastAttempt: status === 'running' ? new Date().toISOString() : previous.lastAttempt,
+        status,
+        error: error ?? null,
+      }),
+    );
+  }
+  private async fetchPlayer(key: string) {
+    this.health(key, 'running');
+    try {
+      const player = xcpcPlayerSchema.parse(await this.xcpc.player(key));
+      if (player.key !== key) throw new Error('XCPC 选手标识不一致');
+      return player;
+    } catch (e) {
+      this.health(key, 'failed', (e as Error).message);
+      throw e;
+    }
+  }
   async bind(key: string) {
     if (this.isBusy() || this.sync.running || this.analysis.running) throw new Error('请等待当前任务完成');
-    const player = xcpcPlayerSchema.parse(await this.xcpc.player(key));
+    const player = await this.fetchPlayer(key);
     if (player.key !== key) throw new Error('XCPC 选手标识不一致');
     const tiers = await this.xcpc.contestTiers().catch(() => new Map<string, string>());
     this.savePlayer(player, tiers);
@@ -77,6 +112,7 @@ export class ContestHub {
   }
   private savePlayer(player: XcpcPlayer, tiers = new Map<string, string>()) {
     this.store.externalPut('player', player.key, player);
+    this.health(player.key, 'completed');
     for (const item of player.history) {
       const old = this.store.externalGet<XcpcHistory>('xcpc:' + player.key, 'history:' + item.contestId);
       this.store.externalPut('xcpc:' + player.key, 'history:' + item.contestId, {
@@ -265,7 +301,7 @@ export class ContestHub {
         await save();
         check();
         try {
-          const player = await this.xcpc.player(key);
+          const player = await this.fetchPlayer(key);
           const tiers = await this.xcpc.contestTiers().catch(() => new Map<string, string>());
           this.savePlayer(player, tiers);
           await save();

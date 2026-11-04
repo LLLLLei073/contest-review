@@ -77,7 +77,7 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
   await page.getByRole('button', { name: '未 AC 题加入补题清单' }).click();
   await page.getByRole('link', { name: '训练统计', exact: true }).click();
   await expect(page.locator('.statistics-metrics')).toBeVisible();
-  expect((await page.locator('.mastery-panel').boundingBox())!.y).toBeLessThan(1000);
+  expect((await page.locator('.statistics-mastery').boundingBox())!.y).toBeLessThan(1000);
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page.getByRole('button', { name: /赛后补题/ }).click();
   await expect(page.getByRole('heading', { name: '赛后补题清单' })).toBeVisible();

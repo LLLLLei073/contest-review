@@ -1,13 +1,35 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { Database, Download, Upload } from 'lucide-vue-next';
 import { api, notify, loadSettings, loadJob, job, recentChecks, browserMode } from '../../api';
 import { useConfirm } from '../../composables/useConfirm';
+import BackupSafety from './BackupSafety.vue';
 import { backupSummary } from '../../../shared/backup-summary';
 const { confirmDialog } = useConfirm();
 const preview = ref<ReturnType<typeof backupSummary>>(),
   previewError = ref(''),
   previewLoading = ref(false);
+const current = ref<ReturnType<typeof backupSummary>>();
+const comparison = computed(() => {
+  if (!preview.value || !current.value) return [];
+  const counts = (s: ReturnType<typeof backupSummary>) => ({
+    账号: s.profiles.length,
+    题目: s.counts.find((r) => r.name === 'problems')?.count ?? 0,
+    笔记: s.counts.find((r) => r.name === 'reviews')?.count ?? 0,
+    重做: s.counts.find((r) => r.name === 'attempts')?.count ?? 0,
+    规划: s.planning,
+    引导复盘: s.workflows,
+    连战: s.battles,
+  });
+  const before = counts(current.value),
+    after = counts(preview.value);
+  return Object.keys(before).map((name) => ({
+    name,
+    before: before[name as keyof typeof before],
+    after: after[name as keyof typeof after],
+    difference: after[name as keyof typeof after] - before[name as keyof typeof before],
+  }));
+});
 let fileSerial = 0;
 const busy = ref(false),
   error = ref(''),
@@ -26,7 +48,7 @@ async function download(previous = false) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     if (!previous) await api('/training/backup-exported', {});
-    notify('备份已导出');
+    notify('已发起备份下载，请确认文件已保存');
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -38,13 +60,18 @@ async function selectFile(e: Event) {
   const file = restoreFile.value,
     serial = ++fileSerial;
   preview.value = undefined;
+  current.value = undefined;
   previewError.value = '';
   if (!file) return;
   previewLoading.value = true;
   try {
     if (file.size > 100 * 1024 * 1024) throw new Error('备份文件超过 100 MB 限制');
     const summary = backupSummary(JSON.parse(await file.text()));
-    if (serial === fileSerial) preview.value = summary;
+    const local = await api<ReturnType<typeof backupSummary>>('/backup/summary');
+    if (serial === fileSerial) {
+      preview.value = summary;
+      current.value = local;
+    }
   } catch {
     if (serial === fileSerial)
       previewError.value = '无法识别此文件概要；恢复接口仍会执行完整格式与引用校验。';
@@ -77,6 +104,7 @@ async function restore() {
 }
 </script>
 <template>
+  <BackupSafety />
   <div v-if="error" role="alert" class="alert error">{{ error }}</div>
   <section class="panel settings-card">
     <div class="section-head">
@@ -122,6 +150,26 @@ async function restore() {
           <p>
             规划记录 {{ preview.planning }} · 引导复盘 {{ preview.workflows }} · 连战 {{ preview.battles }}
           </p>
+          <div style="overflow-x: auto">
+            <table aria-label="恢复前后数量对比">
+              <thead>
+                <tr>
+                  <th>记录</th>
+                  <th>当前</th>
+                  <th>备份</th>
+                  <th>差值</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in comparison" :key="row.name">
+                  <th>{{ row.name }}</th>
+                  <td>{{ row.before }}</td>
+                  <td>{{ row.after }}</td>
+                  <td>{{ row.difference > 0 ? '+' : '' }}{{ row.difference }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <details>
             <summary>记录数量</summary>
             <ul>

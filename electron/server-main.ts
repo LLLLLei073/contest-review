@@ -6,7 +6,7 @@ import { Store } from '../server/store.js';
 // 以 READY_PORT=<n> 打到 stdout，供 Electron 主进程解析后加载窗口。
 async function main() {
   const store = new Store(resolve(process.env.DATA_DIR || 'data', 'review.sqlite'));
-  const { app, sync, analysis, hub } = await buildApp(store, undefined, { dev: false });
+  const { app, sync, analysis, hub } = await buildApp(store, undefined, { dev: false, desktop: true });
   await app.listen({ host: '127.0.0.1', port: Number(process.env.PORT || 0) });
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : 0;

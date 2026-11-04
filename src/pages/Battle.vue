@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, battleStatusLabels, settings } from '../api';
 import { knowledgeCards } from '../../shared/knowledge';
 import type { BattleRecord, BattleState } from '../../shared/battle-service';
 
 const route = useRoute();
+const continuationOpened = ref(!!route.query.continue);
 const state = ref<BattleState>();
 const skillId = ref(
   knowledgeCards.some((c) => c.id === route.query.skill) ? String(route.query.skill) : 'simulation',
@@ -138,6 +139,7 @@ async function endAndSummarize(id?: string) {
   await load();
 }
 async function act(action: string, extra: Record<string, unknown> = {}, silent = false) {
+  if (!silent) continuationOpened.value = false;
   const s = session.value;
   if (!s || busy.value) return;
   busy.value = true;
@@ -179,7 +181,11 @@ async function act(action: string, extra: Record<string, unknown> = {}, silent =
   }
 }
 function check() {
-  if (document.visibilityState === 'visible' && session.value?.status === 'active')
+  if (
+    !continuationOpened.value &&
+    document.visibilityState === 'visible' &&
+    session.value?.status === 'active'
+  )
     void act('sync', {}, true);
 }
 watch(
@@ -195,8 +201,26 @@ watch(
   },
 );
 onMounted(async () => {
-  await load();
-  check();
+  const requested = typeof route.query.sessionId === 'string' ? route.query.sessionId : undefined;
+  await load(requested);
+  if (
+    requested &&
+    (!state.value?.session || (route.query.continue && state.value.session.status === 'ended'))
+  ) {
+    error.value = '续接连战已结束或失效，请返回今日训练刷新。';
+    return;
+  }
+  if (route.query.continue) {
+    await nextTick();
+    const target = document.querySelector<HTMLElement>(
+      pending.value.length ? '.battle-evaluation' : '.battle-current',
+    );
+    if (target) {
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'start' });
+    }
+  } else check();
   timer = setInterval(check, 30000);
   document.addEventListener('visibilitychange', check);
   window.addEventListener('focus', check);

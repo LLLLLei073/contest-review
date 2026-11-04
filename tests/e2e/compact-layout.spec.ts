@@ -48,13 +48,7 @@ test('compact layouts keep summaries in view, expose details on demand and fit a
       expect(
         (await links.last().boundingBox())!.y + (await links.last().boundingBox())!.height,
       ).toBeLessThanOrEqual(height);
-      await page.getByRole('button', { name: '领域明细', exact: true }).click();
-      await expect(page.locator('.mastery-list')).toBeVisible();
-      await expect(page.locator('.mastery-radar')).toBeHidden();
-      await expect(page.locator('.mastery-row')).toHaveCount(8);
-      await page.getByRole('button', { name: '雷达图', exact: true }).click();
-      await expect(page.locator('.mastery-radar')).toBeVisible();
-      await expect(page.locator('.mastery-list')).toBeHidden();
+      await expect(page.getByRole('link', { name: '查看算法领域掌握度' })).toBeVisible();
     }
     measurements.push(
       await page.evaluate(() => ({

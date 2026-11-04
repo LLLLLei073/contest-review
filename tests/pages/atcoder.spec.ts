@@ -103,7 +103,12 @@ test('Pages AtCoder-only flow keeps review, categories, report and backup in bro
   await page.getByRole('button', { name: '保存笔记', exact: true }).click();
   await page.getByRole('link', { name: '训练统计', exact: true }).click();
   await page.getByLabel('统计来源').selectOption('atcoder');
+  await page.getByRole('link', { name: '查看算法领域掌握度' }).click();
+  await expect(page).toHaveURL(/insights\?source=atcoder/);
   await expect(page.locator('.mastery-radar')).toBeVisible();
+  await expect(
+    page.getByRole('group', { name: '雷达图系列' }).getByRole('button', { name: 'AtCoder' }),
+  ).toHaveAttribute('aria-pressed', 'true');
   includeAc = true;
   await page.getByRole('link', { name: '设置与数据', exact: true }).click();
   await page.getByRole('button', { name: '账号连接' }).click();

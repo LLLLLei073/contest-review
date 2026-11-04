@@ -44,7 +44,7 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
       return marker && link ? Math.abs(marker.y - link.y) : 100;
     })
     .toBeLessThan(2);
-  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '数据总览' }).click();
   await page.locator('.sidebar nav').getByRole('link', { name: '今日训练' }).click();
   await expect
     .poll(async () => {
@@ -62,7 +62,7 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
   await page.getByRole('button', { name: '同步状态' }).click();
   await page.getByRole('button', { name: '开始首次同步' }).click();
   await expect(page.getByText('同步完成', { exact: true })).toBeVisible({ timeout: 20000 });
-  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '数据总览' }).click();
   const radar = page.locator('.mastery-radar');
   await expect(radar).toBeVisible();
   await expect
@@ -79,7 +79,7 @@ test('navigation spring, chart endpoint and reduced-motion fallback', async ({ p
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.locator('.sidebar nav').getByRole('link', { name: '今日训练' }).click();
-  await page.locator('.sidebar nav').getByRole('link', { name: '训练统计' }).click();
+  await page.locator('.sidebar nav').getByRole('link', { name: '数据总览' }).click();
   await expect(radar).toBeVisible();
   const reduced = await radar.evaluate((svg) => {
     const score = Number(svg.getAttribute('data-target-scores')!.split(',')[0]);

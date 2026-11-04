@@ -1,11 +1,75 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import { ArrowRight, CheckCircle2, Compass } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { api, settings, dataRevision, fullDate } from '../../api';
+import type { TrainingContinuation } from '../../../shared/training-continuation';
 import { nextTrainingAction } from '../../../shared/workbench';
 import type { TrainingDay } from '../../../shared/training';
 const props = defineProps<{ day: TrainingDay | null; cf: boolean; atcoder: boolean }>();
 defineEmits<{ goal: [] }>();
-const action = computed(() => nextTrainingAction(props.day, { cf: props.cf, atcoder: props.atcoder }));
+const fallback = computed(() => nextTrainingAction(props.day, { cf: props.cf, atcoder: props.atcoder }));
+const router = useRouter();
+const continuations = ref<TrainingContinuation[]>([]),
+  error = ref('');
+let serial = 0;
+async function load() {
+  const token = ++serial;
+  continuations.value = [];
+  try {
+    const rows = await api<TrainingContinuation[]>('/training/continuations');
+    if (token === serial) continuations.value = rows;
+  } catch (e) {
+    if (token === serial) error.value = (e as Error).message;
+  }
+}
+watch(
+  () => [
+    settings.value.activeHandle,
+    settings.value.activeAtcoder,
+    settings.value.xcpcPlayer?.key,
+    dataRevision.value,
+    props.day,
+  ],
+  load,
+  { immediate: true },
+);
+onBeforeUnmount(() => {
+  serial++;
+});
+const main = computed(() =>
+  props.day?.review.some((task) => !task.completed && task.phase === 'evaluation')
+    ? null
+    : continuations.value[0],
+);
+const action = computed(() =>
+  main.value
+    ? {
+        kind: 'continuation',
+        title: main.value.title,
+        reason: main.value.stage + ' · ' + fullDate(main.value.updatedAt),
+        label: '继续上次训练',
+        href: main.value.href,
+      }
+    : fallback.value,
+);
+const others = computed(() => continuations.value.filter((row) => row.id !== main.value?.id));
+async function resume(row: TrainingContinuation) {
+  const token = serial;
+  try {
+    const rows = await api<TrainingContinuation[]>('/training/continuations');
+    if (token !== serial) return;
+    continuations.value = rows;
+    const valid = rows.find((r) => r.id === row.id && r.kind === row.kind);
+    if (!valid) {
+      error.value = '这项训练已完成或失效，列表已刷新。';
+      return;
+    }
+    await router.push(valid.href);
+  } catch (e) {
+    if (token === serial) error.value = (e as Error).message;
+  }
+}
 </script>
 <template>
   <section v-if="action" class="next-action" aria-label="下一步训练建议">
@@ -17,7 +81,8 @@ const action = computed(() => nextTrainingAction(props.day, { cf: props.cf, atco
       <h2>{{ action.title }}</h2>
       <p>{{ action.reason }}</p>
     </div>
-    <button v-if="action.kind === 'goal'" class="primary" @click="$emit('goal')">
+    <button v-if="main" class="primary" @click="resume(main)">继续上次训练<ArrowRight :size="16" /></button>
+    <button v-else-if="action.kind === 'goal'" class="primary" @click="$emit('goal')">
       {{ action.label }}<ArrowRight :size="16" />
     </button>
     <a
@@ -32,6 +97,16 @@ const action = computed(() => nextTrainingAction(props.day, { cf: props.cf, atco
       >{{ action.label }}<ArrowRight :size="16"
     /></RouterLink>
   </section>
+  <p v-if="error" role="status">{{ error }} <button @click="load">刷新续接列表</button></p>
+  <details v-if="others.length" class="panel">
+    <summary>其他未完成训练（{{ others.length }}）</summary>
+    <ul>
+      <li v-for="row in others" :key="row.kind + row.id">
+        <button class="text-link" @click="resume(row)">{{ row.title }} · {{ row.stage }}</button> ·
+        {{ fullDate(row.updatedAt) }}
+      </li>
+    </ul>
+  </details>
 </template>
 <style scoped>
 .next-action {

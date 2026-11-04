@@ -1,3 +1,4 @@
+import { platformHealth } from './platform-health.js';
 import { z } from 'zod';
 import { allBattleRewards } from './battle-service.js';
 import { battleSessionSchema, validateBattle } from './battle-domain.js';
@@ -973,20 +974,21 @@ export class CoreStore {
     return {
       cf: {
         handle: cf,
-        sync: cf ? (this.latestJob(cf)?.finishedAt ?? null) : null,
+        sync: platformHealth(this).find(p => p.id === 'cf')?.lastSuccess ?? null,
         catalog: catalog?.fetchedAt ?? null,
         problems: catalog?.problems.length ?? 0,
         rated: catalog?.problems.filter((p) => p.rating !== null).length ?? 0,
       },
       atcoder: {
         handle: ac,
-        sync: ac ? (this.latestJob(atcoderProfile(ac))?.finishedAt ?? null) : null,
+        sync: platformHealth(this).find(p => p.id === 'atcoder')?.lastSuccess ?? null,
         catalog: acCatalog?.fetchedAt ?? null,
         problems: acCatalog?.problems.length ?? 0,
         rated:
           acCatalog?.problems.filter((p) => typeof acCatalog.models[p.id]?.difficulty === 'number').length ??
           0,
       },
+      platforms: platformHealth(this),
       pendingVerdicts: submissions.filter((s) => !s.verdict || ['TESTING', 'SUBMITTED'].includes(s.verdict))
         .length,
       lastBackup: this.setting('last-backup') || null,

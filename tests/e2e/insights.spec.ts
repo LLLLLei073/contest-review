@@ -33,8 +33,7 @@ test('insights page shows three platform cards with bind entry points', async ({
   for (const title of ['Codeforces', 'AtCoder', '洛谷']) {
     await expect(cards.filter({ hasText: title })).toBeVisible();
   }
-  if (testInfo.project.name === 'pages')
-    await expect(page.getByText('洛谷同步仅本地模式可用')).toBeVisible();
+  if (testInfo.project.name === 'pages') await expect(page.getByText('洛谷同步仅本地模式可用')).toBeVisible();
   else {
     // 本地模式下未绑定时提供内联绑定表单；共享 fixture 中 CF/AtCoder 可能已被其他用例绑定
     await expect(page.getByLabel('洛谷 UID')).toBeVisible();
@@ -51,7 +50,9 @@ test('insights page shows three platform cards with bind entry points', async ({
   expect(errors).toEqual([]);
 });
 
-test('insights aggregates bound accounts, radar and charts from a full payload', async ({ page }, testInfo) => {
+test('insights aggregates bound accounts, radar and charts from a full payload', async ({
+  page,
+}, testInfo) => {
   test.skip(testInfo.project.name === 'pages', 'Pages 模式没有本地 HTTP API 可注入汇总数据。');
   const mastery = (offset: number) =>
     ['实现与模拟', '贪心与构造', '数学', '数据结构', '图与树', '动态规划', '字符串', '搜索与技巧'].map(
@@ -169,16 +170,23 @@ test('insights aggregates bound accounts, radar and charts from a full payload',
   await expect(radar).toBeVisible();
   await expect(page.locator('.radar-value')).toHaveCount(1);
   await expect(page.locator('.radar-legend-item')).toHaveCount(0);
-  await expect(radar).toHaveAttribute('data-target-scores', mastery(10).map((m) => m.score).join(','));
+  await expect(radar).toHaveAttribute(
+    'data-target-scores',
+    mastery(10)
+      .map((m) => m.score)
+      .join(','),
+  );
   // 叠加 Codeforces 系列：出现图例且弹簧重建
   await page.getByRole('button', { name: 'Codeforces', exact: true }).click();
   await expect(page.locator('.radar-legend-item')).toHaveCount(2);
   // 难度分布与活跃趋势堆叠柱
   await expect(page.locator('.stacked-chart')).toHaveCount(2);
-  // 连战记录面板：聚合指标 + 最近战报（含 AI 总结摘要）
-  await expect(page.locator('.battle-metrics .metric', { hasText: '连战场次' })).toContainText('2');
-  await expect(page.locator('.battle-briefs li')).toHaveCount(2);
-  await expect(page.locator('.battle-brief-summary').first()).toContainText('线段树三连');
+  // 总览保留摘要，详细训练记录集中在训练统计。
+  await expect(page.getByRole('heading', { name: '连战摘要' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '查看连战训练记录' })).toHaveAttribute(
+    'href',
+    /statistics\?view=battles/,
+  );
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -211,9 +219,7 @@ test('insights page binds Codeforces and syncs inline', async ({ page }, testInf
   await cfCard.getByRole('button', { name: '同步数据' }).click();
   // 同步完成后轮询会自动刷新汇总：总通过题数从 0 变为真实数量
   const solved = page.locator('.metric', { hasText: '总通过题数' }).locator('strong');
-  await expect
-    .poll(async () => solved.textContent(), { timeout: 20000 })
-    .not.toBe('0');
+  await expect.poll(async () => solved.textContent(), { timeout: 20000 }).not.toBe('0');
   await expect(page.locator('.radar-value')).toHaveCount(1);
   expect(errors).toEqual([]);
 });

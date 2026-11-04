@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, onBeforeUnmount, watch } from 'vue';
+import PlatformHealthPanel from './settings/PlatformHealthPanel.vue';
 import { api, dataRevision, fullDate } from '../api';
 const health = ref<{
   cf: { handle: string; sync: string | null; catalog: string | null; problems: number; rated: number };
@@ -39,6 +40,7 @@ watch(dataRevision, load);
         <h2>数据健康</h2>
       </div>
     </div>
+    <PlatformHealthPanel />
     <div class="health-grid">
       <p>
         CF 提交：{{ health.cf.sync ? fullDate(health.cf.sync) : '尚未同步' }}<br />题目目录
@@ -53,7 +55,7 @@ watch(dataRevision, load);
         }}
       </p>
       <p>
-        待判提交：{{ health.pendingVerdicts }} 条<br />上次备份导出：{{
+        待判提交：{{ health.pendingVerdicts }} 条<br />上次发起备份下载：{{
           health.lastBackup ? fullDate(health.lastBackup) : '尚无记录'
         }}
       </p>

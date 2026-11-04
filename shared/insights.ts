@@ -1,3 +1,4 @@
+import { platformHealth } from './platform-health.js';
 import { z } from 'zod';
 import type { CoreStore } from './core-store.js';
 import { localDay, problemKey } from './core-store.js';
@@ -100,9 +101,7 @@ function profileMastery(store: CoreStore, profiles: string[]): MasteryArea[] {
   const problems = profiles.flatMap((h) => store.all<Problem>('problems', h));
   const submissions = profiles.flatMap((h) => store.all<CFSubmission>('submissions', h));
   const attempts = profiles.flatMap((h) => store.all<Attempt>('attempts', h));
-  const reviews = new Map(
-    profiles.flatMap((h) => store.problems(h).map((p) => [p.key, p.review] as const)),
-  );
+  const reviews = new Map(profiles.flatMap((h) => store.problems(h).map((p) => [p.key, p.review] as const)));
   return masteryAreas(
     problems,
     submissions,
@@ -127,8 +126,7 @@ function solvedProblems(store: CoreStore, profile: string): Problem[] {
     .filter((p): p is Problem => !!p);
 }
 
-const emptyMastery = () =>
-  masteryAreas([], [], [], new Map<string, ProblemRow['review']>(), problemKey);
+const emptyMastery = () => masteryAreas([], [], [], new Map<string, ProblemRow['review']>(), problemKey);
 
 // 汇总是 (表内容, 日期, 激活账号) 的纯函数：writeEpoch 变化或日期/账号变化即失效。
 // /insights 在 dataRevision 连发时不再重复 4 遍掌握度与全量比赛重算。
@@ -156,9 +154,7 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
     cfProfile = cfHandle,
     atcProfile = atcoderHandle ? atcoderProfile(atcoderHandle) : '',
     lgProfile = luoguUid ? luoguProfile(luoguUid) : '';
-  const luoguSnapshot = luoguUid
-    ? (store.externalGet(luoguNamespace(luoguUid), 'user') ?? null)
-    : null;
+  const luoguSnapshot = luoguUid ? (store.externalGet(luoguNamespace(luoguUid), 'user') ?? null) : null;
   const luoguUser = luoguSnapshot ? luoguUserSnapshotSchema.parse(luoguSnapshot) : null;
   const accounts: InsightsPayload['accounts'] = [
     {
@@ -177,7 +173,7 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
       solved: cfHandle ? solvedProblems(store, cfProfile).length : 0,
       officialSolved: null,
       submissions: cfHandle ? store.all('submissions', cfProfile).length : 0,
-      lastSync: cfHandle ? (store.latestJob(cfProfile)?.finishedAt ?? null) : null,
+      lastSync: platformHealth(store).find((p) => p.id === 'cf')?.lastSuccess ?? null,
     },
     {
       platform: 'atcoder',
@@ -194,7 +190,7 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
       solved: atcoderHandle ? solvedProblems(store, atcProfile).length : 0,
       officialSolved: null,
       submissions: atcoderHandle ? store.all('submissions', atcProfile).length : 0,
-      lastSync: atcoderHandle ? (store.latestJob(atcProfile)?.finishedAt ?? null) : null,
+      lastSync: platformHealth(store).find((p) => p.id === 'atcoder')?.lastSuccess ?? null,
     },
     {
       platform: 'luogu',
@@ -205,7 +201,7 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
       solved: luoguUid ? solvedProblems(store, lgProfile).length : 0,
       officialSolved: luoguUser?.passedProblemCount ?? null,
       submissions: luoguUid ? store.all('submissions', lgProfile).length : 0,
-      lastSync: luoguUid ? (store.latestJob(lgProfile)?.finishedAt ?? null) : null,
+      lastSync: platformHealth(store).find((p) => p.id === 'luogu')?.lastSuccess ?? null,
     },
   ];
   const profiles = [cfProfile, atcProfile, lgProfile].filter(Boolean);
@@ -264,10 +260,7 @@ function computeInsights(store: CoreStore, now: Date): InsightsPayload {
       theme: battleTheme(s),
       status: s.status,
       startedAt: s.createdAt,
-      durationMinutes: Math.max(
-        0,
-        Math.round((Date.parse(playedUntil) - Date.parse(s.createdAt)) / 60000),
-      ),
+      durationMinutes: Math.max(0, Math.round((Date.parse(playedUntil) - Date.parse(s.createdAt)) / 60000)),
       problemCount: s.items.length,
       solvedCount: s.items.filter((i) => i.outcome === 'accepted').length,
       summaryText: summary?.text ?? null,

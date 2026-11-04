@@ -1,20 +1,21 @@
 <script setup lang="ts">
+import { useRoute, useRouter } from 'vue-router';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import {
-  api,
-  battleStatusLabels,
-  browserMode,
-  dataRevision,
-  fullDate,
-  loadSettings,
-  notify,
-  settings,
-  unixDay,
-} from '../api';
+import { api, browserMode, dataRevision, fullDate, loadSettings, notify, settings, unixDay } from '../api';
 import type { SyncJob } from '../../shared/domain';
 import type { InsightsPayload } from '../../shared/insights';
 import RadarChart from '../components/charts/RadarChart.vue';
 
+const route = useRoute(),
+  router = useRouter();
+watch(
+  () => route.query.view,
+  (view) => {
+    if (view === 'battles')
+      void router.replace({ path: '/statistics', query: { ...route.query, view: 'battles' } });
+  },
+  { immediate: true },
+);
 const insights = ref<InsightsPayload | null>(null);
 const error = ref('');
 const loading = ref(true);
@@ -48,7 +49,6 @@ const platformNames: Record<string, string> = {
 };
 const accountOf = (platform: 'cf' | 'atcoder' | 'luogu') =>
   insights.value?.accounts.find((a) => a.platform === platform);
-const battleStatus = (status: string) => battleStatusLabels[status] ?? status;
 
 async function load() {
   const serial = ++loadSerial;
@@ -192,6 +192,17 @@ const radarSeries = computed(() => {
   }));
 });
 const enabledPlatforms = ref<('all' | 'cf' | 'atcoder' | 'luogu')[]>(['all']);
+watch(
+  () => route.query.source,
+  (source) => {
+    enabledPlatforms.value = [
+      ['all', 'cf', 'atcoder', 'luogu'].includes(String(source))
+        ? (String(source) as 'all' | 'cf' | 'atcoder' | 'luogu')
+        : 'all',
+    ];
+  },
+  { immediate: true },
+);
 const radarKey = computed(() =>
   radarSeries.value
     .filter((s) => enabledPlatforms.value.includes(s.platform))
@@ -466,42 +477,10 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-if="insights.battles.total" class="panel insight-panel" aria-label="连战记录">
-      <div class="section-head">
-        <h2>连战记录</h2>
-        <RouterLink to="/battle" class="text-link">进入连战 →</RouterLink>
-      </div>
-      <div class="metrics insight-metrics battle-metrics">
-        <div class="metric">
-          <small>连战场次</small>
-          <strong>{{ insights.battles.total }}</strong>
-        </div>
-        <div class="metric">
-          <small>连战题目</small>
-          <strong>{{ insights.battles.totalProblems }}</strong>
-        </div>
-        <div class="metric">
-          <small>连战 AC</small>
-          <strong>{{ insights.battles.solvedProblems }}</strong>
-        </div>
-        <div class="metric">
-          <small>累计耗时</small>
-          <strong>{{ insights.battles.totalMinutes }} 分</strong>
-        </div>
-      </div>
-      <ol class="battle-briefs">
-        <li v-for="b in insights.battles.recent" :key="b.id">
-          <div class="battle-brief-head">
-            <strong>{{ b.theme }}</strong>
-            <span class="badge">{{ battleStatus(b.status) }}</span>
-          </div>
-          <p class="small subtle">
-            {{ new Date(b.startedAt).toLocaleDateString() }} · {{ b.durationMinutes }} 分钟 ·
-            {{ b.problemCount }} 题 / AC {{ b.solvedCount }}
-          </p>
-          <p v-if="b.summaryText" class="battle-brief-summary">{{ b.summaryText }}</p>
-        </li>
-      </ol>
+    <section v-if="insights.battles.total" class="panel insight-panel">
+      <h2>连战摘要</h2>
+      <p>共 {{ insights.battles.total }} 场 · AC {{ insights.battles.solvedProblems }} 题</p>
+      <RouterLink to="/statistics?view=battles">查看连战训练记录 →</RouterLink>
     </section>
 
     <section class="panel insight-panel" aria-label="Rating 走势">
@@ -549,7 +528,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="panel insight-panel" aria-label="能力雷达">
+    <section class="panel insight-panel" id="mastery" aria-label="能力雷达">
       <div class="section-head">
         <h2>能力雷达</h2>
         <div class="radar-toggle" role="group" aria-label="雷达图系列">
@@ -581,8 +560,9 @@ onBeforeUnmount(() => {
       <details class="chart-caption">
         <summary>口径说明</summary>
         <p>
-          与训练统计页一致：已掌握 100、独立做对 85、借助提示 45、仍未做出 15，未重做时 AC 70、失败
-          20，样本不足向 50 收敛。AtCoder 与洛谷的题目只有在复盘里标注过领域才会计入对应维度。
+          基于已同步题目与重做记录；0 样本表示数据不足，不代表掌握。已掌握 100、独立做对 85、借助提示
+          45、仍未做出 15，未重做时 AC 70、失败 20，样本不足向 50 收敛。AtCoder
+          与洛谷的题目只有在复盘里标注过领域才会计入对应维度。
         </p>
       </details>
     </section>

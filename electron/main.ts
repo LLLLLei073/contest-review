@@ -55,7 +55,8 @@ function startServer(): Promise<void> {
     throw new Error('缺少后端入口 electron-dist/server.cjs，请先运行 npm run desktop:build。');
   if (!existsSync(join(root, 'dist', 'index.html')))
     throw new Error('缺少前端产物 dist/，请先运行 npm run desktop:build。');
-  const dataDir = app.isPackaged ? join(app.getPath('userData'), 'data') : join(root, 'data');
+  const dataDir =
+    process.env.DATA_DIR || (app.isPackaged ? join(app.getPath('userData'), 'data') : join(root, 'data'));
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, [...sqliteFlags(), bundle], {
       cwd: root,

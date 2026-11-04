@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BackupReminder from './components/BackupReminder.vue';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { BookOpen, ArrowUpRight, RefreshCw, Check, X, Orbit, Sparkles, Sun, Moon } from 'lucide-vue-next';
@@ -230,6 +231,7 @@ onUnmounted(() => {
             (settings.xcpcPlayer?.key || '')
           "
         />
+        <BackupReminder v-if="initialized && $route.path === '/'" />
       </main>
       <footer><span>回解 / 每一题，都值得真正理解。</span><span>LOCAL FIRST · CONTEST REVIEW</span></footer>
     </div>

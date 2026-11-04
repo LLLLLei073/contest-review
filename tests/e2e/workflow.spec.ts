@@ -69,8 +69,10 @@ test('complete local workflow with fixed Codeforces fixtures', async ({ page }, 
   await page.getByRole('button', { name: '保存比赛复盘' }).click();
   await expect(page.getByText('比赛复盘已保存')).toBeVisible();
   await page.getByRole('link', { name: '训练统计', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '算法领域掌握度' })).toBeVisible();
-  await expect(page.locator('.mastery-row')).toHaveCount(8);
+  await page.getByRole('link', { name: '查看算法领域掌握度' }).click();
+  await expect(page.getByRole('heading', { name: '能力雷达', exact: true })).toBeVisible();
+  await expect(page.locator('.mastery-radar')).toBeVisible();
+  await page.getByRole('link', { name: '训练统计', exact: true }).click();
   await page.getByRole('button', { name: '练习趋势' }).click();
   await expect(page.getByRole('heading', { name: '最近 14 天的重做记录' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('statistics.png'), fullPage: true });
