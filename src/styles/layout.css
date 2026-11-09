@@ -3385,6 +3385,15 @@ details[open] > :not(summary) {
   .nav-indicator {
     border-radius: 7px;
   }
+  /* 成长浮层在手机上宽 358px 且贴底 26px，会盖住两行标签栏的上半部分：
+     改为横贯内容区、悬浮在标签栏上方。 */
+  .growth-reward {
+    left: 14px;
+    right: 14px;
+    bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom) + 12px);
+    width: auto;
+    padding: 16px;
+  }
   .page-head {
     margin-bottom: 13px;
   }
@@ -3396,6 +3405,16 @@ details[open] > :not(summary) {
   }
   .page-head p {
     line-height: 1.45;
+  }
+  /* 窄屏放不下「标题块 + 动作按钮」两栏：按钮行整体换到标题下方，标题块弹性收缩，
+     避免长按钮（如比赛复盘的一键复盘）叠在副标题文字上。 */
+  .page-head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .page-head > div:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .page-head > .button-row {
     flex-wrap: wrap;
