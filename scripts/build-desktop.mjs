@@ -26,8 +26,18 @@ await Promise.all([
     target: 'node22',
     outfile: 'electron-dist/server.cjs',
   }),
+  // 沙箱 preload：contextBridge + ipcRenderer，暴露设置页的主动更新入口。
+  build({
+    entryPoints: ['electron/preload.ts'],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node22',
+    external: ['electron'],
+    outfile: 'electron-dist/preload.cjs',
+  }),
 ]);
-console.log('desktop bundles: electron-dist/main.cjs + electron-dist/server.cjs');
+console.log('desktop bundles: electron-dist/main.cjs + electron-dist/server.cjs + electron-dist/preload.cjs');
 
 // 输出目录若继承了低完整性标签（项目放在被沙箱工具打了 Low 标签的桌面文件夹里时），
 // 从这里双击的 exe 会以低完整性运行：Electron 沙箱初始化即崩溃、NSIS 写不了临时目录，

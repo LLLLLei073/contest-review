@@ -4239,3 +4239,13 @@ h2[tabindex='-1']:focus {
   padding-left: 16px;
 }
 
+/* 设置页「检查更新」分区的下载进度条（.daily-progress 在行内 flex 里是 76px 短条） */
+.settings-update-progress {
+  flex: none !important;
+  width: 100%;
+  height: 8px;
+  background: color-mix(in srgb, var(--line) 60%, transparent);
+}
+.settings-update-progress span {
+  background: var(--highlight);
+}

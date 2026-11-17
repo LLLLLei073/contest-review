@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { RefreshCw, Link2, ShieldCheck, ArrowRight, Search } from 'lucide-vue-next';
+import { RefreshCw, Link2, ShieldCheck, ArrowRight, Search, DownloadCloud } from 'lucide-vue-next';
 import { useSection } from '../sections';
 import DataHealth from '../components/DataHealth.vue';
 import AiConfiguration from '../components/settings/AiConfiguration.vue';
 import AccountConnections from '../components/settings/AccountConnections.vue';
 import SyncStatus from '../components/settings/SyncStatus.vue';
 import BackupPanel from '../components/settings/BackupPanel.vue';
+import { desktopUpdate, type DesktopUpdateEvent, type DesktopUpdateState } from '../desktop-bridge';
 import {
   api,
   settings,
@@ -24,10 +25,12 @@ import type { SyncJob } from '../../shared/domain';
 const savedSection = sessionStorage.getItem('contest-review:settings-section');
 const savedPlatform = sessionStorage.getItem('contest-review:account-platform');
 const settingsSection = useSection(
-  ['accounts', 'sync', 'backup', 'ai'] as const,
+  ['accounts', 'sync', 'backup', 'ai', 'about'] as const,
   'accounts',
   'view',
-  savedSection === 'sync' || savedSection === 'backup' || savedSection === 'ai' ? savedSection : 'accounts',
+  savedSection === 'sync' || savedSection === 'backup' || savedSection === 'ai' || savedSection === 'about'
+    ? savedSection
+    : 'accounts',
 );
 const accountPlatform = useSection(
   ['cf', 'atcoder', 'luogu', 'xcpc'] as const,
@@ -160,8 +163,74 @@ onMounted(() => {
     if (atcoderJob.value?.status === 'running') void loadAtcoder();
     if (luoguJob.value?.status === 'running') void loadLuogu();
   }, 2000);
+  if (updateBridge)
+    void updateBridge
+      .state()
+      .then((state) => {
+        updateState.value = state;
+        if (state.downloadedVersion) updateStatus.value = 'downloaded';
+      })
+      .catch(() => {});
 });
-onUnmounted(() => clearInterval(atcoderTimer));
+onUnmounted(() => {
+  clearInterval(atcoderTimer);
+  updateUnsubscribe?.();
+});
+// 主动更新：桌面安装版通过 preload 桥触发主进程检查（便携/开发/网页只展示说明）。
+const updateBridge = desktopUpdate();
+const updateState = ref<DesktopUpdateState | null>(null);
+const updateStatus = ref<'idle' | 'checking' | 'downloading' | 'downloaded' | 'none' | 'error'>('idle');
+const updatePercent = ref(0);
+const updateError = ref('');
+const updateBusy = ref(false);
+let checkTimer: ReturnType<typeof setTimeout> | undefined;
+const updateUnsubscribe = updateBridge?.onEvent((event: DesktopUpdateEvent) => {
+  if (event.type === 'checking') updateStatus.value = 'checking';
+  else if (event.type === 'available') updateStatus.value = 'downloading';
+  else if (event.type === 'progress') {
+    updateStatus.value = 'downloading';
+    updatePercent.value = Math.round(event.percent ?? 0);
+  } else if (event.type === 'downloaded') {
+    updateStatus.value = 'downloaded';
+    if (updateState.value) updateState.value.downloadedVersion = event.version ?? null;
+  } else if (event.type === 'not-available') updateStatus.value = 'none';
+  else {
+    updateStatus.value = 'error';
+    updateError.value = event.message || '检查失败，请稍后重试';
+    clearTimeout(checkTimer);
+  }
+});
+async function checkForUpdate() {
+  if (!updateBridge || updateBusy.value) return;
+  updateBusy.value = true;
+  updateError.value = '';
+  updateStatus.value = 'checking';
+  clearTimeout(checkTimer);
+  // 结果由主进程事件驱动；30 秒无事件按超时提示。
+  checkTimer = setTimeout(() => {
+    if (updateStatus.value === 'checking') {
+      updateStatus.value = 'error';
+      updateError.value = '检查超时：网络无法访问 GitHub Releases，可稍后重试或手动下载。';
+    }
+  }, 30000);
+  try {
+    await updateBridge.check();
+  } catch (e) {
+    updateStatus.value = 'error';
+    updateError.value = (e as Error).message;
+  } finally {
+    updateBusy.value = false;
+  }
+}
+async function installUpdate() {
+  if (!updateBridge) return;
+  try {
+    await updateBridge.install();
+    notify('正在退出并安装更新…');
+  } catch (e) {
+    notify((e as Error).message);
+  }
+}
 async function bind(value = handle.value) {
   busy.value = true;
   error.value = '';
@@ -247,6 +316,7 @@ async function sync(mode = 'incremental', resume = false) {
       备份与恢复
     </button>
     <button :class="{ active: settingsSection === 'ai' }" @click="settingsSection = 'ai'">AI 助手</button>
+    <button :class="{ active: settingsSection === 'about' }" @click="settingsSection = 'about'">检查更新</button>
   </nav>
   <nav v-show="settingsSection === 'accounts'" class="content-switcher sub-switcher" aria-label="账号平台">
     <button :class="{ active: accountPlatform === 'cf' }" @click="accountPlatform = 'cf'">Codeforces</button>
@@ -619,6 +689,80 @@ async function sync(mode = 'incremental', resume = false) {
         <div v-show="settingsSection === 'ai'">
           <AiConfiguration :visible="settingsSection === 'ai'" />
         </div>
+        <section v-if="settingsSection === 'about'" class="panel settings-card">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-icon"><DownloadCloud :size="20" /></span>
+              <div>
+                <h2>软件更新</h2>
+                <p>安装版在启动后自动检查 GitHub Releases（每 6 小时复查、后台静默下载）；也可以在这里主动检查并立即安装。</p>
+              </div>
+            </div>
+          </div>
+          <div v-if="!updateBridge || !updateState" class="quiet-empty">
+            网页版没有应用更新机制。桌面版安装包请到
+            <a
+              href="https://github.com/LLLLLei073/contest-review/releases/latest"
+              target="_blank"
+              rel="noreferrer"
+              >GitHub Releases</a
+            >
+            下载。
+          </div>
+          <div v-else-if="updateState.channel === 'dev'" class="quiet-empty">
+            开发模式不提供自动更新。当前版本 v{{ updateState.currentVersion }}。
+          </div>
+          <template v-else>
+            <div v-if="updateState.channel === 'portable'" class="alert">
+              便携版无法自我替换。请到
+              <a
+                href="https://github.com/LLLLLei073/contest-review/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+                >GitHub Releases</a
+              >
+              手动下载新版替换当前文件。
+            </div>
+            <template v-else>
+              <p class="small subtle">
+                当前版本 v{{ updateState.currentVersion }}（安装版 · 自动更新已开启）。{{
+                  updateState.lastCheckAt ? `上次检查：${fullDate(updateState.lastCheckAt)}。` : ''
+                }}
+              </p>
+              <div
+                v-if="updateStatus === 'downloading'"
+                class="daily-progress settings-update-progress"
+                role="progressbar"
+                aria-label="更新下载进度"
+                :aria-valuenow="updatePercent"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <span :style="{ transform: `scaleX(${updatePercent / 100})` }"></span>
+              </div>
+              <p v-if="updateStatus === 'downloading'" class="small">
+                发现新版本，正在下载 {{ updatePercent }}%…
+              </p>
+              <p v-else-if="updateStatus === 'none'" class="small subtle">已是最新版本。</p>
+              <div v-else-if="updateStatus === 'error'" class="alert error" role="alert">
+                {{ updateError }}
+              </div>
+              <div class="button-row">
+                <button class="small-button" :disabled="updateBusy" @click="checkForUpdate">
+                  <RefreshCw :size="14" :class="{ spin: updateStatus === 'checking' }" />
+                  {{ updateStatus === 'checking' ? '正在检查…' : '检查更新' }}
+                </button>
+                <button
+                  v-if="updateStatus === 'downloaded' && updateState.downloadedVersion"
+                  class="button primary"
+                  @click="installUpdate"
+                >
+                  重启并安装 v{{ updateState.downloadedVersion }}
+                </button>
+              </div>
+            </template>
+          </template>
+        </section>
       </div>
       <aside class="settings-note">
         <ShieldCheck :size="30" />

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,12 +13,71 @@ let quitting = false;
 // 安装版通过 GitHub Releases 自动更新：启动 15 秒后首查、之后每 6 小时复查，
 // 后台静默下载，完成后询问是否立即重启；下载失败只记日志，绝不打扰使用。
 // 便携版（electron-builder 注入 PORTABLE_EXECUTABLE_DIR）无法自我替换，跳过。
+// 设置页的「检查更新」通过 IPC 主动触发同一套流程；手动检查时不弹原生对话框，
+// 进度与结果全部回传给页面展示。
+interface UpdateState {
+  channel: 'install' | 'portable' | 'dev';
+  currentVersion: string;
+  lastCheckAt: string | null;
+  downloadedVersion: string | null;
+  downloadPercent: number | null;
+}
+type UpdateEvent =
+  | { type: 'checking' }
+  | { type: 'available'; version: string }
+  | { type: 'not-available' }
+  | { type: 'progress'; percent: number }
+  | { type: 'downloaded'; version: string }
+  | { type: 'error'; message: string };
+
+let lastCheckAt: string | null = null;
+let downloadedVersion: string | null = null;
+let downloadPercent: number | null = null;
+let manualDialogPending = false;
+
+const updateChannel = (): UpdateState['channel'] =>
+  !app.isPackaged ? 'dev' : process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'install';
+
+const broadcast = (payload: UpdateEvent) => {
+  try {
+    window?.webContents.send('update:event', payload);
+  } catch {
+    // 窗口可能正在销毁；更新事件允许丢失。
+  }
+};
+
 function setupAutoUpdate() {
-  if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR) return;
+  // 所有渠道都提供状态查询：便携版/开发模式据此在设置页展示手动下载说明。
+  ipcMain.handle('update:state', (): UpdateState => ({
+    channel: updateChannel(),
+    currentVersion: app.getVersion(),
+    lastCheckAt,
+    downloadedVersion,
+    downloadPercent,
+  }));
+  if (updateChannel() !== 'install') return;
   try {
     autoUpdater.autoDownload = true;
-    autoUpdater.on('error', (error) => console.error('[update]', (error as Error).message));
+    autoUpdater.on('checking-for-update', () => broadcast({ type: 'checking' }));
+    autoUpdater.on('update-available', (info) => broadcast({ type: 'available', version: info.version ?? '' }));
+    autoUpdater.on('update-not-available', () => {
+      lastCheckAt = new Date().toISOString();
+      manualDialogPending = false;
+      broadcast({ type: 'not-available' });
+    });
+    autoUpdater.on('download-progress', (progress) => {
+      downloadPercent = Math.round(progress.percent ?? 0);
+      broadcast({ type: 'progress', percent: downloadPercent });
+    });
     autoUpdater.on('update-downloaded', (info) => {
+      downloadedVersion = info.version ?? '';
+      downloadPercent = 100;
+      lastCheckAt = new Date().toISOString();
+      const wasManual = manualDialogPending;
+      manualDialogPending = false;
+      broadcast({ type: 'downloaded', version: info.version ?? '' });
+      // 主动检查（页面驱动）时页面已展示「重启更新」，不再弹原生对话框。
+      if (wasManual) return;
       void dialog
         .showMessageBox({
           type: 'info',
@@ -32,6 +91,27 @@ function setupAutoUpdate() {
           quitting = true; // before-quit 不再拦截；服务器由这里显式收尾。
           void stopServer().finally(() => autoUpdater.quitAndInstall(true, false));
         });
+    });
+    autoUpdater.on('error', (error) => {
+      manualDialogPending = false;
+      broadcast({ type: 'error', message: (error as Error).message });
+      console.error('[update]', (error as Error).message);
+    });
+    ipcMain.handle('update:check', () => {
+      manualDialogPending = true; // 手动链路：结果走页面，不弹对话框。
+      lastCheckAt = new Date().toISOString();
+      broadcast({ type: 'checking' });
+      void autoUpdater.checkForUpdates().catch((error) => {
+        manualDialogPending = false;
+        broadcast({ type: 'error', message: (error as Error).message });
+      });
+      return { started: true };
+    });
+    ipcMain.handle('update:install', () => {
+      if (!downloadedVersion) return { installed: false };
+      quitting = true; // before-quit 不再拦截；服务器由这里显式收尾。
+      void stopServer().finally(() => autoUpdater.quitAndInstall(true, false));
+      return { installed: true };
     });
     const check = () => void autoUpdater.checkForUpdates().catch(() => {});
     setTimeout(check, 15000);
@@ -122,7 +202,11 @@ function createWindow() {
     title: '回解',
     show: false,
     backgroundColor: '#111418',
-    webPreferences: { sandbox: true, contextIsolation: true },
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      preload: join(__dirname, 'preload.cjs'),
+    },
   });
   window.once('ready-to-show', () => window?.show());
   const origin = `http://127.0.0.1:${serverPort}`;
