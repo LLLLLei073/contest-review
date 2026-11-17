@@ -2,6 +2,8 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
   testMatch: ['e2e/*.spec.ts', 'pages/*.spec.ts'],
+  // 视觉截图用例依赖本地工程的备份恢复与确定性 fixture，离线 pages 工程不执行。
+  testIgnore: ['**/visual-program.spec.ts'],
   fullyParallel: false,
   workers: 1,
   timeout: 90000,
