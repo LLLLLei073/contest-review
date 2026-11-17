@@ -54,7 +54,7 @@ test('Monday waits for goal; focus quota, fixed plan, no next-day duplicates and
   assert.equal(s.trainingDay('alice', monday).newProblems.length, 0);
   s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, monday);
   const first = s.trainingDay('alice', monday);
-  assert.equal(first.newProblems.length, 5);
+  assert.equal(first.newProblems.length, 8);
   assert.ok(first.newProblems.filter((p) => categories(p.tags).includes('数学')).length >= 2);
   assert.ok(first.newProblems.every((p) => p.recommendationReason));
   assert.deepEqual(
@@ -62,7 +62,7 @@ test('Monday waits for goal; focus quota, fixed plan, no next-day duplicates and
     first.newProblems.map((p) => p.key),
   );
   const next = s.trainingDay('alice', tuesday);
-  assert.equal(next.newProblems.length, 5);
+  assert.equal(next.newProblems.length, 8);
   assert.ok(next.newProblems.every((p) => !first.newProblems.some((old) => old.key === p.key)));
   assert.equal(s.trainingDay('alice', nextMonday).newProblems.length, 0);
   assert.equal(weekStart(monday), '2026-09-28');
@@ -75,12 +75,12 @@ test('Sunday goal cannot authorize Monday new problems until the new week is sel
   const monday = new Date('2026-10-19T12:00:00+08:00');
   s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, sunday);
   const first = s.trainingDay('alice', sunday);
-  assert.equal(first.newProblems.length, 5);
+  assert.equal(first.newProblems.length, 8);
   assert.equal(s.weeklyGoal(monday), null);
   assert.equal(s.trainingDay('alice', monday).newProblems.length, 0);
   s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, monday);
   const next = s.trainingDay('alice', monday);
-  assert.equal(next.newProblems.length, 5);
+  assert.equal(next.newProblems.length, 8);
   assert.ok(next.newProblems.every((p) => !first.newProblems.some((old) => old.key === p.key)));
   s.close();
 });
@@ -89,7 +89,7 @@ test('balanced goal counts two total; shortages and profile isolation are explic
   const s = fixture();
   s.saveWeeklyGoal({ mode: 'balanced', categories: ['数学', '动态规划'] }, monday);
   const first = s.trainingDay('alice', monday);
-  assert.equal(first.newProblems.length, 5);
+  assert.equal(first.newProblems.length, 8);
   assert.ok(
     first.newProblems.filter((p) => categories(p.tags).some((c) => ['数学', '动态规划'].includes(c)))
       .length >= 2,
@@ -142,7 +142,7 @@ test('latest official Rating controls the next plan, while todays plan and anoth
   s.activate('bob');
   s.enrich('bob', [], [], catalog);
   s.saveWeeklyGoal({ mode: 'focus', categories: ['数学'] }, tuesday);
-  assert.equal(s.trainingDay('bob', tuesday).newProblems.length, 5);
+  assert.equal(s.trainingDay('bob', tuesday).newProblems.length, 8);
   assert.match(s.trainingDay('bob', tuesday).newProblems[0].recommendationReason ?? '', /暂无官方 Rating/);
   s.close();
 });

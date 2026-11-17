@@ -221,7 +221,7 @@ test('Agent changes only future plan; same inputs dedupe concurrent calls; rever
     s.combinedTrainingDay().newProblems.map((p) => p.key),
     today.newProblems.map((p) => p.key),
   );
-  assert.equal(s.combinedTrainingDay(tomorrow).newProblems.length, 5);
+  assert.equal(s.combinedTrainingDay(tomorrow).newProblems.length, 10);
   l.revert({ id: revision.id });
   await l.agent({ automatic: true });
   assert.equal(calls(), 1);
@@ -235,7 +235,7 @@ test('Agent model cannot override deterministic selection; disabled auto never c
   assert.equal(calls(), 0);
   const r = (await l.agent({ automatic: false })) as Extract<LearningRecord, { kind: 'revision' }>;
   assert.equal(r.kind, 'revision');
-  assert.equal(r.after.newKeys.length, 5);
+  assert.equal(r.after.newKeys.length, 10);
   assert.equal(r.after.newKeys.includes('999999:X'), false);
   assert.ok(r.planningDecisionId);
   assert.ok(l.records().some((r) => r.kind === 'agent-run' && r.status === 'completed'));
@@ -249,7 +249,7 @@ test('migration occupies existing new slot; no repeated assignment; AC required 
   assert.equal(t.kind, 'transfer');
   assert.ok(!before.newProblems.some((p) => p.key === t.targetKey));
   assert.ok(s.combinedTrainingDay(tomorrow).newProblems.some((p) => p.key === t.targetKey));
-  assert.ok(s.combinedTrainingDay(tomorrow).newProblems.length <= 5);
+  assert.ok(s.combinedTrainingDay(tomorrow).newProblems.length <= 10);
   assert.throws(() => l.transferResult({ id: t.id, result: 'independent', minutes: 3 }), /AC/);
   s.ingest('alice', [sub(44, t.targetKey, 'OK', new Date(Date.now() + 2000))]);
   l.transferResult({ id: t.id, result: 'independent', minutes: 3 });

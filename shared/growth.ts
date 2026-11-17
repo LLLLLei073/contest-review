@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { CoreStore } from './core-store.js';
 import { problemKey } from './core-store.js';
 import { hasReflection, type Attempt, type CFSubmission, type Problem, type Review } from './domain.js';
+import { programNamespace } from './program-domain.js';
 import { weeklyGrowth } from './growth-weekly.js';
 import type { LearningRecord } from './learning-domain.js';
 import { fingerprint } from './learning-domain.js';
@@ -132,6 +133,11 @@ export function growthSummary(store: CoreStore): GrowthSummary {
     reflection: events.filter((e) => e.kind === 'reflection').length,
     days: new Set(baseEvents.map((e) => e.day)).size,
     weeks: weekly.weeks,
+    programs: store
+      .externalAll<{ status: string }>(
+        programNamespace(store.active() || '-', store.activeAtcoder() || ''),
+      )
+      .filter((p) => p.status === 'completed').length,
   };
   const definitions = [
     ['ac', '首次突破', 1],
@@ -160,6 +166,8 @@ export function growthSummary(store: CoreStore): GrowthSummary {
     ['weeks', '十周践行', 10],
     ['weeks', '长期研习', 25],
     ['weeks', '五十周航程', 50],
+    ['programs', '训练营首胜', 1],
+    ['programs', '三营连破', 3],
   ] as const;
   const labels = {
     ac: '累计首次 AC',
@@ -167,11 +175,12 @@ export function growthSummary(store: CoreStore): GrowthSummary {
     reflection: '有效题目复盘',
     days: '累计训练天数',
     weeks: '完整完成周任务',
+    programs: '完成的长期训练计划',
   };
   const achievements = definitions.map(([key, title, target]) => ({
     id: key + ':' + target,
     title,
-    description: `${labels[key]} ${target}${key === 'days' ? ' 天' : key === 'weeks' ? ' 周' : key === 'ac' || key === 'reflection' ? ' 题' : ' 次'}`,
+    description: `${labels[key]} ${target}${key === 'days' ? ' 天' : key === 'weeks' ? ' 周' : key === 'programs' ? ' 个' : key === 'ac' || key === 'reflection' ? ' 题' : ' 次'}`,
     progress: counts[key],
     target,
     unlocked: counts[key] >= target,

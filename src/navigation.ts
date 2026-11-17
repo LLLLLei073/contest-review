@@ -44,6 +44,7 @@ export const navigation = [
 
 export const quickActions = [
   { to: '/battle', label: '开始主题连战', caption: '输入任意主题（如线段树），一题接一题' },
+  { to: '/?view=program', label: '生成长期训练计划', caption: '一次给出未来 7/14 天的渐进式题单' },
   { to: '/?view=path', label: '学习路径', caption: '从基础到目标，查看先修关系与独立验证' },
   { to: '/problems?due=yes', label: '查看到期复习', caption: '优先处理积压的复习任务' },
   { to: '/?view=training', label: '调整未来计划', caption: '预览、查看与撤回未来安排' },

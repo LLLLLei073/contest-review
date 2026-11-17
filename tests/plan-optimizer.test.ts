@@ -34,7 +34,7 @@ test('budget DP agrees with exhaustive optimum over small random inputs', () => 
       const selected = candidates.filter((_, i) => mask & (1 << i));
       if (candidates.some((c) => c.required && !selected.includes(c))) continue;
       if (
-        selected.filter((c) => c.lane === 'new').length > 5 ||
+        selected.filter((c) => c.lane === 'new').length > 10 ||
         selected.filter((c) => c.lane === 'review').length > 5
       )
         continue;
@@ -64,6 +64,12 @@ test('mandatory tasks are counted once and conflicts return the minimum required
     optimizePlan({
       candidates: Array.from({ length: 6 }, (_, i) => candidate(String(i), { required: true })),
     }).feasible,
+    true,
+  );
+  assert.equal(
+    optimizePlan({
+      candidates: Array.from({ length: 11 }, (_, i) => candidate(String(i), { required: true })),
+    }).feasible,
     false,
   );
 });
@@ -74,7 +80,7 @@ test('candidate cap retains low-ranked mandatory tasks and quota witnesses; no b
   const result = optimizePlan({ candidates });
   assert.equal(result.consideredCount, 80);
   assert.equal(result.truncated, true);
-  assert.equal(result.selected.length, 5);
+  assert.equal(result.selected.length, 10);
   for (const key of ['0', '1', '2']) assert.ok(result.selected.some((c) => c.key === key));
   assert.equal(estimateMinutes([0, NaN, -1, 10, 20], 'new').minutes, 35);
   assert.equal(estimateMinutes([10, 20, 30, 40], 'review').minutes, 25);

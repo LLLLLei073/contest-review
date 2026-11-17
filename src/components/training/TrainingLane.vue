@@ -108,7 +108,7 @@ const newDone = computed(() => props.day?.newProblems.filter((task) => task.comp
         <h2>
           新知 <span class="count">{{ newDone }}/{{ day?.newProblems.length ?? 0 }}</span>
         </h2>
-        <p>每天最多 5 道从未提交过的 CF 题，优先安排本周目标领域。</p>
+        <p>每天 6–10 道从未提交过的 CF 题，优先长期计划与本周目标领域。</p>
       </div>
       <div
         class="daily-progress"
@@ -128,7 +128,10 @@ const newDone = computed(() => props.day?.newProblems.filter((task) => task.comp
       {{ cf ? '尚无完整公开题库。' : '新知题仅从 Codeforces 选择。'
       }}<RouterLink to="/settings?view=sync">请先绑定并同步 Codeforces</RouterLink>；已有数据仍可离线复习。
     </div>
-    <div v-else-if="!day.weeklyGoal" class="quiet-empty">选择本周目标后生成今天的新知题单。</div>
+    <div v-else-if="!day.weeklyGoal" class="quiet-empty">
+      选择本周目标或开启<RouterLink to="/?view=program">长期计划</RouterLink
+      >后，生成今天的新知题单。
+    </div>
     <div v-else-if="!day.newProblems.length" class="quiet-empty">
       {{ day.newShortage || '暂无符合条件的新题；今天不会用旧题凑数。' }}
     </div>
@@ -168,8 +171,8 @@ const newDone = computed(() => props.day?.newProblems.filter((task) => task.comp
         /></a>
       </div>
     </article>
-    <p v-if="day && day.catalogCount && day.newProblems.length < 5" class="daily-footnote">
-      {{ day.newShortage || `符合条件的候选不足 5 道，今天安排了 ${day.newProblems.length} 道。` }}
+    <p v-if="day && day.catalogCount && day.newProblems.length && day.newProblems.length < 6" class="daily-footnote">
+      {{ day.newShortage || `符合条件的候选不足 6 道，今天安排了 ${day.newProblems.length} 道。` }}
     </p>
   </section>
 </template>

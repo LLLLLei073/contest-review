@@ -21,6 +21,9 @@ const records = ref<LearningRecord[]>([]),
   message = ref(''),
   idea = ref(''),
   sourceId = ref('');
+const transferDate = ref(localDay(new Date(Date.now() + 86400000))),
+  transferMin = localDay(new Date(Date.now() + 86400000)),
+  transferMax = localDay(new Date(Date.now() + 30 * 86400000));
 const createdCard = ref('');
 const currentHints = computed(() =>
   hints.value.filter(
@@ -203,8 +206,17 @@ onMounted(() => load().catch((e) => (error.value = e.message)));
     </section>
     <section v-show="tool === 'transfer'">
       <h2>验证迁移能力</h2>
-      <p class="small subtle">推荐未做过的相关变式题，安排到次日新知栏，并保持每日最多五道新知题。</p>
-      <button class="small-button" :disabled="busy" @click="run('transfer', { problemKey })">
+      <p class="small subtle">
+        推荐未做过的相关变式题，安排到指定日期的新知栏；有长期计划时，迁移题会自动并入当天安排。
+      </p>
+      <label class="small"
+        >安排日期<input v-model="transferDate" type="date" :min="transferMin" :max="transferMax"
+      /></label>
+      <button
+        class="small-button"
+        :disabled="busy"
+        @click="run('transfer', { problemKey, date: transferDate })"
+      >
         安排迁移检测
       </button>
       <RouterLink v-if="!busy" to="/?view=transfers">查看迁移任务与评价</RouterLink>

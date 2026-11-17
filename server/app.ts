@@ -8,6 +8,7 @@ import { AgentService } from '../shared/agent-service.js';
 import { growthRoute } from '../shared/growth.js';
 import { LearningService } from '../shared/learning-service.js';
 import { PlanningService } from '../shared/planning-service.js';
+import { ProgramService } from '../shared/program-service.js';
 import { BattleService } from '../shared/battle-service.js';
 import { mapTheme } from '../shared/battle-theme.js';
 import { generateBattleSummary } from '../shared/battle-summary.js';
@@ -85,6 +86,11 @@ export async function buildApp(
     method: ['GET', 'POST', 'PUT'],
     url: '/api/planning/:action',
     handler: async (req) => planning.route(req.params.action, req.method, req.body),
+  });
+  app.route<{ Params: { action: string } }>({
+    method: ['GET', 'POST'],
+    url: '/api/program/:action',
+    handler: async (req) => new ProgramService(store).route(req.params.action, req.method, req.body),
   });
   const agent = new AgentService(store, options.aiFetch);
   app.route<{ Params: { '*': string } }>({

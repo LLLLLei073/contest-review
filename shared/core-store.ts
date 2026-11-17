@@ -6,9 +6,15 @@ import { battleSummarySchema } from './battle-summary.js';
 import { growthRecordSchema } from './growth-domain.js';
 import { aiConfigSchema, aiReviewRecordSchema } from './ai-review.js';
 import { agentRecordSchema } from './agent-domain.js';
-import { planningRecordSchema } from './planning-domain.js';
+import { planningRecordSchema, planningNamespace } from './planning-domain.js';
+import {
+  programAssignment,
+  programNamespace,
+  trainingProgramSchema,
+  type TrainingProgram,
+} from './program-domain.js';
 import { reviewWorkflowSchema } from './review-workflow-domain.js';
-import { learningRecordSchema, type LearningRecord } from './learning-domain.js';
+import { learningNamespace, learningRecordSchema, type LearningRecord } from './learning-domain.js';
 import { knowledgeCards } from './knowledge.js';
 import { fingerprint } from './learning-domain.js';
 import { chooseWeeklyProblems, weekStart, weeklyGoalSchema, type WeeklyGoal } from './weekly.js';
@@ -27,6 +33,7 @@ import {
   trainingMetaSchema,
   masteryAreas,
   recommendationDifficulty,
+  weakTags,
   categories,
   type Catalog,
   type DailyPlan,
@@ -776,6 +783,51 @@ export class CoreStore {
   private weeklyNamespace() {
     return `weekly:${this.active() || '-'}:${this.activeAtcoder().toLowerCase() || '-'}`;
   }
+  private programNamespace() {
+    return programNamespace(this.active() || '-', this.activeAtcoder() || '');
+  }
+  /** 当日已预约、待验证的迁移题：显式安排优先于计划选题。 */
+  private reservedTransferKeys(date: string): { key: string; reason: string }[] {
+    return this.externalAll<LearningRecord>(
+      learningNamespace(this.active() || '-', this.activeAtcoder()),
+    )
+      .filter((r) => r.kind === 'transfer' && r.result === 'pending' && r.date === date)
+      .map((r) => ({
+        key: r.kind === 'transfer' ? r.targetKey : '',
+        reason: '已预约迁移题：与错题同知识点、相近难度的变式',
+      }))
+      .filter((r) => r.key);
+  }
+  activeProgram(): TrainingProgram | null {
+    return (
+      this.externalAll<TrainingProgram>(this.programNamespace()).find((p) => p.status === 'active') ??
+      null
+    );
+  }
+  /** key → 首次 AC 的本地日期（跨平台取最早）。 */
+  private acceptedDaysFor(profiles: (string | null | undefined)[]): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const profile of profiles) {
+      if (!profile) continue;
+      for (const s of this.all<CFSubmission>('submissions', profile)) {
+        if (s.verdict !== 'OK' || s.author.teamId) continue;
+        const day = localDay(new Date(s.creationTimeSeconds * 1000));
+        const key = problemKey(s);
+        const prev = map.get(key);
+        if (prev === undefined || day < prev) map.set(key, day);
+      }
+    }
+    return map;
+  }
+  /** 新知栏每日题量：来自规划偏好（6–10，默认 8）。 */
+  private dailyNewCount(): number {
+    const pref = this.externalGet<{ options?: { newCount?: number } }>(
+      planningNamespace(this.active() || '-', this.activeAtcoder()),
+      'preferences',
+    );
+    const value = pref?.options?.newCount;
+    return typeof value === 'number' && value >= 6 && value <= 10 ? Math.round(value) : 8;
+  }
   weeklyGoal(now = new Date()): WeeklyGoal | null {
     return this.externalGet<WeeklyGoal>(this.weeklyNamespace(), weekStart(now)) ?? null;
   }
@@ -1117,7 +1169,8 @@ export class CoreStore {
     const inherited = cf ? this.externalGet<DailyPlan>(`daily:-:${ac.toLowerCase()}`, date) : undefined;
     let plan = this.combinedPlan(date);
     const weeklyGoal = this.weeklyGoal(now);
-    if (!plan || (!plan.catalogReady && !!weeklyGoal && !plan.newKeys.length)) {
+    const program = this.activeProgram();
+    if (!plan || (!!this.get<Catalog>('catalog_cache', cf ?? '', 'current') && !plan.newKeys.length && ((!plan.catalogReady && !!weeklyGoal) || !!program))) {
       const rows = [...(cf ? this.problems(cf) : []), ...this.problems(acProfile)].filter(
         (p) => !p.review.ignored,
       );
@@ -1164,6 +1217,17 @@ export class CoreStore {
       const cfCatalog = cf ? this.get<Catalog>('catalog_cache', cf, 'current') : undefined;
       const cfKnown = cf ? this.all<Problem>('problems', cf) : [];
       const cfSubmissions = cf ? this.all<CFSubmission>('submissions', cf) : [];
+      const programPlan = program
+        ? programAssignment(program, date, this.acceptedDaysFor([cf, acProfile]), this.reservedTransferKeys(date))
+        : null;
+      const weak = weakTags(
+        rows,
+        cfSubmissions,
+        [...(cf ? this.all<Attempt>('attempts', cf) : []), ...this.all<Attempt>('attempts', acProfile)],
+        new Map(rows.map((r) => [r.key, r.review])),
+        problemKey,
+        now,
+      );
       const picked =
         cf && weeklyGoal
           ? chooseWeeklyProblems(
@@ -1178,21 +1242,38 @@ export class CoreStore {
               date,
               weeklyGoal,
               this.weeklyCoverage(cf, date),
+              this.dailyNewCount(),
+              weak,
             )
           : { keys: [], reasons: {}, shortage: null };
-      const newKeys =
+      // 优先级：当日已保存计划 > 遗留镜像 > 长期计划（含补做顺延） > 周目标选题。
+      const source =
         cfPlan?.catalogReady || cfPlan?.newKeys.length
-          ? cfPlan.newKeys
-          : inherited
-            ? inherited.newKeys
-            : picked.keys;
+          ? {
+              keys: cfPlan.newKeys,
+              reasons: cfPlan.newReasons ?? {},
+              shortage: cfPlan.newShortage ?? null,
+            }
+          : inherited?.newKeys?.length
+            ? {
+                keys: inherited.newKeys,
+                reasons: inherited.newReasons ?? {},
+                shortage: inherited.newShortage ?? null,
+              }
+            : programPlan?.keys.length
+              ? {
+                  keys: programPlan.keys,
+                  reasons: programPlan.reasons,
+                  shortage: programPlan.shortage,
+                }
+              : { keys: picked.keys, reasons: picked.reasons, shortage: picked.shortage };
       plan = dailyPlanSchema.parse({
         date,
         review,
-        newKeys,
-        newReasons: cfPlan?.newReasons ?? picked.reasons,
-        newShortage: cfPlan?.newShortage ?? picked.shortage,
-        catalogReady: !!cfCatalog && !!weeklyGoal,
+        newKeys: source.keys,
+        newReasons: source.reasons,
+        newShortage: source.shortage,
+        catalogReady: !!cfCatalog && (!!weeklyGoal || !!program),
         createdAt: now.toISOString(),
       });
       this.externalPut(this.combinedNamespace(), date, plan);
@@ -1241,8 +1322,17 @@ export class CoreStore {
       newShortage: plan.newShortage ?? null,
     };
   }
-  enrich(h: string, contests: CFContest[], ratings: CFRating[], problems: CFSubmission['problem'][]) {
+  enrich(
+    h: string,
+    contests: CFContest[],
+    ratings: CFRating[],
+    problems: CFSubmission['problem'][],
+    statistics?: { contestId: number; index: string; solvedCount: number }[],
+  ) {
     const relevant = new Set(this.all<Problem>('problems', h).map((p) => p.contestId));
+    const solvedByKey = new Map<string, number>(
+      (statistics ?? []).map((s) => [`${s.contestId}:${s.index}`, s.solvedCount] as const),
+    );
     this.transaction(() => {
       if (contests.length)
         this.externalPut(`cf-contests:${h}`, 'current', z.array(contestSchema).parse(contests));
@@ -1272,6 +1362,7 @@ export class CoreStore {
         for (const p of problems) {
           if (!p.contestId || p.contestId >= 100000 || !p.index || !p.name) continue;
           const key = `${p.contestId}:${p.index}`;
+          const solvedCount = solvedByKey.get(key);
           catalog.set(key, {
             key,
             contestId: p.contestId,
@@ -1280,6 +1371,7 @@ export class CoreStore {
             rating: p.rating ?? null,
             tags: p.tags,
             url: `https://codeforces.com/contest/${p.contestId}/problem/${p.index}`,
+            solvedCount: typeof solvedCount === 'number' && solvedCount >= 0 ? solvedCount : null,
           });
         }
         this.put(
@@ -1315,7 +1407,14 @@ export class CoreStore {
     const mastery = masteryAreas(known, submissions, attempts, reviews, problemKey, allBattleRewards(this, h));
     let plan = planOverride ?? this.get<DailyPlan>('daily_plans', h, date);
     const weeklyGoal = h === this.active() ? this.weeklyGoal(now) : null;
-    if (!plan || (!planOverride && !plan.catalogReady && catalog && !!weeklyGoal && !plan.newKeys.length)) {
+    const program = h === this.active() && !this.activeAtcoder() ? this.activeProgram() : null;
+    if (
+      !plan ||
+      (!planOverride &&
+        !!catalog &&
+        !plan.newKeys.length &&
+        ((!plan.catalogReady && !!weeklyGoal) || !!program))
+    ) {
       const eligible = rows.filter((p) => !p.review.ignored);
       const carry = eligible
         .filter(
@@ -1360,6 +1459,11 @@ export class CoreStore {
         ...review.map((p) => p.key),
         ...this.priorNewKeys(h, date),
       ]);
+      const program = h === this.active() && !this.activeAtcoder() ? this.activeProgram() : null;
+      const programPlan = program
+        ? programAssignment(program, date, this.acceptedDaysFor([h]), this.reservedTransferKeys(date))
+        : null;
+      const weak = weakTags(rows, submissions, attempts, reviews, problemKey, now);
       const picked = weeklyGoal
         ? chooseWeeklyProblems(
             catalog?.problems ?? [],
@@ -1369,15 +1473,21 @@ export class CoreStore {
             date,
             weeklyGoal,
             this.weeklyCoverage(h, date),
+            this.dailyNewCount(),
+            weak,
           )
         : { keys: [] as string[], reasons: {} as Record<string, string>, shortage: null };
+      // 长期计划（含补做顺延）优先于周目标选题。
+      const source = programPlan?.keys.length
+        ? { keys: programPlan.keys, reasons: programPlan.reasons, shortage: programPlan.shortage }
+        : { keys: picked.keys, reasons: picked.reasons, shortage: picked.shortage };
       plan = dailyPlanSchema.parse({
         date,
         review,
-        newKeys: picked.keys,
-        newReasons: picked.reasons,
-        newShortage: picked.shortage,
-        catalogReady: !!catalog && !!weeklyGoal,
+        newKeys: source.keys,
+        newReasons: source.reasons,
+        newShortage: source.shortage,
+        catalogReady: !!catalog && (!!weeklyGoal || !!program),
         createdAt: plan?.createdAt ?? now.toISOString(),
       });
       if (
@@ -2234,6 +2344,7 @@ export class CoreStore {
       else if (row.namespace.startsWith('growth:')) row.value = growthRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('agent:')) row.value = agentRecordSchema.parse(row.value);
       else if (row.namespace.startsWith('planning:')) row.value = planningRecordSchema.parse(row.value);
+      else if (row.namespace.startsWith('program:')) row.value = trainingProgramSchema.parse(row.value);
       else if (row.namespace.startsWith('review-workflow:'))
         row.value = reviewWorkflowSchema.parse(row.value);
       else if (row.namespace.startsWith('battle:')) row.value = battleSessionSchema.parse(row.value);

@@ -176,10 +176,11 @@ export class SyncService {
         this.checkpoint();
         warnings.push(e instanceof Error ? e.message : String(e));
       }
-      const problemset = await safe<{ problems: CFSubmission['problem'][] }>('problemset.problems', {
-        problems: [],
-      });
-      this.store.enrich(job.handle, contests, ratings, problemset.problems);
+      const problemset = await safe<{
+        problems: CFSubmission['problem'][];
+        problemStatistics?: { contestId: number; index: string; solvedCount: number }[];
+      }>('problemset.problems', { problems: [] });
+      this.store.enrich(job.handle, contests, ratings, problemset.problems, problemset.problemStatistics);
       this.checkpoint();
       job.status = 'completed';
       job.message = warnings.length

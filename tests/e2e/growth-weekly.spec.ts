@@ -91,7 +91,7 @@ test('higher-stage conditions, complete weekly rewards, filters, evidence and of
   await page.getByRole('button', { name: '周任务', exact: true }).click();
   await expect(page.locator('.achievement-card')).toHaveCount(4);
   await page.getByRole('button', { name: '全部', exact: true }).click();
-  await expect(page.locator('.achievement-card')).toHaveCount(26);
+  await expect(page.locator('.achievement-card')).toHaveCount(28);
   await expect(page.locator('.weekly-event-proof').first()).toBeVisible();
   await page.locator('.weekly-event-proof summary').first().click();
   await expect(page.locator('.weekly-event-proof').first()).toContainText('研习');

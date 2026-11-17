@@ -13,6 +13,7 @@ import {
   categoryNames,
   dailyPlanSchema,
   recommendationDifficulty,
+  weakTags,
   type Catalog,
   type DailyPlan,
 } from './training.js';
@@ -350,6 +351,14 @@ export class PlanningService {
       .sort((a, b) => (b.rating?.ratingUpdateTimeSeconds ?? 0) - (a.rating?.ratingUpdateTimeSeconds ?? 0))[0]
       ?.rating?.newRating;
     const band = recommendationDifficulty(this.store.problems(s.cf), s.submissions, problemKey, official);
+    const weak = weakTags(
+      s.rows,
+      s.submissions,
+      this.profiles().flatMap((p) => this.store.all<import('./domain.js').Attempt>('attempts', p)),
+      new Map(s.rows.map((r) => [r.key, r.review])),
+      problemKey,
+      this.now(),
+    );
     const knowledge = new Map(s.tracing.states.map((k) => [k.skillId, k]));
     const readySkill = (id: string) =>
       knowledgeCards
@@ -420,6 +429,9 @@ export class PlanningService {
               band,
               request.date,
               s.goal,
+              {},
+              request.newCount,
+              weak,
             ).keys
           : [],
         catalogReady: !!s.catalog && !!s.goal,
@@ -500,7 +512,7 @@ export class PlanningService {
         result.selected.filter((c) => c.lane === 'new').map((c) => [c.key, c.reason]),
       ),
       newShortage:
-        result.selected.filter((c) => c.lane === 'new').length < 5
+        result.selected.filter((c) => c.lane === 'new').length < request.newCount
           ? '按预算、先修与有效候选安排，不以旧题补足数量'
           : null,
     });

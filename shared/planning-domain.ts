@@ -14,6 +14,7 @@ export const planningDateSchema = z
 export const planningOptionsSchema = z.object({
   budget: z.number().int().min(15).max(240).nullable().default(null),
   targets: z.array(id).max(20).default([]),
+  newCount: z.number().int().min(6).max(10).default(8),
 });
 export const planRequestSchema = planningOptionsSchema.extend({
   date: planningDateSchema,
@@ -74,7 +75,7 @@ export const optimizerResultSchema = z.object({
   truncated: z.boolean(),
   feasible: z.boolean(),
   conflicts: z.array(z.string()),
-  selected: z.array(candidateSchema).max(10),
+  selected: z.array(candidateSchema).max(15),
   allocatedMinutes: z.number().nonnegative(),
   estimatedMinutes: z.number().nonnegative(),
   utility: z.number().finite(),

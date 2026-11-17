@@ -135,7 +135,7 @@ export type GrowthAchievement = {
   progress: number;
   target: number;
   unlocked: boolean;
-  group: 'ac' | 'independent' | 'reflection' | 'days' | 'weeks';
+  group: 'ac' | 'independent' | 'reflection' | 'days' | 'weeks' | 'programs';
 };
 export type GrowthNotice = { xp: number; achievements: string[]; initialized: boolean };
 export type GrowthSummary = {
@@ -148,7 +148,14 @@ export type GrowthSummary = {
   equipment: GrowthEquipment;
   achievements: GrowthAchievement[];
   events: GrowthEvent[];
-  counts: { ac: number; independent: number; reflection: number; days: number; weeks: number };
+  counts: {
+    ac: number;
+    independent: number;
+    reflection: number;
+    days: number;
+    weeks: number;
+    programs: number;
+  };
   stages: GrowthStage[];
   currentStage: GrowthStage;
   nextStage: GrowthStage | null;

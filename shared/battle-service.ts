@@ -428,10 +428,13 @@ export class BattleService {
       if (busy()) throw new Error('正在同步其他训练数据，请稍后重试');
       const catalog = this.store.get<Catalog>('catalog_cache', data.handle, 'current');
       if (!catalog || this.now().getTime() - Date.parse(catalog.fetchedAt) >= 60_000) {
-        const response = await cf.call<{ problems: CFSubmission['problem'][] }>('problemset.problems');
+        const response = await cf.call<{
+          problems: CFSubmission['problem'][];
+          problemStatistics?: { contestId: number; index: string; solvedCount: number }[];
+        }>('problemset.problems');
         if (epoch !== this.store.learningEpoch) throw new Error('账号或数据已变化，请重新刷新题库');
         this.current(path, data); // async work must not apply to a changed account or revision
-        this.store.enrich(data.handle, [], [], response.problems);
+        this.store.enrich(data.handle, [], [], response.problems, response.problemStatistics);
       }
     }
     if (epoch !== this.store.learningEpoch) throw new Error('账号或数据已变化，请重试连战操作');

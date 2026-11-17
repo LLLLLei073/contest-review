@@ -89,7 +89,7 @@ test('full weekly goals add exactly 180 XP without adding training days; stable 
   s.activateGrowthWeek();
   s.activateGrowthWeek();
   assert.deepEqual(growthEvents(s), before);
-  assert.equal(sum.achievements.length, 26);
+  assert.equal(sum.achievements.length, 28);
   assert.equal(before.filter((e) => e.kind === 'weekly').length, 3);
   assert.ok(before.filter((e) => e.kind === 'weekly').every((e) => e.evidence?.length && e.condition));
   s.close();

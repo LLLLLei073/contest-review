@@ -114,8 +114,8 @@ test('daily lanes select overdue first, then pending; shortage stays below five 
       ['2000:D', 'pending'],
     ],
   );
-  assert.equal(first.newProblems.length, 5);
-  assert.equal(new Set([...first.review, ...first.newProblems].map((p) => p.key)).size, 9);
+  assert.equal(first.newProblems.length, 8);
+  assert.equal(new Set([...first.review, ...first.newProblems].map((p) => p.key)).size, 12);
   s.ingest('tester', [make(100, 'E')]);
   const again = s.trainingDay('tester', now);
   assert.deepEqual(
@@ -138,7 +138,7 @@ test('new lane is never-submitted, fixed all day and responds to AC, pending and
   s.enrich('tester', [], [], catalog());
   s.manualProblem('tester', { contestId: 2001, index: 'A', name: 'Seen manually', tags: [], rating: 800 });
   const first = s.trainingDay('tester', now);
-  assert.equal(first.newProblems.length, 5);
+  assert.equal(first.newProblems.length, 8);
   assert.ok(!first.newProblems.some((p) => p.key === '2001:A'));
   const [ac, pending, fail] = first.newProblems;
   const makeFor = (id: number, key: string, verdict: string, time = now): CFSubmission => {
@@ -170,7 +170,7 @@ test('new lane is never-submitted, fixed all day and responds to AC, pending and
   s.ingest('tester', [makeFor(102, pending.key, 'OK')]);
   assert.equal(s.trainingDay('tester', now).newProblems[1].completed, true);
   const next = s.trainingDay('tester', tomorrow);
-  assert.equal(next.newProblems.length, 5);
+  assert.equal(next.newProblems.length, 8);
   assert.ok(!next.newProblems.some((p) => [ac.key, pending.key, fail.key].includes(p.key)));
   assert.ok(next.review.some((p) => p.key === fail.key && p.kind === 'pending'));
   s.close();
@@ -383,8 +383,8 @@ test('mastery uses unique problems, transparent shrinkage and inverse allocation
     recommendationDifficulty([], [], problemKey),
     '2026-09-26',
   );
-  assert.equal(chosen.length, 5);
-  assert.equal(new Set(chosen).size, 5);
+  assert.equal(chosen.length, 8);
+  assert.equal(new Set(chosen).size, 8);
   assert.ok(
     chosen.filter((key) => Number(key.split(':')[0]) >= 3010 && Number(key.split(':')[0]) < 3015).length >= 2,
   );
@@ -421,7 +421,7 @@ test('daily plans and catalog remain isolated when switching handles', () => {
   const s = store();
   s.enrich('tester', [], [], catalog());
   const first = s.trainingDay('tester', now);
-  assert.equal(first.newProblems.length, 5);
+  assert.equal(first.newProblems.length, 8);
   s.activate('other');
   const empty = s.trainingDay('other', now);
   assert.equal(empty.catalogCount, 0);
@@ -470,7 +470,7 @@ test('local training endpoints return saved plan and recent-check status', async
     headers: { host: '127.0.0.1:3210' },
   });
   assert.equal(day.statusCode, 200);
-  assert.equal(day.json().newProblems.length, 5);
+  assert.equal(day.json().newProblems.length, 8);
   const check = await app.inject({
     method: 'POST',
     url: '/api/training/recent',

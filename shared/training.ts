@@ -54,6 +54,7 @@ export const catalogSchema = z.object({
       rating: z.number().nonnegative().nullable(),
       tags: z.array(z.string().max(100)).max(100),
       url: z.url(),
+      solvedCount: z.number().int().nonnegative().nullable().optional(),
     }),
   ),
 });
@@ -75,7 +76,7 @@ export const dailyPlanSchema = z.object({
       }),
     )
     .max(5),
-  newKeys: z.array(z.string()).max(5),
+  newKeys: z.array(z.string()).max(10),
   newReasons: z.record(z.string(), z.string().max(500)).optional(),
   newShortage: z.string().max(500).nullable().optional(),
   catalogReady: z.boolean().default(false),
@@ -178,49 +179,173 @@ function hash(value: string): number {
   for (const char of value) n = Math.imul(n ^ char.charCodeAt(0), 16777619);
   return n >>> 0;
 }
+export function weakTags(
+  problems: Problem[],
+  submissions: CFSubmission[],
+  attempts: Attempt[],
+  reviews: Map<string, ProblemRow['review']>,
+  keyOf: (submission: CFSubmission) => string,
+  asOf: Date = new Date(),
+): Map<string, number> {
+  // 时间衰减：近期失败更能代表当前薄弱点（≤14 天全权重，逐级降权）。
+  const decayOf = (atMs: number) => {
+    if (!Number.isFinite(atMs)) return 1;
+    const ageDays = (asOf.getTime() - atMs) / 86400000;
+    return ageDays <= 14 ? 1 : ageDays <= 30 ? 0.6 : 0.35;
+  };
+  const solved = new Set(submissions.filter((s) => s.verdict === 'OK').map(keyOf));
+  const failWeight = new Map<string, number>();
+  for (const s of submissions) {
+    if (s.verdict && failures.has(s.verdict) && !solved.has(keyOf(s))) {
+      const key = keyOf(s);
+      failWeight.set(key, (failWeight.get(key) ?? 0) + decayOf(s.creationTimeSeconds * 1000));
+    }
+  }
+  const failedAttemptWeight = new Map<string, number>();
+  for (const a of attempts)
+    if (a.result === 'failed')
+      failedAttemptWeight.set(
+        a.problemKey,
+        (failedAttemptWeight.get(a.problemKey) ?? 0) + decayOf(Date.parse(a.createdAt)),
+      );
+  const weights = new Map<string, number>();
+  for (const p of problems) {
+    if (!p.tags.length) continue;
+    let w = failWeight.get(p.key) ?? 0;
+    const review = reviews.get(p.key);
+    if (review?.status === 'pending')
+      w += decayOf(review.firstRedoAt ? Date.parse(review.firstRedoAt) : Number.NaN);
+    w += failedAttemptWeight.get(p.key) ?? 0;
+    w = Math.min(4, w);
+    if (w <= 0) continue;
+    for (const tag of p.tags) weights.set(tag, (weights.get(tag) ?? 0) + w);
+  }
+  const max = Math.max(0, ...weights.values());
+  if (max > 0) for (const [tag, w] of weights) weights.set(tag, w / max);
+  return weights;
+}
+const QUALITY_LOG = Math.log10(20000);
+function qualityScore(solvedCount: number | null | undefined): number {
+  if (solvedCount == null || !Number.isFinite(solvedCount) || solvedCount < 0) return 0.35;
+  const base = Math.min(1, Math.log10(solvedCount + 1) / QUALITY_LOG);
+  return Math.min(1, base + (solvedCount >= 500 ? 0.15 : 0));
+}
+export type ProblemRole = 'warmup' | 'core' | 'stretch';
+export interface ProblemPick {
+  key: string;
+  role: ProblemRole;
+}
+export interface SelectionOptions {
+  date: string;
+  count: number;
+  band: Pick<DifficultyBand, 'minimum' | 'maximum' | 'preferred'>;
+  focus?: CategoryName[];
+  weak?: Map<string, number>;
+  /** 指定单档选题（换题时保持原槽位角色）；缺省按热身/核心/拉伸配额分档。 */
+  role?: ProblemRole;
+  /** 候选不足时逐级放宽难度窗口 ±100（长期计划保供给用）；每日路径默认严守推荐区间。 */
+  relax?: boolean;
+}
+export interface SelectionResult {
+  picks: ProblemPick[];
+  shortage: string | null;
+}
+const roleTarget = (band: Pick<DifficultyBand, 'minimum' | 'maximum' | 'preferred'>, role: ProblemRole) =>
+  role === 'warmup' ? band.preferred - 100 : role === 'stretch' ? band.preferred + 100 : band.preferred;
+function staticScore(
+  p: Catalog['problems'][number],
+  masteryScores: Map<CategoryName, number>,
+  focus: CategoryName[] | undefined,
+  weak: Map<string, number> | undefined,
+): number {
+  const affinity = Math.min(1, p.tags.reduce((sum, tag) => sum + (weak?.get(tag) ?? 0), 0) / 2);
+  const names = categories(p.tags);
+  const categoryFit = focus?.length
+    ? names.some((n) => focus.includes(n))
+      ? 1
+      : 0.2
+    : 1 - Math.min(...names.map((n) => masteryScores.get(n) ?? 50)) / 100;
+  const cold = p.solvedCount != null && p.solvedCount < 20 ? 0.3 : 0;
+  return 1.2 * affinity + categoryFit + 0.8 * qualityScore(p.solvedCount) - cold;
+}
+/**
+ * 统一选题引擎：针对性（weakTags 命中）+ 大类契合 + 质量先验（solvedCount）+ 难度贴合，
+ * 单日按热身→核心→拉伸分档，同日同比赛/同子标签限两题，逐级放宽保供给，全程确定性排序。
+ */
+export function selectProblems(
+  catalog: Catalog['problems'],
+  blocked: Set<string>,
+  mastery: MasteryArea[],
+  options: SelectionOptions,
+): SelectionResult {
+  const { date, band, focus, weak } = options;
+  const count = Math.max(1, Math.min(10, Math.round(options.count)));
+  const masteryScores = new Map(mastery.map((a) => [a.name, a.score]));
+  const hashOf = (key: string) => hash(`${date}:${key}`);
+  const pool = catalog
+    .filter((p) => p.rating !== null && !blocked.has(p.key))
+    .map((p) => ({ p, base: staticScore(p, masteryScores, focus, weak) }));
+  const used = new Set(blocked);
+  const contestCount = new Map<number, number>();
+  const tagCount = new Map<string, number>();
+  const picks: ProblemPick[] = [];
+  const warmup = Math.max(1, Math.round(count * 0.25));
+  const stretch = Math.max(1, Math.round(count * 0.15));
+  const quota: Record<ProblemRole, number> = options.role
+    ? {
+        warmup: options.role === 'warmup' ? count : 0,
+        core: options.role === 'core' ? count : 0,
+        stretch: options.role === 'stretch' ? count : 0,
+      }
+    : { warmup, core: count - warmup - stretch, stretch };
+  const inWindow = (p: Catalog['problems'][number], expand: number) =>
+    p.rating! >= band.minimum - expand && p.rating! <= band.maximum + expand;
+  const order = (a: { p: Catalog['problems'][number]; score: number }, b: typeof a) =>
+    b.score - a.score || hashOf(a.p.key) - hashOf(b.p.key) || a.p.key.localeCompare(b.p.key);
+  for (const role of options.role ? [options.role] : (['warmup', 'core', 'stretch'] as const)) {
+    let taken = 0;
+    for (const expand of options.relax ? [0, 100] : [0]) {
+      for (const limitTags of [true, false]) {
+        const candidates = pool
+          .filter(({ p }) => !used.has(p.key) && inWindow(p, expand))
+          .map(({ p, base }) => ({ p, score: base + Math.max(0, 1 - Math.abs(p.rating! - roleTarget(band, role)) / 300) }))
+          .sort(order);
+        for (const { p } of candidates) {
+          if (taken >= quota[role]) break;
+          const limit = limitTags ? 2 : Number.POSITIVE_INFINITY;
+          if ((contestCount.get(p.contestId) ?? 0) >= limit) continue;
+          if (p.tags.some((t) => (tagCount.get(t) ?? 0) >= limit)) continue;
+          used.add(p.key);
+          contestCount.set(p.contestId, (contestCount.get(p.contestId) ?? 0) + 1);
+          for (const t of p.tags) tagCount.set(t, (tagCount.get(t) ?? 0) + 1);
+          picks.push({ key: p.key, role });
+          taken++;
+        }
+        if (taken >= quota[role]) break;
+      }
+      if (taken >= quota[role]) break;
+    }
+  }
+  return {
+    picks,
+    shortage:
+      picks.length < count
+        ? `难度 ${band.minimum}–${band.maximum} 内仅选出 ${picks.length} 道未做过的合适题目（目标 ${count} 题）`
+        : null,
+  };
+}
 export function chooseNewProblems(
   catalog: Catalog['problems'],
   blocked: Set<string>,
   mastery: MasteryArea[],
   difficulty: DifficultyBand,
   date: string,
+  count = 8,
+  weak?: Map<string, number>,
 ): string[] {
-  const available = catalog.filter(
-    (p) =>
-      !blocked.has(p.key) &&
-      p.rating !== null &&
-      p.rating >= difficulty.minimum &&
-      p.rating <= difficulty.maximum,
+  return selectProblems(catalog, blocked, mastery, { date, count, band: difficulty, weak }).picks.map(
+    (p) => p.key,
   );
-  const buckets = new Map<CategoryName, Catalog['problems']>(categoryNames.map((name) => [name, []]));
-  for (const problem of available)
-    for (const category of categories(problem.tags)) buckets.get(category)!.push(problem);
-  const order = (a: Catalog['problems'][number], b: Catalog['problems'][number]) =>
-    Math.abs(a.rating! - difficulty.preferred) - Math.abs(b.rating! - difficulty.preferred) ||
-    hash(`${date}:${a.key}`) - hash(`${date}:${b.key}`) ||
-    a.key.localeCompare(b.key);
-  for (const bucket of buckets.values()) bucket.sort(order);
-  const weights = new Map(mastery.map((area) => [area.name, 1 / (area.score + 10)]));
-  const selected: string[] = [];
-  const allocated = new Map<CategoryName, number>(categoryNames.map((name) => [name, 0]));
-  while (selected.length < 5) {
-    const active = categoryNames.filter((name) => buckets.get(name)!.some((p) => !blocked.has(p.key)));
-    if (!active.length) break;
-    const total = active.reduce((n, name) => n + weights.get(name)!, 0);
-    active.sort(
-      (a, b) =>
-        (5 * weights.get(b)!) / total -
-          allocated.get(b)! -
-          ((5 * weights.get(a)!) / total - allocated.get(a)!) ||
-        categoryNames.indexOf(a) - categoryNames.indexOf(b),
-    );
-    const category = active[0];
-    const problem = buckets.get(category)!.find((p) => !blocked.has(p.key))!;
-    selected.push(problem.key);
-    blocked.add(problem.key);
-    allocated.set(category, allocated.get(category)! + 1);
-  }
-  return selected;
 }
 export function recommendationDifficulty(
   problems: Problem[],

@@ -227,7 +227,7 @@ test('combined accounts render the chosen future plan without replacing the CF-o
       preview.after.newKeys,
     );
     assert.deepEqual(store.get('daily_plans', 'planner', request.date), sourcePlan);
-    assert.equal(original.newProblems.length, 5);
+    assert.equal(original.newProblems.length, 8);
     planner.revert({ id: preview.id });
     assert.equal(planner.readPlan(request.date), null);
   } finally {

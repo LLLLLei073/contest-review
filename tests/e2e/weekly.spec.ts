@@ -62,12 +62,19 @@ test('weekly goal, recommendation, upsolve, statistics and CF simulation survive
   await page.getByRole('button', { name: '选择目标' }).click();
   await page.getByRole('dialog').getByRole('button', { name: /数学/ }).click();
   await page.getByRole('dialog').getByRole('button', { name: '确定' }).click();
-  await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
+  // 新知栏 6–10 题，具体数量随环境可用候选浮动，只锁区间。
+  const newLane = page.locator('.daily-panel').nth(1).locator('.daily-task');
+  await expect
+    .poll(() => newLane.count(), { timeout: 5000 })
+    .toBeGreaterThanOrEqual(6);
+  await expect.poll(() => newLane.count(), { timeout: 5000 }).toBeLessThanOrEqual(10);
   await page.locator('.recommendation-detail summary').first().click();
   await expect(page.locator('.recommendation-detail').first().locator('p').first()).toContainText('本周目标');
+  // 新知栏现为 6–10 题，折叠预算随题量伸缩，仅拦截布局爆炸。
+  const taskCount = await page.locator('.daily-panel').nth(1).locator('.daily-task').count();
   expect(
     (await page.locator('.daily-panel').nth(1).locator('.daily-task').last().boundingBox())!.y,
-  ).toBeLessThan(1000);
+  ).toBeLessThan(400 + taskCount * 120);
   await page.screenshot({ path: info.outputPath('weekly-dashboard-desktop.png'), fullPage: true });
   await page.getByRole('link', { name: '比赛复盘', exact: true }).click();
   await page
@@ -167,7 +174,9 @@ test('weekly goal scene keeps today fixed and supports cancel, keyboard and redu
   }
   await dialog.getByRole('button', { name: '确定' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.locator('.daily-panel').nth(1).locator('.daily-task')).toHaveCount(5);
+  await expect
+    .poll(() => page.locator('.daily-panel').nth(1).locator('.daily-task').count(), { timeout: 5000 })
+    .toBeGreaterThanOrEqual(6);
   const original = await page.locator('.daily-panel').nth(1).locator('.daily-task strong').allTextContents();
 
   await page.getByRole('button', { name: '调整目标' }).click();

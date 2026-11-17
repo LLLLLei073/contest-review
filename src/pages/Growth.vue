@@ -26,6 +26,7 @@ const groups = [
   ['reflection', '有效复盘'],
   ['days', '训练足迹'],
   ['weeks', '周任务'],
+  ['programs', '训练营'],
 ];
 const visibleAchievements = computed(
   () => growth.value?.achievements.filter((a) => group.value === 'all' || a.group === group.value) ?? [],

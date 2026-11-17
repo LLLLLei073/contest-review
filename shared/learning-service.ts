@@ -30,6 +30,7 @@ import {
 } from './learning-domain.js';
 import { stressFiles } from './stress.js';
 import { monthlyReport, monthlyQuerySchema, monthlyAiSchema } from './monthly-report.js';
+import { ProgramService } from './program-service.js';
 
 const nowBase = () => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString() });
 const keyInput = z.object({ problemKey: z.string().min(1).max(200) });
@@ -838,14 +839,28 @@ export class LearningService {
         problemKey: original,
         preview,
         expectedTarget,
+        date: requestedDate,
       } = keyInput
-        .extend({ preview: z.boolean().default(false), expectedTarget: z.string().optional() })
+        .extend({
+          preview: z.boolean().default(false),
+          expectedTarget: z.string().optional(),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        })
         .parse(input),
       d = this.detail(original),
       knowledgeIds = knowledgeFor(d.problem.tags);
     if (!knowledgeIds.length) throw new Error('缺少可匹配知识点，请先补充题目标签');
-    const future = this.future(),
-      date = localDay(future);
+    const earliest = localDay(this.future());
+    const future = requestedDate
+      ? new Date(requestedDate + 'T12:00:00+08:00')
+      : this.future();
+    if (requestedDate) {
+      if (requestedDate < earliest)
+        throw new Error(`迁移题只能安排到明天（${earliest}）及以后`);
+      const latest = localDay(new Date(new Date(earliest + 'T12:00:00+08:00').getTime() + 30 * 86400000));
+      if (requestedDate > latest) throw new Error(`迁移题最多安排到 ${latest}`);
+    }
+    const date = localDay(future);
     this.store.combinedTrainingDay(future);
     const before = this.readPlan(date);
     if (!before || !this.store.weeklyGoal(future)) throw new Error('请先选择对应周的训练目标');
@@ -879,7 +894,8 @@ export class LearningService {
         goal.categories.includes(c),
       );
     const nextKeys = before.newKeys.slice();
-    if (nextKeys.length < 5) nextKeys.push(candidate.key);
+    const newCount = new PlanningService(this.store).options().newCount;
+    if (nextKeys.length < newCount) nextKeys.push(candidate.key);
     else {
       const slot = nextKeys.findLastIndex((k) => !goalMatch(k));
       const idx = slot >= 0 ? slot : nextKeys.length - 1;
@@ -1037,11 +1053,57 @@ export class LearningService {
       fingerprint: report.fingerprint,
     };
   }
+  /**
+   * 长期计划报告的 AI 解读：复用月报模式（fingerprint 乐观锁 + evidenceIds 校验）。
+   * fingerprint 一致且已有缓存时直接返回，不重复消耗模型调用。
+   */
+  async programReportAi(input: unknown) {
+    const { programId, fingerprint: expected } = z
+      .object({ programId: z.string().min(1).max(200), fingerprint: z.string().min(1).max(200) })
+      .parse(input);
+    const programs = new ProgramService(this.store);
+    const { report } = programs.report();
+    if (report.fingerprint !== expected) throw new Error('计划数据已变化，请刷新报告后重试');
+    const scope = programs.scope(),
+      cacheKey = 'report-ai:' + programId;
+    const cached = this.store.externalGet<{ fingerprint: string; findings: unknown[]; warnings: string[] }>(
+      scope,
+      cacheKey,
+    );
+    if (cached && cached.fingerprint === expected) return { ...cached, cached: true };
+    if (!aiConfigSchema.safeParse(this.store.externalGet('ai', 'config')).success)
+      throw new Error('未配置 AI；规则版报告已可用，配置模型后可获得解读');
+    const evidence = report.evidence.slice(0, 100);
+    const result = monthlyAiSchema.parse(
+      await this.complete(
+        '解读长期训练计划报告，返回 {findings:[{title,cause,action,evidenceIds}],warnings:[]}。每条建议必须引用给定 evidence 中的 ID。只使用报告中的数量；掌握度是派生估计而非评测分数，不宣称因果效果。给出下一步训练的可执行建议，不生成综合评分。',
+        {
+          duration: report.metrics,
+          focusDelta: report.focusDelta,
+          evidence,
+          warnings: report.warnings,
+        },
+      ),
+    );
+    const valid = new Set(evidence.map((e) => e.id));
+    if (result.findings.some((f) => f.evidenceIds.some((id) => !valid.has(id))))
+      throw new Error('AI 引用了不存在的计划证据，请重试');
+    if (programs.report().report.fingerprint !== report.fingerprint)
+      throw new Error('计划数据已变化，本次 AI 解读已取消');
+    const payload = {
+      fingerprint: report.fingerprint,
+      findings: result.findings,
+      warnings: [...new Set([...report.warnings, ...result.warnings])],
+    };
+    this.store.externalPut(scope, cacheKey, payload);
+    return { ...payload, cached: false };
+  }
   async route(action: string, method: string, input: unknown = {}) {
     if (method === 'GET' && action === 'state') return this.state();
     if (method === 'GET' && action === 'graph') return this.graph();
     if (method === 'POST') {
       if (action === 'monthly-report') return this.monthly(input);
+      if (action === 'program-report') return this.programReportAi(input);
       if (action === 'search')
         return this.search(z.object({ query: z.string().max(2000) }).parse(input).query);
       if (action === 'draft') return this.draft(input);

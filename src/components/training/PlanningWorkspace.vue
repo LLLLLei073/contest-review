@@ -19,7 +19,8 @@ const error = ref(''),
   loading = ref(false),
   busy = ref(false),
   budget = ref<number | null>(null),
-  targets = ref<string[]>([]);
+  targets = ref<string[]>([]),
+  newCount = ref(8);
 const date = ref(localDay(new Date(Date.now() + 86400000)));
 const tomorrow = computed(() => localDay(new Date(Date.now() + 86400000)));
 const maxDate = computed(() => localDay(new Date(Date.now() + 30 * 86400000)));
@@ -48,6 +49,7 @@ async function load() {
     if (!initialized) {
       budget.value = next.options.budget;
       targets.value = [...next.options.targets];
+      newCount.value = next.options.newCount;
       initialized = true;
     }
     if (decision.value) decision.value = next.decisions.find((d) => d.id === decision.value!.id);
@@ -79,7 +81,11 @@ async function run(
       await load();
     } else if (action === 'preferences') {
       const next = planningStateSchema.parse(
-        await api('/planning/state', { budget: budget.value, targets: targets.value }, 'PUT'),
+        await api(
+          '/planning/state',
+          { budget: budget.value, targets: targets.value, newCount: newCount.value },
+          'PUT',
+        ),
       );
       if (alive && scope === owner()) {
         state.value = next;
@@ -89,7 +95,13 @@ async function run(
     } else {
       const input =
         action === 'preview'
-          ? { date: date.value, budget: budget.value, targets: targets.value, excludeKeys }
+          ? {
+              date: date.value,
+              budget: budget.value,
+              targets: targets.value,
+              newCount: newCount.value,
+              excludeKeys,
+            }
           : { id: decision.value?.id };
       const next = planDecisionSchema.parse(await api('/planning/' + action, input));
       if (!alive || scope !== owner()) return;
@@ -119,6 +131,7 @@ watch(owner, () => {
   decision.value = undefined;
   budget.value = null;
   targets.value = [];
+  newCount.value = 8;
   void load();
 });
 </script>
@@ -149,6 +162,10 @@ watch(owner, () => {
               <option v-for="minutes in [15, 30, 45, 60, 90, 120, 180, 240]" :key="minutes" :value="minutes">
                 {{ minutes }} 分钟
               </option>
+            </select></label
+          ><label
+            >每日新题量<select v-model.number="newCount">
+              <option v-for="count in [6, 7, 8, 9, 10]" :key="count" :value="count">{{ count }} 题</option>
             </select></label
           >
         </div>

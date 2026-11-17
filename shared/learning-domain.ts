@@ -65,7 +65,7 @@ export const preferenceSchema = z.object({
 const plan = z.object({
   date: z.string(),
   review: z.array(z.unknown()).max(5),
-  newKeys: z.array(id).max(5),
+  newKeys: z.array(id).max(10),
   newReasons: z.record(z.string(), z.string()).optional(),
   newShortage: z.string().nullable().optional(),
   catalogReady: z.boolean(),

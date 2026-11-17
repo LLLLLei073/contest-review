@@ -8,17 +8,23 @@ import { useSection } from '../sections';
 import { useLearningState } from '../learningState';
 const LearningActivity = defineAsyncComponent(() => import('../components/LearningActivity.vue'));
 const PlanningWorkspace = defineAsyncComponent(() => import('../components/training/PlanningWorkspace.vue'));
+const ProgramPanel = defineAsyncComponent(() => import('../components/training/ProgramPanel.vue'));
 import WeeklyGoalScene from '../components/WeeklyGoalScene.vue';
 import GrowthHero from '../components/GrowthHero.vue';
 import TrainingLane from '../components/training/TrainingLane.vue';
 import NextAction from '../components/training/NextAction.vue';
 
-const section = useSection(['today', 'training', 'transfers', 'path'] as const, 'today');
+const section = useSection(['today', 'training', 'transfers', 'path', 'program'] as const, 'today');
 const learning = useLearningState();
 const activityOpened = ref(section.value !== 'today');
 watch(section, () => {
   if (section.value !== 'today') activityOpened.value = true;
 });
+function reloadDay() {
+  // 长期计划的生成/确认/放弃会改写当天题单，清缓存后重读。
+  day.value = null;
+  void load();
+}
 const pendingTransfers = computed(
   () =>
     learning.state.value?.records.filter((r) => r.kind === 'transfer' && r.result === 'pending').length ?? 0,
@@ -258,6 +264,7 @@ watch(
     <nav class="content-switcher" aria-label="今日训练内容">
       <button :class="{ active: section === 'today' }" @click="section = 'today'">今日题单</button>
       <button :class="{ active: section === 'training' }" @click="section = 'training'">次日计划</button>
+      <button :class="{ active: section === 'program' }" @click="section = 'program'">长期计划</button>
       <button :class="{ active: section === 'path' }" @click="section = 'path'">学习路径</button>
       <button :class="{ active: section === 'transfers' }" @click="section = 'transfers'">
         迁移练习 {{ pendingTransfers }}
@@ -282,6 +289,7 @@ watch(
     v-if="section === 'path' || section === 'training'"
     :mode="section === 'path' ? 'path' : 'plan'"
   />
+  <ProgramPanel v-if="section === 'program'" @refresh="reloadDay" />
   <LearningActivity
     v-if="activityOpened"
     v-show="section === 'training' || section === 'transfers'"

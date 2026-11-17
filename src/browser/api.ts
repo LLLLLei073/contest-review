@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { growthRoute } from '../../shared/growth';
 import { LearningService } from '../../shared/learning-service';
 import { PlanningService } from '../../shared/planning-service';
+import { ProgramService } from '../../shared/program-service';
 import { BattleService } from '../../shared/battle-service';
 import { mapTheme } from '../../shared/battle-theme';
 import { generateBattleSummary } from '../../shared/battle-summary';
@@ -96,6 +97,8 @@ export async function browserApi<T>(path: string, body?: unknown, method = 'GET'
       );
     else if (route.startsWith('/planning/'))
       result = new PlanningService(store).route(route.slice('/planning/'.length), method, body);
+    else if (route.startsWith('/program/'))
+      result = new ProgramService(store).route(route.slice('/program/'.length), method, body);
     else if (route.startsWith('/learning/'))
       result = await new LearningService(store, aiReviewer, () => runtime.flush()).route(
         route.slice('/learning/'.length),

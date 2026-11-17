@@ -56,8 +56,8 @@ export function optimizePlan(input: z.input<typeof inputSchema>) {
     .slice(0, goalNeeded);
   const minimumMinutes = 5 * [...required, ...cheapGoals].reduce((sum, c) => sum + cost(c), 0);
   const conflicts: string[] = [];
-  if (requiredReview > 5 || requiredNew + goalNeeded > 5)
-    conflicts.push('必保留任务与周目标配额超过每栏五题限制');
+  if (requiredReview > 5 || requiredNew + goalNeeded > 10)
+    conflicts.push('必保留任务与周目标配额超过每栏限制（复习 5 题、新知 10 题）');
   if (parsed.budget !== null && minimumMinutes > parsed.budget)
     conflicts.push(`至少需要 ${minimumMinutes} 分钟才能保留预约任务并满足周目标`);
   // Preserve mandatory tasks and the cheapest quota witnesses before capping candidates.
@@ -124,7 +124,7 @@ export function optimizePlan(input: z.input<typeof inputSchema>) {
       };
       if (
         choice.review > 5 ||
-        choice.fresh > 5 ||
+        choice.fresh > 10 ||
         (parsed.budget !== null && choice.cost * 5 > parsed.budget)
       )
         continue;

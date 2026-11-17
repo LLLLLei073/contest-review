@@ -45,6 +45,8 @@ export function chooseWeeklyProblems(
   date: string,
   goal: WeeklyGoal,
   priorCoverage: Record<string, number> = {},
+  count = 8,
+  weak?: Map<string, number>,
 ): PickResult {
   const available = catalog.filter(
     (p) =>
@@ -84,9 +86,9 @@ export function chooseWeeklyProblems(
       `本周目标：${matched.join('、')}；${difficulty.basis}，推荐区间 ${difficulty.minimum}–${difficulty.maximum}，本题难度 ${selected.rating}`;
   }
   const byKey = new Map(available.map((p) => [p.key, p]));
-  for (const key of chooseNewProblems(catalog, new Set(used), mastery, difficulty, date).slice(
+  for (const key of chooseNewProblems(catalog, new Set(used), mastery, difficulty, date, count, weak).slice(
     0,
-    5 - keys.length,
+    Math.max(0, count - keys.length),
   )) {
     const selected = byKey.get(key)!;
     keys.push(key);
@@ -101,7 +103,7 @@ export function chooseWeeklyProblems(
     shortage:
       goalCount < 2
         ? `本周目标领域在难度 ${difficulty.minimum}–${difficulty.maximum} 内仅找到 ${goalCount} 道未做过的有难度题`
-        : keys.length < 5
+        : keys.length < count
           ? `难度 ${difficulty.minimum}–${difficulty.maximum} 内仅找到 ${keys.length} 道未做过的有难度题`
           : null,
   };

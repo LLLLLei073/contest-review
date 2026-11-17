@@ -11,7 +11,9 @@ const state = ref<BattleState>();
 const skillId = ref(
   knowledgeCards.some((c) => c.id === route.query.skill) ? String(route.query.skill) : 'simulation',
 );
-const theme = ref('');
+const theme = ref(
+  typeof route.query.theme === 'string' ? route.query.theme.slice(0, 60) : '',
+);
 const error = ref(''),
   notice = ref(''),
   busy = ref(false),
