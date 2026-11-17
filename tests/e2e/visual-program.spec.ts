@@ -116,6 +116,10 @@ test('visual: wizard, preview, active+hint, completed report, mobile', async ({ 
   await page.screenshot({ path: out('3b-active-mobile.png'), fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
 
+  // 3c) 宽屏 1920（检查布局是否挤左）
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.screenshot({ path: out('3c-active-wide.png'), fullPage: false });
+
   // 4) 完成报告 + 雷达
   await restore(page, write('vp_done', preset('vp_done', 7, 0.9, 'completed')));
   await page.goto('/?view=program');

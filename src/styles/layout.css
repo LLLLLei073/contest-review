@@ -4007,6 +4007,11 @@ h2[tabindex='-1']:focus {
 }
 
 /* 长期训练计划：一次给出全部天数的渐进式时间线 */
+.program-panel {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
 .program-panel .section-head p {
   max-width: 60ch;
 }
@@ -4014,6 +4019,7 @@ h2[tabindex='-1']:focus {
   display: grid;
   gap: 14px;
   margin-top: 12px;
+  max-width: 760px;
 }
 .program-field {
   display: grid;
@@ -4067,6 +4073,15 @@ h2[tabindex='-1']:focus {
   display: grid;
   gap: 6px;
   align-content: start;
+}
+.program-overview-side .daily-progress {
+  flex: none;
+  width: 100%;
+  height: 8px;
+  background: color-mix(in srgb, var(--line) 60%, transparent);
+}
+.program-overview-side .daily-progress span {
+  background: var(--highlight);
 }
 .program-today {
   display: flex;
