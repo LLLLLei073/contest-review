@@ -47,6 +47,8 @@ interface ProgramState {
   summary: { total: number; ac: number; independent: number } | null;
   /** 规则版总结报告（纯派生）；completed 显示全量，active 过半显示进行中简版。 */
   report: ProgramReport | null;
+  /** 仅 generate 响应携带：生成时的候选不足等提示。 */
+  generationWarnings?: string[];
   /** 计划中引用题目的展示信息（key → 题名/难度/链接）。 */
   catalog: Record<string, { name: string; rating: number | null; url: string }>;
 }
@@ -165,7 +167,9 @@ export class ProgramService {
     for (const old of this.records().filter((p) => p.status === 'draft'))
       this.store.externalDelete(this.scope(), old.id);
     this.store.externalPut(this.scope(), 'draft', record);
-    return this.state();
+    const result = this.state();
+    result.generationWarnings = warnings;
+    return result;
   }
   confirm(input: unknown): ProgramState {
     const { id } = idInputSchema.parse(input);

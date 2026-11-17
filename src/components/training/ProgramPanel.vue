@@ -34,6 +34,8 @@ interface ProgramState {
   };
   summary: { total: number; ac: number; independent: number } | null;
   report: ProgramReport | null;
+  /** 仅 generate 响应携带：生成时的候选不足等提示。 */
+  generationWarnings?: string[];
   catalog: Record<string, ProgramCatalogEntry>;
 }
 const state = ref<ProgramState | null>(null);
@@ -279,6 +281,9 @@ onMounted(load);
     </template>
 
     <template v-if="state && program">
+      <div v-if="state.generationWarnings?.length" class="alert program-generation-warnings">
+        <p v-for="warning in state.generationWarnings" :key="warning">{{ warning }}</p>
+      </div>
       <div class="program-overview">
         <div class="program-overview-main">
           <span class="eyebrow">{{
@@ -377,6 +382,7 @@ onMounted(load);
             :key="`program-radar-${radarSeries.length}`"
             :axes="[...categoryNames]"
             :series="radarSeries"
+            labels
             aria-label="计划前后八领域掌握度对比"
           />
         </div>
@@ -462,7 +468,7 @@ onMounted(load);
             </span>
             <span v-else :class="['badge', 'reviewing']">{{ day.problems.length }} 题</span>
           </header>
-          <p v-if="day.shortage" class="small subtle">{{ day.shortage }}</p>
+          <p v-if="day.shortage" class="small subtle program-shortage">{{ day.shortage }}</p>
           <ul class="program-problems">
             <li v-for="pick in day.problems" :key="pick.key">
               <span :class="['program-role', `role-${pick.role}`]">{{ roleLabels[pick.role] }}</span>
