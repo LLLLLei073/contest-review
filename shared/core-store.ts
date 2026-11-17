@@ -1170,6 +1170,7 @@ export class CoreStore {
     let plan = this.combinedPlan(date);
     const weeklyGoal = this.weeklyGoal(now);
     const program = this.activeProgram();
+    let programPlan: ReturnType<typeof programAssignment> | null = null;
     if (!plan || (!!this.get<Catalog>('catalog_cache', cf ?? '', 'current') && !plan.newKeys.length && ((!plan.catalogReady && !!weeklyGoal) || !!program))) {
       const rows = [...(cf ? this.problems(cf) : []), ...this.problems(acProfile)].filter(
         (p) => !p.review.ignored,
@@ -1217,7 +1218,7 @@ export class CoreStore {
       const cfCatalog = cf ? this.get<Catalog>('catalog_cache', cf, 'current') : undefined;
       const cfKnown = cf ? this.all<Problem>('problems', cf) : [];
       const cfSubmissions = cf ? this.all<CFSubmission>('submissions', cf) : [];
-      const programPlan = program
+      programPlan = program
         ? programAssignment(program, date, this.acceptedDaysFor([cf, acProfile]), this.reservedTransferKeys(date))
         : null;
       const weak = weakTags(
@@ -1320,6 +1321,14 @@ export class CoreStore {
       mastery: this.combinedStatistics('all', now).mastery,
       weeklyGoal,
       newShortage: plan.newShortage ?? null,
+      programDay: program && programPlan?.dayIndex != null
+        ? {
+            index: programPlan.dayIndex,
+            phase: program.days[programPlan.dayIndex].phase,
+            theme: program.days[programPlan.dayIndex].theme,
+            carryCount: programPlan.carryCount,
+          }
+        : null,
     };
   }
   enrich(
@@ -1408,6 +1417,7 @@ export class CoreStore {
     let plan = planOverride ?? this.get<DailyPlan>('daily_plans', h, date);
     const weeklyGoal = h === this.active() ? this.weeklyGoal(now) : null;
     const program = h === this.active() && !this.activeAtcoder() ? this.activeProgram() : null;
+    let programPlan: ReturnType<typeof programAssignment> | null = null;
     if (
       !plan ||
       (!planOverride &&
@@ -1459,8 +1469,7 @@ export class CoreStore {
         ...review.map((p) => p.key),
         ...this.priorNewKeys(h, date),
       ]);
-      const program = h === this.active() && !this.activeAtcoder() ? this.activeProgram() : null;
-      const programPlan = program
+      programPlan = program
         ? programAssignment(program, date, this.acceptedDaysFor([h]), this.reservedTransferKeys(date))
         : null;
       const weak = weakTags(rows, submissions, attempts, reviews, problemKey, now);
@@ -1580,6 +1589,14 @@ export class CoreStore {
       mastery,
       weeklyGoal,
       newShortage: plan.newShortage ?? null,
+      programDay: program && programPlan?.dayIndex != null
+        ? {
+            index: programPlan.dayIndex,
+            phase: program.days[programPlan.dayIndex].phase,
+            theme: program.days[programPlan.dayIndex].theme,
+            carryCount: programPlan.carryCount,
+          }
+        : null,
     };
   }
   markRecentChecked(h: string, now = new Date()) {

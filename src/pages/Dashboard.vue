@@ -356,6 +356,20 @@ watch(
         </div>
       </div>
       <div v-if="recentError" class="alert">近期提交检查失败，继续使用已保存数据：{{ recentError }}</div>
+      <div v-if="day?.programDay && ['checkpoint', 'challenge', 'summary'].includes(day.programDay.phase)" class="alert program-day-banner">
+        <template v-if="day.programDay.phase === 'checkpoint'"
+          >今天是长期计划的复盘节点（第 {{ day.programDay.index + 1 }} 天）：优先消化错题与到期复习，不追新题数量。</template
+        >
+        <template v-else-if="day.programDay.phase === 'challenge'"
+          >今天是长期计划的挑战日（第 {{ day.programDay.index + 1 }} 天）：冲击更高难度，做不完的题会自动顺延补做。</template
+        >
+        <template v-else
+          >今天是长期计划的总复盘日（第 {{ day.programDay.index + 1 }} 天）：完成后到<RouterLink to="/?view=program"
+            >长期计划</RouterLink
+          >查看总结报告。</template
+        >
+        <RouterLink v-if="day.programDay.phase === 'checkpoint'" to="/?view=program">去校准 →</RouterLink>
+      </div>
       <div class="daily-columns" :class="{ 'goal-day-reveal': goalReveal }">
         <TrainingLane
           lane="review"

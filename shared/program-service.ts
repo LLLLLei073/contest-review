@@ -27,6 +27,18 @@ const generateInputSchema = z.object({
   duration: z.union([z.literal(7), z.literal(14)]),
   dailyCount: z.number().int().min(6).max(10).default(8),
   focus: z.array(z.enum(categoryNames)).min(1).max(2).optional(),
+  /** 一键续期：接续某期已完成计划的结论（报告 nextRound）。 */
+  carryOver: z
+    .object({
+      fromProgramId: z.string().min(1).max(200),
+      difficultyShift: z.number().int().min(-200).max(200),
+      dailyCountDelta: z.number().int().min(-2).max(2),
+      focus: z.enum(categoryNames).array().min(1).max(2).optional(),
+      rotateFocus: z.boolean().optional(),
+    })
+    .optional(),
+  /** 热身档纳入 AtCoder 题（估计难度、知识点未映射），默认关闭。 */
+  includeAtcoder: z.boolean().default(false),
 });
 const idInputSchema = z.object({ id: z.string().min(1).max(200) });
 const swapInputSchema = z.object({
@@ -97,6 +109,45 @@ export class ProgramService {
       }
     return map;
   }
+  /**
+   * AtCoder 热身池：kenkoooo 目录转 catalog 条目（估计难度、tags 为空）。
+   * 虚拟 contestId 用 800000+ 段（CF 目录不收录 ≥100000），同场比赛自然命中「同比赛限两题」。
+   * blocked 直接过滤已做/已排的题（AtCoder 已做题会出现在 problems 表，key 同为 atcoder:*）。
+   */
+  private atcoderPool(blocked: Set<string>): Catalog['problems'] {
+    const meta = this.store.externalGet<{
+      problems: { id: string; contest_id: string; problem_index: string; name: string }[];
+      models: Record<string, { difficulty?: number | null }>;
+    }>('atcoder-meta', 'catalog');
+    if (!meta?.problems.length) return [];
+    const contestSlot = new Map<string, number>();
+    const pool: Catalog['problems'] = [];
+    for (const p of meta.problems) {
+      const key = `atcoder:${p.id}`;
+      if (blocked.has(key)) continue;
+      const difficulty = meta.models[p.id]?.difficulty;
+      if (difficulty == null || !Number.isFinite(difficulty)) continue;
+      let slot = contestSlot.get(p.contest_id);
+      if (slot === undefined) {
+        let hashValue = 0;
+        for (let i = 0; i < p.contest_id.length; i++)
+          hashValue = (Math.imul(hashValue, 31) + p.contest_id.charCodeAt(i)) >>> 0;
+        slot = 800000 + (hashValue % 100000);
+        contestSlot.set(p.contest_id, slot);
+      }
+      pool.push({
+        key,
+        contestId: slot,
+        index: p.problem_index,
+        name: p.name || p.id,
+        rating: Math.round(difficulty),
+        tags: [],
+        url: `https://atcoder.jp/contests/${p.contest_id}/tasks/${p.id}`,
+        solvedCount: null,
+      });
+    }
+    return pool;
+  }
   private analysis() {
     const cf = this.store.active();
     const rows = this.store.combinedProblems().filter((p) => !p.review.ignored);
@@ -121,14 +172,17 @@ export class ProgramService {
     return { rows, submissions, attempts, mastery, weak, band, suggestedFocus: suggested };
   }
   generate(input: unknown): ProgramState {
-    const { duration, dailyCount, focus } = generateInputSchema.parse(input);
+    const { duration, dailyCount, focus, carryOver, includeAtcoder } = generateInputSchema.parse(input);
     const cf = this.store.active();
     const catalog = cf ? this.store.get<Catalog>('catalog_cache', cf, 'current') : undefined;
     if (!catalog?.problems.length)
       throw new Error('请先完成一次 Codeforces 同步以获取公开题库，再生成训练计划');
     if (this.active()) throw new Error('已有进行中的长期计划，请先放弃当前计划再重新生成');
     const { rows, submissions, attempts, mastery, weak, band, suggestedFocus } = this.analysis();
-    const chosen = focus?.length ? (focus as CategoryName[]) : suggestedFocus;
+    let chosen = focus?.length ? (focus as CategoryName[]) : suggestedFocus;
+    let effectiveBand = band;
+    let effectiveDailyCount = dailyCount;
+    let carryNote = '';
     const blocked = new Set<string>([
       ...submissions.map(problemKey),
       ...rows.map((r) => r.key),
@@ -136,25 +190,59 @@ export class ProgramService {
     for (const profile of this.profiles())
       for (const plan of this.store.all<{ newKeys: string[] }>('daily_plans', profile))
         for (const key of plan.newKeys) blocked.add(key);
+    if (carryOver) {
+      const previous = this.records().find(
+        (p) => p.id === carryOver.fromProgramId && (p.status === 'completed' || p.status === 'abandoned'),
+      );
+      if (!previous) throw new Error('要接续的计划不存在或尚未结束');
+      // 上期安排过的题整体排除，避免连续两期重复做同一题。
+      for (const day of previous.days) for (const p of day.problems) blocked.add(p.key);
+      const clampRating = (n: number) => Math.max(800, Math.min(3500, n));
+      effectiveBand = {
+        ...band,
+        minimum: clampRating(band.minimum + carryOver.difficultyShift),
+        maximum: clampRating(band.maximum + carryOver.difficultyShift),
+        preferred: clampRating(band.preferred + carryOver.difficultyShift),
+      };
+      effectiveDailyCount = Math.max(6, Math.min(10, dailyCount + carryOver.dailyCountDelta));
+      if (carryOver.focus?.length) chosen = carryOver.focus as CategoryName[];
+      else if (carryOver.rotateFocus) {
+        // 轮换：排除上期主攻后取当前最薄弱的 1–2 个领域。
+        const ranked = [...mastery].sort((a, b) => a.score - b.score || b.samples - a.samples);
+        const next = ranked.filter((a) => !previous.focus.includes(a.name)).slice(0, previous.focus.length);
+        if (next.length) chosen = next.map((a) => a.name);
+      }
+      carryNote = [
+        `接续上一期：难度平移 ${carryOver.difficultyShift >= 0 ? '+' : ''}${carryOver.difficultyShift}`,
+        effectiveDailyCount !== dailyCount ? `每日题量 ${dailyCount} → ${effectiveDailyCount}` : '',
+        `主攻 ${chosen.join('、')}`,
+      ]
+        .filter(Boolean)
+        .join('；');
+    }
     const minutes = estimateMinutes(
       attempts.filter((a) => a.result === 'independent').map((a) => a.minutes),
       'new',
     );
+    const atcoderPool =
+      includeAtcoder && cf ? this.atcoderPool(blocked) : [];
     const { program, warnings } = buildProgram({
       today: localDay(this.now()),
       duration,
-      dailyCount,
+      dailyCount: effectiveDailyCount,
       focus: chosen,
       catalog: catalog.problems,
       blocked,
       mastery,
       weak,
-      band,
+      band: effectiveBand,
       minutesPerProblem: minutes.minutes,
       minutesBasis: minutes.basis,
+      atcoderPool,
     });
     if (weak.size === 0)
       warnings.push('暂无失败与错题记录，针对性权重按掌握度与题目质量先验兜底');
+    if (carryNote) warnings.unshift(carryNote);
     for (const warning of warnings) console.warn(`[program] ${warning}`);
     if (program.days.every((d) => d.problems.length === 0))
       throw new Error('当前难度基准下没有任何可安排的新题：请先同步题库，或完成几道题以校准难度');
@@ -162,6 +250,7 @@ export class ProgramService {
       ...program,
       id: crypto.randomUUID(),
       createdAt: this.now().toISOString(),
+      basis: carryNote ? `${program.basis}；${carryNote}` : program.basis,
     });
     // 一个账号同时只保留一份草稿，重复生成直接覆盖。
     for (const old of this.records().filter((p) => p.status === 'draft'))
@@ -386,6 +475,9 @@ export class ProgramService {
       acceptedDays: accepted,
       attempts: this.allAttempts(),
       transfers,
+      simulations: this.store
+        .simulations()
+        .map((s) => ({ startedAt: s.startedAt, solved: s.solved, total: s.problems.length, ended: s.ended })),
       currentMastery: this.analysis().mastery,
       today: localDay(this.now()),
     });

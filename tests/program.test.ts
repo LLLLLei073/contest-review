@@ -368,7 +368,9 @@ test('recalibrate raises the difficulty after strong completion and eases after 
   const confirmed = service.confirm({ id: state.draft!.id });
   const program = confirmed.active!;
   // 把前三天移到过去，并模拟全部完成 → 高完成率。
+  // now 对齐到正午并用 localDay 过滤：toISOString 的 UTC 日期在本地 0–8 点会比本地日期早一天（午夜窗 flaky）。
   const now = new Date();
+  now.setHours(12, 0, 0, 0);
   const past = (offset: number) => {
     const d = new Date(now.getTime() - offset * 86400000);
     return localDay(d);
@@ -381,7 +383,7 @@ test('recalibrate raises the difficulty after strong completion and eases after 
   };
   s.externalPut(programNamespace('alice', ''), program.id, shifted);
   let index = 400;
-  for (const day of shifted.days.filter((d) => d.date < now.toISOString().slice(0, 10)))
+  for (const day of shifted.days.filter((d) => d.date < localDay(now)))
     for (const p of day.problems) {
       const [contestId, idx] = p.key.split(':');
       s.ingest('alice', [
@@ -484,5 +486,103 @@ test('completing a program feeds the derived growth achievement', () => {
   assert.ok(summary.achievements.find((a) => a.id === 'programs:1')?.unlocked);
   assert.ok(!summary.achievements.find((a) => a.id === 'programs:3')?.unlocked);
   assert.equal(summary.achievements.find((a) => a.id === 'programs:1')?.group, 'programs');
+  s.close();
+});
+
+test('carryOver generates the next round with shifted bands and excludes previous problems', () => {
+  const s = new Store(':memory:');
+  s.activate('alice');
+  const catalog = Array.from({ length: 300 }, (_, i) => ({
+    contestId: 3300 + (i % 150),
+    index: i < 150 ? 'A' : 'B',
+    name: 'P' + i,
+    rating: 800 + (i % 15) * 100,
+    tags: ['dp'],
+  }));
+  s.enrich('alice', [], [], catalog);
+  const service = new ProgramService(s);
+  const first = service.generate({ duration: 7, dailyCount: 8, focus: ['动态规划'] });
+  const confirmed = service.confirm({ id: first.draft!.id });
+  const previous = confirmed.active!;
+  // 标记完成以便续期。
+  s.externalPut(programNamespace('alice', ''), previous.id, { ...previous, status: 'completed' });
+  const second = service.generate({
+    duration: 7,
+    dailyCount: 8,
+    carryOver: { fromProgramId: previous.id, difficultyShift: 100, dailyCountDelta: 0, rotateFocus: false },
+  });
+  assert.ok(second.draft);
+  const previousKeys = new Set(previous.days.flatMap((d) => d.problems.map((p) => p.key)));
+  const nextKeys = second.draft!.days.flatMap((d) => d.problems.map((p) => p.key));
+  assert.ok(nextKeys.length > 0);
+  for (const key of nextKeys) assert.ok(!previousKeys.has(key), `next round must not repeat ${key}`);
+  // 难度平移：新计划各天 preferred = 上期同序天 preferred + 100（clamp 800–3500）。
+  for (let i = 0; i < second.draft!.days.length; i++)
+    assert.equal(
+      second.draft!.days[i].band.preferred,
+      Math.min(3500, Math.max(800, previous.days[i].band.preferred + 100)),
+    );
+  assert.match(second.draft!.basis, /接续上一期/);
+  assert.ok((second.generationWarnings ?? []).some((w) => w.includes('接续上一期')));
+  s.close();
+});
+
+test('today lane reports programDay for special phases', () => {
+  const s = new Store(':memory:');
+  s.activate('alice');
+  s.enrich('alice', [], [], Array.from({ length: 120 }, (_, i) => ({
+    contestId: 3400 + i,
+    index: 'A',
+    name: 'P' + i,
+    rating: 800 + (i % 15) * 100,
+    tags: ['dp'],
+  })));
+  const service = new ProgramService(s);
+  const state = service.generate({ duration: 14, dailyCount: 8, focus: ['动态规划'] });
+  service.confirm({ id: state.draft!.id });
+  // 14 天模板第 6 天（index 5）是 checkpoint；把时钟推进到那天看 programDay。
+  const target = service.active()!.days[5];
+  const future = new Date(Date.parse(target.date + 'T12:00:00+08:00'));
+  const day = s.trainingDay('alice', future);
+  assert.ok(day.programDay);
+  assert.equal(day.programDay!.index, 5);
+  assert.equal(day.programDay!.phase, 'checkpoint');
+  assert.ok(day.programDay!.theme.includes('复盘'));
+  s.close();
+});
+
+test('includeAtcoder adds one warmup problem from the kenkoooo catalog', () => {
+  const s = new Store(':memory:');
+  s.activate('alice');
+  s.enrich('alice', [], [], Array.from({ length: 120 }, (_, i) => ({
+    contestId: 3400 + i,
+    index: 'A',
+    name: 'P' + i,
+    rating: 1300 + (i % 8) * 100,
+    tags: ['dp'],
+  })));
+  s.externalPut('atcoder-meta', 'catalog', {
+    fetchedAt: new Date().toISOString(),
+    problems: Array.from({ length: 10 }, (_, i) => ({
+      id: `warm${i}`,
+      contest_id: `abc10${i}`,
+      problem_index: 'A',
+      name: `AtCoder Warm ${i}`,
+    })),
+    contests: [],
+    models: Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [`warm${i}`, { difficulty: 1000 + i * 100 }]),
+    ),
+  });
+  const service = new ProgramService(s);
+  const state = service.generate({ duration: 7, dailyCount: 8, focus: ['动态规划'], includeAtcoder: true });
+  const keys = state.draft!.days[0].problems.map((p) => p.key);
+  const atcoderKeys = keys.filter((k) => k.startsWith('atcoder:'));
+  assert.equal(atcoderKeys.length, 1, `foundation day should carry one AtCoder warmup, got ${keys.join(',')}`);
+  assert.match(state.draft!.days[0].reasons[atcoderKeys[0]], /知识点未映射/);
+  service.abandon({ id: state.draft!.id });
+  const state2 = service.generate({ duration: 7, dailyCount: 8, focus: ['动态规划'] });
+  const keys2 = state2.draft!.days[0].problems.map((p) => p.key);
+  assert.equal(keys2.filter((k) => k.startsWith('atcoder:')).length, 0);
   s.close();
 });

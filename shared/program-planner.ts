@@ -29,6 +29,8 @@ export interface ProgramPlannerInput {
   band: DifficultyBand;
   minutesPerProblem: number;
   minutesBasis: string;
+  /** AtCoder 热身池（估计难度、无标签）：训练日热身档优先取 1 道，知识点未映射。 */
+  atcoderPool?: Catalog['problems'];
 }
 interface DayTemplate {
   phase: ProgramPhase;
@@ -119,6 +121,8 @@ export interface DayBuildInput {
   minutesPerProblem: number;
   /** 校准重建时给推荐理由加前缀。 */
   reasonPrefix?: string;
+  /** AtCoder 热身池：训练日热身档优先取 1 道（按估计难度贴合度）。 */
+  atcoderPool?: Catalog['problems'];
 }
 /** 单题估时按难度分档：高于当日目标难度的题按比例放大，反之缩小。 */
 export function estimateForRating(base: number, rating: number | null, preferred: number): number {
@@ -126,10 +130,27 @@ export function estimateForRating(base: number, rating: number | null, preferred
     rating == null ? 1 : Math.max(0.8, Math.min(1.4, 1 + (rating - preferred) / 600));
   return Math.max(5, Math.round(base * factor));
 }
-/** 构建单日安排：transfer 日先做双焦点交叉预筛，再走统一评分引擎补足，最后生成理由与估时。 */
+/** 构建单日安排：transfer 日先做双焦点交叉预筛，训练日热身档可先取 1 道 AtCoder，再走统一评分引擎补足。 */
 export function buildDay(input: DayBuildInput): ProgramDay {
   const byKey = new Map(input.catalog.map((p) => [p.key, p]));
   const picks: { key: string; role: ProblemRole }[] = [];
+  // 训练日的热身档：优先从 AtCoder 池取 1 道贴近 band 下沿的题（知识点未映射，只按难度贴合）。
+  if (input.atcoderPool?.length && ['foundation', 'reinforce'].includes(input.phase)) {
+    const warmTarget = input.band.preferred - 100;
+    const candidate = input.atcoderPool
+      .filter((p) => !input.blocked.has(p.key) && p.rating !== null)
+      .sort(
+        (a, b) =>
+          Math.abs(a.rating! - warmTarget) - Math.abs(b.rating! - warmTarget) ||
+          a.key.localeCompare(b.key),
+      )
+      .find((p) => Math.abs(p.rating! - warmTarget) <= 150);
+    if (candidate) {
+      picks.push({ key: candidate.key, role: 'warmup' });
+      input.blocked.add(candidate.key);
+      byKey.set(candidate.key, candidate);
+    }
+  }
   // 综合迁移日：先从同时命中全部焦点领域的题里取两道，强化交叉套路。
   if (input.phase === 'transfer' && input.focus.length === 2) {
     const both = input.catalog.filter((p) => {
@@ -167,10 +188,12 @@ export function buildDay(input: DayBuildInput): ProgramDay {
     const problem = byKey.get(pick.key);
     estimateMinutes += estimateForRating(input.minutesPerProblem, problem?.rating ?? null, input.band.preferred);
     const weakHit = problem?.tags.filter((t) => (input.weak.get(t) ?? 0) >= 0.25).slice(0, 2);
+    const isAtcoder = pick.key.startsWith('atcoder:');
     reasons[pick.key] = [
       `${input.reasonPrefix ? input.reasonPrefix + '·' : ''}第${input.index + 1}天·${phaseLabels[input.phase]}${input.block ?? ''}`,
-      input.focus.length ? `主攻 ${input.focus.join('、')}` : '',
+      input.focus.length && !isAtcoder ? `主攻 ${input.focus.join('、')}` : '',
       `${roleLabels[pick.role]}题（难度 ${problem?.rating ?? '?'}）`,
+      isAtcoder ? 'AtCoder 热身：估计难度，知识点未映射' : '',
       weakHit?.length ? `命中薄弱标签：${weakHit.join('、')}` : '',
       input.weak.size === 0 && pick.role === 'core' ? '暂无失败记录，按薄弱领域与质量先验选取' : '',
     ]
@@ -216,6 +239,7 @@ export function buildProgram(input: ProgramPlannerInput): {
       mastery: input.mastery,
       weak: input.weak,
       minutesPerProblem: input.minutesPerProblem,
+      atcoderPool: input.atcoderPool,
     }),
   );
   const shortages = days.filter((d) => d.shortage).length;

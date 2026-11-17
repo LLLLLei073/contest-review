@@ -42,6 +42,8 @@ export interface TrainingDay {
   mastery: MasteryArea[];
   weeklyGoal?: { week: string; mode: 'focus' | 'balanced'; categories: string[] } | null;
   newShortage?: string | null;
+  /** 长期计划当日信息（无计划时为 null）；特殊日由 Dashboard 提示节奏。 */
+  programDay?: { index: number; phase: string; theme: string; carryCount: number } | null;
 }
 export const catalogSchema = z.object({
   fetchedAt: z.string().datetime(),

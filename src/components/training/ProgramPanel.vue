@@ -46,6 +46,7 @@ const loading = ref(true);
 const duration = ref<7 | 14>(14);
 const dailyCount = ref(8);
 const focus = ref<CategoryName[]>([]);
+const includeAtcoder = ref(false);
 const swapping = ref('');
 const aiReport = ref<{ findings: ProgramReportFinding[]; warnings: string[] } | null>(null);
 const aiBusy = ref(false);
@@ -212,6 +213,32 @@ async function loadAiReport() {
     aiBusy.value = false;
   }
 }
+/** 一键续期：把报告结论（难度平移/题量/领域策略）直接作为下一期计划的输入。 */
+async function generateNextRound() {
+  const finished = state.value?.active;
+  const report = state.value?.report;
+  if (!finished || !report) return;
+  busy.value = true;
+  try {
+    state.value = await api<ProgramState>('/program/generate', {
+      duration: finished.duration,
+      dailyCount: Math.max(6, Math.min(10, finished.dailyCount + report.nextRound.dailyCountDelta)),
+      carryOver: {
+        fromProgramId: finished.id,
+        difficultyShift: report.nextRound.difficultyShift,
+        dailyCountDelta: report.nextRound.dailyCountDelta,
+        ...(report.nextRound.focus === 'rotate' ? { rotateFocus: true } : {}),
+      },
+      includeAtcoder: includeAtcoder.value,
+    });
+    notify('已按上一期结论生成下一期预览，确认后生效');
+    emit('refresh');
+  } catch (e) {
+    notify((e as Error).message);
+  } finally {
+    busy.value = false;
+  }
+}
 function weekday(date: string) {
   return new Date(date + 'T12:00:00+08:00').toLocaleDateString('zh-CN', { weekday: 'short' });
 }
@@ -262,6 +289,12 @@ onMounted(load);
               {{ name }}
             </button>
           </div>
+        </div>
+        <div class="program-field">
+          <label class="program-label program-check">
+            <input v-model="includeAtcoder" type="checkbox" />
+            热身档纳入 AtCoder 题（按估计难度选取，知识点未映射，每天至多 1 道）
+          </label>
         </div>
         <div v-if="weakest.length" class="program-analysis">
           <span class="eyebrow">WEAK POINTS</span>
@@ -374,8 +407,20 @@ onMounted(load);
               {{ state.report.metrics.independentRate == null ? '—' : Math.round(state.report.metrics.independentRate * 100) + '%' }}
               · 完成 {{ state.report.metrics.doneDays }} 天 / 落下 {{ state.report.metrics.missedDays }} 天 · 补做占
               {{ Math.round(state.report.metrics.carryShare * 100) }}%
+              <template v-if="state.report.metrics.simulations.endedCount"
+                >· 模拟赛 {{ state.report.metrics.simulations.endedCount }} 场（平均完成
+                {{ Math.round((state.report.metrics.simulations.solvedAvg ?? 0) * 100) }}%）</template
+              >
             </p>
           </div>
+        </div>
+        <div v-if="state.report.metrics.finished" class="alert program-next-round">
+          <div>
+            <strong>下一期建议：</strong>{{ state.report.nextRound.reason }}
+          </div>
+          <button class="button primary" :disabled="busy" @click="generateNextRound">
+            按此结论生成下一期预览
+          </button>
         </div>
         <div v-if="radarSeries.length" class="program-radar">
           <RadarChart

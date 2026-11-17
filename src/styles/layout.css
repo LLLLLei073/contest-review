@@ -4249,3 +4249,16 @@ h2[tabindex='-1']:focus {
 .settings-update-progress span {
   background: var(--highlight);
 }
+.program-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+.program-next-round {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}

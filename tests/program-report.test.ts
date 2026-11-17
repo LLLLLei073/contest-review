@@ -68,6 +68,7 @@ test('high completion, independence and mastery delta trigger breakthrough findi
     acceptedDays: accepted,
     attempts,
     transfers: [],
+    simulations: [{ startedAt: day(6) + 'T10:00:00.000Z', solved: 3, total: 6, ended: true }],
     currentMastery: mastery(62),
     today: day(7),
   });
@@ -79,7 +80,14 @@ test('high completion, independence and mastery delta trigger breakthrough findi
   assert.ok(titles.some((t) => t.includes('执行力强')), titles.join('|'));
   assert.ok(titles.some((t) => t.includes('独立攻克')), titles.join('|'));
   assert.ok(titles.some((t) => t.includes('确认突破')), titles.join('|'));
+  assert.ok(titles.some((t) => t.includes('模拟赛验证通过')), titles.join('|'));
   assert.ok(report.metrics.challengeAc >= 1);
+  assert.equal(report.metrics.simulations.endedCount, 1);
+  assert.equal(report.metrics.simulations.solvedAvg, 0.5);
+  // 一键续期建议：独立率 100% → 难度 +100；完成率 100% → 题量不变；突破 → 轮换领域。
+  assert.equal(report.nextRound.difficultyShift, 100);
+  assert.equal(report.nextRound.dailyCountDelta, 0);
+  assert.equal(report.nextRound.focus, 'rotate');
   const valid = new Set(report.evidence.map((e) => e.id));
   for (const f of report.findings)
     assert.ok(f.evidenceIds.every((id) => valid.has(id)), `evidence missing: ${f.title}`);
@@ -102,6 +110,7 @@ test('low completion and low independence recommend easing, low delta flags limi
     acceptedDays: accepted,
     attempts,
     transfers,
+    simulations: [],
     currentMastery: mastery(51),
     today: day(7),
   });
@@ -112,11 +121,16 @@ test('low completion and low independence recommend easing, low delta flags limi
   assert.ok(report.findings.some((f) => f.title.includes('独立解题比例偏低')));
   assert.ok(report.findings.some((f) => f.title.includes('迁移')));
   assert.ok(report.warnings.some((w) => w.includes('掌握度快照')));
+  // 一键续期建议：独立率 0（hint）→ 难度不变；完成率低 → 题量 −1；无突破 → 沿用领域。
+  assert.equal(report.nextRound.difficultyShift, 0);
+  assert.equal(report.nextRound.dailyCountDelta, -1);
+  assert.equal(report.nextRound.focus, 'keep');
   const stable = buildProgramReport({
     program: withoutBaseline,
     acceptedDays: accepted,
     attempts,
     transfers,
+    simulations: [],
     currentMastery: mastery(51),
     today: day(7),
   });
@@ -126,6 +140,7 @@ test('low completion and low independence recommend easing, low delta flags limi
     acceptedDays: new Map([...accepted, ['9102:A', day(2)]]),
     attempts,
     transfers,
+    simulations: [],
     currentMastery: mastery(51),
     today: day(7),
   });

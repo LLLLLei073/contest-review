@@ -20,7 +20,16 @@ export interface ProgramReportInput {
   attempts: Attempt[];
   transfers: { result: string; problemKey: string; targetKey: string }[];
   currentMastery: MasteryArea[];
+  /** 计划期间启动过的模拟赛（已结束的计入验证口径）。 */
+  simulations: { startedAt: string; solved: number; total: number; ended: boolean }[];
   today: string;
+}
+/** 下一期计划的机器可读建议：由报告规则推导，UI 直接变成「生成下一期」按钮参数。 */
+export interface ProgramNextRound {
+  difficultyShift: number;
+  dailyCountDelta: number;
+  focus: 'keep' | 'rotate';
+  reason: string;
 }
 export interface ProgramReport {
   metrics: {
@@ -36,10 +45,12 @@ export interface ProgramReport {
     perPhase: { phase: string; label: string; planned: number; ac: number }[];
     challengeAc: number;
     transfers: { independent: number; hint: number; failed: number; pending: number };
+    simulations: { count: number; solvedAvg: number | null; endedCount: number };
     elapsedDays: number;
     finished: boolean;
   };
   focusDelta: { name: string; before: number | null; after: number }[];
+  nextRound: ProgramNextRound;
   findings: ProgramReportFinding[];
   evidence: ProgramReportEvidence[];
   warnings: string[];
@@ -93,6 +104,9 @@ export function buildProgramReport(input: ProgramReportInput): ProgramReport {
     pending: input.transfers.filter((t) => t.result === 'pending').length,
   };
   const elapsedDays = progress.days.filter((d) => d.date <= today).length;
+  const firstDay = program.days[0]?.date ?? today;
+  const inWindow = input.simulations.filter((s) => s.startedAt.slice(0, 10) >= firstDay);
+  const endedSim = inWindow.filter((s) => s.ended);
   const metrics = {
     planned: keys.length,
     ac,
@@ -106,6 +120,13 @@ export function buildProgramReport(input: ProgramReportInput): ProgramReport {
     perPhase,
     challengeAc,
     transfers,
+    simulations: {
+      count: inWindow.length,
+      solvedAvg: endedSim.length
+        ? Math.round((endedSim.reduce((sum, s) => sum + (s.total ? s.solved / s.total : 0), 0) / endedSim.length) * 100) / 100
+        : null,
+      endedCount: endedSim.length,
+    },
     elapsedDays,
     finished: program.status === 'completed' || lastDay <= today,
   };
@@ -224,17 +245,59 @@ export function buildProgramReport(input: ProgramReportInput): ProgramReport {
         : '迁移前先重做原题并写复盘，再独立尝试变式。',
       evidenceIds: [evProgress],
     });
+  let evSimulation: string | null = null;
+  if (endedSim.length) {
+    const avgPercent = Math.round((metrics.simulations.solvedAvg ?? 0) * 100);
+    evSimulation = ev(
+      `计划期间跑了 ${endedSim.length} 场已结束的模拟赛，平均完成 ${avgPercent}%（${endedSim.reduce((sum, s) => sum + s.solved, 0)}/${endedSim.reduce((sum, s) => sum + s.total, 0)} 题）`,
+      '/simulation',
+    );
+    findings.push({
+      title: avgPercent >= 50 ? '模拟赛验证通过' : '模拟赛验证：限时发挥有差距',
+      cause: `平均完成 ${avgPercent}%。${avgPercent >= 50 ? '限时环境下的发挥与日常练习一致。' : '限时压力下的完成率低于日常练习，赛时策略值得复盘。'}`,
+      action: avgPercent >= 50
+        ? '下一期计划可以继续上探难度；赛时节奏保持。'
+        : '对照模拟赛事件复盘：是卡题太久还是读题失误，把结论写进比赛复盘。',
+      evidenceIds: [evSimulation],
+    });
+  } else if (metrics.finished)
+    findings.push({
+      title: '还没有限时验证',
+      cause: '计划期间没有已结束的模拟赛，掌握度变化缺少赛时环境对照。',
+      action: '去「比赛复盘 → 模拟赛」跑一场 CF Virtual Contest，检验突破是否在限时下成立。',
+      evidenceIds: [evProgress],
+    });
   const fingerprintSource = [
     program.id,
     program.duration,
     metrics,
     focusDelta.map((d) => [d.name, d.before, d.after]),
     findings.map((f) => [f.title, f.cause, f.action]),
+    inWindow.map((s) => [s.startedAt, s.solved, s.total]),
     [...acceptedDays.entries()].sort(),
   ];
+  // 下一期建议：与 findings 规则同源——独立率高则上探，低则稳住负荷；主领域突破则轮换领域。
+  const mainDelta = mainFocus && mainFocus.before != null ? mainFocus.after - mainFocus.before : 0;
+  const shift = metrics.independentRate != null && metrics.independentRate >= 0.7 ? 100 : 0;
+  const dailyCountDelta = metrics.completionRate < 0.5 && elapsedDays >= 2 ? -1 : 0;
+  const nextRound: ProgramNextRound = {
+    difficultyShift: shift,
+    dailyCountDelta,
+    focus: mainDelta >= 8 ? 'rotate' : 'keep',
+    reason: [
+      shift > 0
+        ? `独立完成率 ${percent(metrics.independentRate ?? 0)} 达到上探标准，难度 +100`
+        : '独立完成率未达上探标准，难度维持当前基准',
+      dailyCountDelta < 0 ? '完成率偏低，每日题量 −1' : '题量维持',
+      mainDelta >= 8
+        ? `「${program.focus[0]}」已突破（+${mainDelta}），建议轮换到下一个最弱领域`
+        : '主攻领域沿用',
+    ].join('；'),
+  };
   return {
     metrics,
     focusDelta,
+    nextRound,
     findings,
     evidence,
     warnings,
