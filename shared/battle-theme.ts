@@ -51,8 +51,19 @@ export interface ThemeMapping {
   skillId: string;
 }
 // 中文别名词典：未配置 AI 时也能直接开常见主题的连战。
-// 顺序即优先级，长词在前避免"树状数组"被"树"抢先。
+// 顺序即优先级：八大领域名放最前（精确命中优先于子串反向匹配，
+// 避免「数学」被旧词条「组合数学」反向抢走），其后长词在前避免"树状数组"被"树"抢先。
 const aliases: [string, ThemeMapping][] = [
+  // 八大领域名（长期计划「按焦点开连战」直接传领域名或 X+Y 组合）。
+  // skillId 固定取本领域的知识卡，保证连战奖励计入同领域的掌握度。
+  ['实现与模拟', { tags: ['implementation'], skillId: 'simulation' }],
+  ['贪心与构造', { tags: ['greedy', 'constructive algorithms'], skillId: 'greedy' }],
+  ['数据结构', { tags: ['data structures', 'binary search'], skillId: 'segment-tree' }],
+  ['图与树', { tags: ['graphs', 'trees'], skillId: 'dsu' }],
+  ['动态规划', { tags: ['dp'], skillId: 'dp' }],
+  ['字符串', { tags: ['strings'], skillId: 'string' }],
+  ['搜索与技巧', { tags: ['dfs and similar', 'brute force'], skillId: 'search' }],
+  ['数学', { tags: ['math', 'number theory'], skillId: 'number-theory' }],
   ['线段树', { tags: ['segment tree'], skillId: 'segment-tree' }],
   ['树状数组', { tags: ['data structures'], skillId: 'segment-tree' }],
   ['单调栈', { tags: ['data structures'], skillId: 'two-pointers' }],
@@ -110,16 +121,71 @@ const aliases: [string, ThemeMapping][] = [
   ['差分', { tags: ['data structures'], skillId: 'two-pointers' }],
   ['区间问题', { tags: ['data structures', 'sortings'], skillId: 'two-pointers' }],
 ];
+// 领域名用于组合串「X+Y」的逐组件解析；skillId 取第一个可解析组件的领域卡。
+const domainAliases = [
+  '实现与模拟',
+  '贪心与构造',
+  '数据结构',
+  '图与树',
+  '动态规划',
+  '字符串',
+  '搜索与技巧',
+  '数学',
+] as const;
+const domainMap = new Map(
+  aliases
+    .filter(([alias]) => (domainAliases as readonly string[]).includes(alias))
+    .map(([alias, mapping]) => [alias, mapping]),
+);
+const clampTags = (tags: string[]): ThemeMapping['tags'] =>
+  [...new Set(tags)].filter((t) => vocabulary.has(t)).slice(0, 6) as ThemeMapping['tags'];
 const themeAiSchema = z.object({
   tags: z.array(z.string().trim().min(1)).min(1).max(6),
   skillId: z.string().trim().min(1),
 });
-/** 本地词典命中：返回 null 表示需要 AI 兜底。 */
+/** 本地词典命中：返回 null 表示需要 AI 兜底。支持「X+Y」组合（按任一组件解析，tags 并集截 6）。 */
 export function themeMapping(theme: string): ThemeMapping | null {
   const key = theme.trim().toLowerCase();
   if (!key) return null;
+  // 领域名只做精确命中（key 即领域名，或组件级拆分），避免反向子串把
+  // 「组合数学」这类普通长词抢到领域卡上。
+  const exactDomain = domainAliases.find((alias) => key === alias.toLowerCase());
+  if (exactDomain) {
+    const mapping = domainMap.get(exactDomain)!;
+    return { tags: mapping.tags.filter((t) => vocabulary.has(t)), skillId: mapping.skillId };
+  }
+  if (key.includes('+')) {
+    const parts = key
+      .split('+')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    // 逐组件先查领域词典再退普通词典；skillId 取第一个可解析组件（奖励归因只承载一张卡）。
+    const hits: { tags: string[]; skillId?: string }[] = [];
+    for (const part of parts) {
+      const domain = domainAliases.find((alias) => part === alias.toLowerCase());
+      const mapping = domain ? domainMap.get(domain) : undefined;
+      if (mapping) hits.push({ tags: mapping.tags, skillId: mapping.skillId });
+      else {
+        for (const [alias, single] of aliases) {
+          if (part.includes(alias.toLowerCase()) || alias.toLowerCase().includes(part)) {
+            hits.push({ tags: single.tags, skillId: single.skillId });
+            break;
+          }
+        }
+      }
+    }
+    if (hits.length) {
+      const tags = clampTags(hits.flatMap((hit) => hit.tags));
+      if (tags.length) {
+        const skillId = hits.find((hit) => hit.skillId)?.skillId ?? nearestSkill(tags);
+        return { tags, skillId };
+      }
+    }
+  }
+  // 普通词条子串匹配（领域名已由上方精确分支处理，此处跳过防反向抢匹配）。
+  const domainSet = new Set<string>(domainAliases);
   for (const [alias, mapping] of aliases)
-    if (key.includes(alias.toLowerCase()) || alias.toLowerCase().includes(key))
+    if (!domainSet.has(alias) && (key.includes(alias.toLowerCase()) || alias.toLowerCase().includes(key)))
       return { tags: mapping.tags.filter((t) => vocabulary.has(t)), skillId: mapping.skillId };
   // 直接输入了英文 CF 标签时按词表原样接受
   if (vocabulary.has(key)) {

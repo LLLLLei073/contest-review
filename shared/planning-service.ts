@@ -5,7 +5,13 @@ import type { CFSubmission } from './domain.js';
 import { knowledgeCards, knowledgeFor } from './knowledge.js';
 import { allBattleRewards } from './battle-service.js';
 import { fingerprint, learningNamespace, type LearningRecord } from './learning-domain.js';
-import { BKT_VERSION, DEFAULT_BKT, traceKnowledge, type KnowledgeObservation } from './knowledge-tracing.js';
+import {
+  BKT_VERSION,
+  DEFAULT_BKT,
+  bktParametersSchema,
+  traceKnowledge,
+  type KnowledgeObservation,
+} from './knowledge-tracing.js';
 import { buildLearningPath } from './learning-path.js';
 import { estimateMinutes, optimizePlan, OPTIMIZER_VERSION, type PlanCandidate } from './plan-optimizer.js';
 import {
@@ -19,6 +25,7 @@ import {
 } from './training.js';
 import { chooseWeeklyProblems, weekStart, weeklyGoalSchema } from './weekly.js';
 import {
+  bktCalibrationSchema,
   learningPathSchema,
   planDecisionSchema,
   planRequestSchema,
@@ -148,14 +155,20 @@ export class PlanningService {
     }
     return observations;
   }
+  /** 已保存的 BKT 全局校准参数（样本 ≥30 才允许保存，schema 已限制）；无则返回 null。 */
+  calibration() {
+    const found = this.records().find((r) => r.kind === 'bkt-calibration');
+    return found && found.kind === 'bkt-calibration' ? found : null;
+  }
   tracing() {
     const asOf = this.now().toISOString();
     const observations = this.observations(asOf);
+    const parameters = this.calibration()?.parameters ?? DEFAULT_BKT;
     const key = fingerprint([
       this.scope(),
       this.store.learningEpoch,
       BKT_VERSION,
-      DEFAULT_BKT,
+      parameters,
       KNOWLEDGE_GRAPH_VERSION,
       observations,
     ]);
@@ -167,6 +180,7 @@ export class PlanningService {
           knowledgeCards.map((c) => c.id),
           observations,
           asOf,
+          parameters,
         ),
       };
       tracingCache.set(this.store, cached);
@@ -518,7 +532,11 @@ export class PlanningService {
     });
     if (!s.catalog && s.cf) warnings.push('尚无公开题库，已有复习仍可安排');
     if (!s.tracing.states.some((k) => !k.insufficient))
-      warnings.push('可信样本不足，使用保守领域规则；知识概率尚未校准');
+      warnings.push(
+        this.calibration()
+          ? `可信样本不足，使用保守领域规则；BKT 参数来自 ${this.calibration()!.samples} 条记录的回放拟合`
+          : '可信样本不足，使用保守领域规则；知识概率使用未校准的工程参数',
+      );
     const record = planDecisionSchema.parse({
       kind: 'decision',
       id: crypto.randomUUID(),
@@ -577,6 +595,36 @@ export class PlanningService {
     });
     return planDecisionSchema.parse(found);
   }
+  /**
+   * 保存 BKT 全局参数校准（回放拟合结果）。样本 <30 时 schema 拒绝——
+   * 单用户数据不足时保持默认工程参数，不虚标校准。
+   */
+  saveCalibration(input: unknown) {
+    const value = z
+      .object({
+        parameters: bktParametersSchema,
+        samples: z.number().int().min(30),
+        brier: z.number().min(0).max(1),
+        defaultBrier: z.number().min(0).max(1).nullable().default(null),
+        source: z.string().max(200).default('cli-replay'),
+      })
+      .parse(input);
+    const record = bktCalibrationSchema.parse({
+      kind: 'bkt-calibration',
+      id: 'bkt-calibration',
+      scope: this.scope(),
+      createdAt: this.now().toISOString(),
+      ...value,
+    });
+    this.save(record);
+    return { calibration: this.calibration(), parameters: record.parameters };
+  }
+  /** 恢复默认工程参数（删除校准记录）。 */
+  resetCalibration() {
+    const existing = this.calibration();
+    if (existing) this.store.externalDelete(this.scope(), existing.id);
+    return { calibration: null, parameters: DEFAULT_BKT };
+  }
   route(action: string, method: string, input?: unknown) {
     if (action === 'goal' && method === 'POST') {
       const value = z
@@ -608,6 +656,10 @@ export class PlanningService {
     if (action === 'preview' && method === 'POST') return this.preview(input);
     if (action === 'apply' && method === 'POST') return this.apply(input);
     if (action === 'revert' && method === 'POST') return this.revert(input);
+    if (action === 'calibration' && method === 'GET')
+      return { calibration: this.calibration(), parameters: this.calibration()?.parameters ?? DEFAULT_BKT };
+    if (action === 'calibration' && method === 'POST') return this.saveCalibration(input);
+    if (action === 'calibration' && method === 'DELETE') return this.resetCalibration();
     throw new Error('未知规划操作');
   }
 }

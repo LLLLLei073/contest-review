@@ -15,11 +15,13 @@ const { values } = parseArgs({
     'as-of': { type: 'string' },
     output: { type: 'string' },
     budget: { type: 'string' },
+    calibrate: { type: 'boolean', default: false },
+    'save-calibration': { type: 'boolean', default: false },
   },
 });
 if (!values.backup || !values['as-of'])
   throw new Error(
-    '用法：node --import tsx scripts/evaluate-planner.ts --backup <历史导出文件> --as-of <ISO时间> [--budget 90] [--output report.json]',
+    '用法：node --import tsx scripts/evaluate-planner.ts --backup <历史导出文件> --as-of <ISO时间> [--budget 90] [--output report.json] [--calibrate] [--save-calibration]',
   );
 const input = resolve(values.backup),
   asOf = new Date(values['as-of']);
@@ -38,6 +40,58 @@ try {
     knowledgeCards.map((k) => k.id),
     asOf.toISOString(),
   );
+  // 参数校准只做全局 4 参数（单用户样本不足以 per-skill 拟合），网格搜索最小 Brier。
+  let calibration: unknown = null;
+  if (values.calibrate) {
+    const grid = [];
+    for (const initial of [0.15, 0.2, 0.3])
+      for (const learn of [0.05, 0.1, 0.2])
+        for (const guess of [0.15, 0.2, 0.25])
+          for (const slip of [0.05, 0.1, 0.15]) {
+            const result = evaluateKnowledgePredictions(
+              observations,
+              knowledgeCards.map((k) => k.id),
+              asOf.toISOString(),
+              { initial, learn, guess, slip },
+            );
+            if (result.brier === null) continue;
+            grid.push({ parameters: { initial, learn, guess, slip }, brier: result.brier, samples: result.samples });
+          }
+    grid.sort((a, b) => a.brier - b.brier);
+    const best = grid[0] ?? null;
+    const skillSamples = Object.fromEntries(
+      knowledgeCards.map((card) => {
+        const rows = predictions.rows.filter((r) => r.skillId === card.id);
+        return [card.id, { rows: rows.length, problems: new Set(predictions.rows.filter((r) => r.skillId === card.id).map((r) => r.id)).size }];
+      }),
+    );
+    calibration = {
+      samples: predictions.samples,
+      sufficient: !predictions.insufficient,
+      threshold: 30,
+      defaultBrier: predictions.brier,
+      best,
+      improvement: best && predictions.brier !== null ? predictions.brier - best.brier : null,
+      evaluated: grid.length,
+      skillSamples,
+      action: !best
+        ? '无可回放样本，未做拟合'
+        : predictions.insufficient
+          ? `样本 ${predictions.samples} 条低于门槛 30，结果仅作参考，不保存校准参数`
+          : values['save-calibration']
+            ? '样本达标：已写入校准（独立评估模型，非能力评测）'
+            : '样本达标：加 --save-calibration 可写入校准参数',
+    };
+    if (values['save-calibration'] && best && !predictions.insufficient) {
+      planner.saveCalibration({
+        parameters: best.parameters,
+        samples: predictions.samples,
+        brier: best.brier,
+        defaultBrier: predictions.brier,
+        source: `cli-replay:${input}`,
+      });
+    }
+  }
   const catalog = store.get<Catalog>('catalog_cache', store.active(), 'current');
   const reasons: string[] = [];
   if (Date.parse(backup.exportedAt) > asOf.getTime())
@@ -86,6 +140,7 @@ try {
     asOf: asOf.toISOString(),
     comparison,
     predictions,
+    calibration,
     learningEffect: '待持续使用数据观察；完成率、提示依赖、逾期积压和单位时间独立完成数仅作描述性指标',
   };
   const output = JSON.stringify(report, null, 2) + '\n';

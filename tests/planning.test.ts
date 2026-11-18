@@ -8,6 +8,8 @@ import { fingerprint } from '../shared/learning-domain';
 import { agentNamespace } from '../shared/agent-domain';
 import { workflowNamespace, type ReviewWorkflow } from '../shared/review-workflow-domain';
 import { plannerOutcomes } from '../shared/planner-outcomes';
+import { evaluateKnowledgePredictions } from '../shared/planner-evaluation';
+import { knowledgeCards } from '../shared/knowledge';
 const now = new Date('2026-10-14T04:00:00Z');
 const request = { date: '2026-10-15', budget: 90, targets: [] };
 function setup() {
@@ -345,6 +347,60 @@ test('shared planning HTTP endpoints validate requests and expose no credentials
     assert.equal(bad.statusCode, 400);
   } finally {
     await app.close();
+    store.close();
+  }
+});
+test('BKT calibration: parameterized replay, 30-sample gate and default fallback', () => {
+  const { store, planner } = setup();
+  try {
+    // 默认未校准。
+    assert.equal(planner.calibration(), null);
+    assert.equal(planner.tracing().calibrated, false);
+    // 样本不足时 schema 拒绝保存（30 条门槛）。
+    assert.throws(
+      () =>
+        planner.saveCalibration({
+          parameters: { initial: 0.2, learn: 0.1, guess: 0.2, slip: 0.1 },
+          samples: 29,
+          brier: 0.2,
+        }),
+      /30|too_small|greater/i,
+    );
+    const saved = planner.saveCalibration({
+      parameters: { initial: 0.25, learn: 0.1, guess: 0.2, slip: 0.1 },
+      samples: 42,
+      brier: 0.21,
+      defaultBrier: 0.24,
+    });
+    assert.equal(saved.parameters.learn, 0.1);
+    const calibrated = planner.calibration();
+    assert.equal(calibrated?.samples, 42);
+    // tracing 改用校准参数并标记 calibrated。
+    const tracing = planner.tracing();
+    assert.equal(tracing.calibrated, true);
+    assert.equal(tracing.parameters.learn, 0.1);
+    // 回放评估器接受参数：不同参数产生不同 Brier。
+    const observations = planner.observations();
+    const skillIds = knowledgeCards.map((c) => c.id);
+    const a = evaluateKnowledgePredictions(observations, skillIds, new Date().toISOString(), {
+      initial: 0.2,
+      learn: 0.05,
+      guess: 0.2,
+      slip: 0.1,
+    });
+    const b = evaluateKnowledgePredictions(observations, skillIds, new Date().toISOString(), {
+      initial: 0.8,
+      learn: 0.5,
+      guess: 0.05,
+      slip: 0.05,
+    });
+    assert.notEqual(JSON.stringify(a.parameters), JSON.stringify(b.parameters));
+    if (a.samples > 0) assert.notEqual(a.brier, b.brier, 'different parameters must change replay Brier');
+    // 重置回默认。
+    const reset = planner.resetCalibration();
+    assert.equal(reset.calibration, null);
+    assert.equal(planner.tracing().calibrated, false);
+  } finally {
     store.close();
   }
 });

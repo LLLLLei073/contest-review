@@ -586,3 +586,80 @@ test('includeAtcoder adds one warmup problem from the kenkoooo catalog', () => {
   assert.equal(keys2.filter((k) => k.startsWith('atcoder:')).length, 0);
   s.close();
 });
+
+test('three arc styles keep monotonic ramps and their distinct phase shapes', () => {
+  for (const style of ['balanced', 'sprint', 'steady'] as const) {
+    for (const duration of [7, 14] as const) {
+      const arc = buildArc(band, duration, style);
+      assert.equal(arc.length, duration, `${style}/${duration} day count`);
+      const training = arc.filter((d) => ['foundation', 'reinforce', 'transfer'].includes(d.phase));
+      const preferred = training.map((d) => d.preferred);
+      assert.deepEqual(
+        [...preferred].sort((a, b) => a - b),
+        preferred,
+        `${style}/${duration} training difficulty must never decrease`,
+      );
+      for (const day of arc)
+        assert.ok(day.preferred >= day.minimum - 100 && day.preferred <= day.maximum + 100);
+    }
+  }
+  // sprint：无复盘节点与迁移；挑战日上探 +400。
+  for (const duration of [7, 14] as const) {
+    const arc = buildArc(band, duration, 'sprint');
+    assert.ok(!arc.some((d) => d.phase === 'checkpoint'), 'sprint has no checkpoint');
+    assert.ok(!arc.some((d) => d.phase === 'transfer'), 'sprint has no transfer');
+    const challenge = arc.find((d) => d.phase === 'challenge')!;
+    assert.equal(challenge.maximum, Math.min(3500, band.preferred + 400));
+  }
+  // steady：无挑战日，最高段不超过 +150。
+  for (const duration of [7, 14] as const) {
+    const arc = buildArc(band, duration, 'steady');
+    assert.ok(!arc.some((d) => d.phase === 'challenge'), 'steady has no challenge day');
+    assert.ok(
+      arc.every((d) => d.preferred <= band.preferred + 150),
+      `steady stays within +150, got ${arc.map((d) => d.preferred).join(',')}`,
+    );
+    assert.ok(arc.filter((d) => d.phase === 'checkpoint').length >= 2, 'steady keeps multiple checkpoints');
+  }
+  // balanced 保持原状（有节点与挑战日）。
+  const balanced = buildArc(band, 14);
+  assert.ok(balanced.some((d) => d.phase === 'checkpoint'));
+  assert.equal(balanced.find((d) => d.phase === 'challenge')!.maximum, Math.min(3500, band.preferred + 350));
+});
+
+test('program style persists, defaults to balanced and is reused by carryOver', () => {
+  const s = new Store(':memory:');
+  s.activate('alice');
+  const catalog = Array.from({ length: 300 }, (_, i) => ({
+    contestId: 3500 + (i % 150),
+    index: i < 150 ? 'A' : 'B',
+    name: 'P' + i,
+    rating: 800 + (i % 15) * 100,
+    tags: ['dp'],
+  }));
+  s.enrich('alice', [], [], catalog);
+  const service = new ProgramService(s);
+  const sprint = service.generate({ duration: 7, style: 'sprint', dailyCount: 8, focus: ['动态规划'] });
+  assert.equal(sprint.draft!.style, 'sprint');
+  assert.ok(!sprint.draft!.days.some((d) => d.phase === 'checkpoint'));
+  const confirmed = service.confirm({ id: sprint.draft!.id });
+  assert.equal(confirmed.active!.style, 'sprint');
+  // 续期沿用上期风格。
+  s.externalPut(programNamespace('alice', ''), confirmed.active!.id, {
+    ...confirmed.active!,
+    status: 'completed',
+  });
+  const next = service.generate({
+    duration: 7,
+    dailyCount: 8,
+    carryOver: { fromProgramId: confirmed.active!.id, difficultyShift: 0, dailyCountDelta: 0 },
+  });
+  assert.equal(next.draft!.style, 'sprint');
+  assert.ok(!next.draft!.days.some((d) => d.phase === 'checkpoint'));
+  service.abandon({ id: next.draft!.id });
+  // 缺省为 balanced。
+  const fallback = service.generate({ duration: 7, dailyCount: 8, focus: ['动态规划'] });
+  assert.equal(fallback.draft!.style, 'balanced');
+  assert.ok(fallback.draft!.days.some((d) => d.phase === 'checkpoint'));
+  s.close();
+});

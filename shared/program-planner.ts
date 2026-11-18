@@ -20,6 +20,8 @@ import {
 export interface ProgramPlannerInput {
   today: string;
   duration: 7 | 14;
+  /** 弧线风格：balanced 含节点与挑战日 / sprint 无节点爬坡快 / steady 节奏优先无挑战日。 */
+  style?: ProgramStyle;
   dailyCount: number;
   focus: CategoryName[];
   catalog: Catalog['problems'];
@@ -39,36 +41,108 @@ interface DayTemplate {
   preferred: number;
   block?: string;
 }
-export function buildArc(band: DifficultyBand, duration: 7 | 14): DayTemplate[] {
+export type ProgramStyle = 'balanced' | 'sprint' | 'steady';
+export const programStyleLabels: Record<ProgramStyle, string> = {
+  balanced: '均衡进阶',
+  sprint: '纯冲刺',
+  steady: '稳态节奏',
+};
+/**
+ * 三种风格模板（P=难度基准，floor 800 / cap 3500）：
+ * - balanced（默认）：含复盘节点与挑战日的完整弧线；
+ * - sprint：无复盘节点，难度爬坡更快，挑战日上探 +400；
+ * - steady：节奏优先，多个复盘节点、无挑战日，最高段 +150。
+ */
+export function buildArc(band: DifficultyBand, duration: 7 | 14, style: ProgramStyle = 'balanced'): DayTemplate[] {
   const P = band.preferred;
   const floor = (n: number) => Math.max(800, n);
   const cap = (n: number) => Math.min(3500, n);
-  if (duration === 7)
-    return [
-      { phase: 'foundation', minimum: floor(P - 100), maximum: P, preferred: P - 50 },
-      { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
-      { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
-      { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
-      { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
-      { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
-      { phase: 'challenge', minimum: P + 200, maximum: cap(P + 350), preferred: P + 250 },
-    ];
-  return [
-    { phase: 'foundation', minimum: floor(P - 100), maximum: P, preferred: P - 50 },
-    { phase: 'foundation', minimum: floor(P - 100), maximum: P, preferred: P - 50 },
-    { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
-    { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
-    { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
-    { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
-    { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
-    { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
-    { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
-    { phase: 'checkpoint', minimum: P + 100, maximum: P + 200, preferred: P + 150 },
-    { phase: 'transfer', minimum: P + 100, maximum: P + 200, preferred: P + 150 },
-    { phase: 'transfer', minimum: P + 100, maximum: P + 200, preferred: P + 150 },
-    { phase: 'challenge', minimum: P + 200, maximum: cap(P + 350), preferred: P + 250 },
-    { phase: 'summary', minimum: P, maximum: P + 100, preferred: P + 50 },
-  ];
+  const foundation = (): DayTemplate => ({
+    phase: 'foundation',
+    minimum: floor(P - 100),
+    maximum: P,
+    preferred: P - 50,
+  });
+  if (style === 'sprint')
+    return duration === 7
+      ? [
+          foundation(),
+          foundation(),
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'challenge', minimum: P + 200, maximum: cap(P + 400), preferred: P + 300 },
+        ]
+      : [
+          foundation(),
+          foundation(),
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+          { phase: 'reinforce', minimum: P + 200, maximum: P + 300, preferred: P + 250, block: 'III' },
+          { phase: 'reinforce', minimum: P + 200, maximum: P + 300, preferred: P + 250, block: 'III' },
+          { phase: 'challenge', minimum: P + 200, maximum: cap(P + 400), preferred: P + 300 },
+          { phase: 'summary', minimum: P, maximum: P + 100, preferred: P + 50 },
+        ];
+  if (style === 'steady')
+    return duration === 7
+      ? [
+          foundation(),
+          foundation(),
+          { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
+          { phase: 'summary', minimum: P, maximum: P + 150, preferred: P + 100 },
+        ]
+      : [
+          foundation(),
+          foundation(),
+          { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+          { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
+          { phase: 'transfer', minimum: P + 100, maximum: P + 150, preferred: P + 120 },
+          { phase: 'transfer', minimum: P + 100, maximum: P + 150, preferred: P + 120 },
+          { phase: 'checkpoint', minimum: P + 100, maximum: P + 150, preferred: P + 120 },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 150, preferred: P + 120, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 150, preferred: P + 120, block: 'II' },
+          { phase: 'reinforce', minimum: P + 100, maximum: P + 150, preferred: P + 120, block: 'II' },
+          { phase: 'summary', minimum: P, maximum: P + 150, preferred: P + 100 },
+        ];
+  return duration === 7
+    ? [
+        foundation(),
+        { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+        { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+        { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
+        { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+        { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+        { phase: 'challenge', minimum: P + 200, maximum: cap(P + 350), preferred: P + 250 },
+      ]
+    : [
+        foundation(),
+        foundation(),
+        { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+        { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+        { phase: 'reinforce', minimum: P, maximum: P + 100, preferred: P + 50, block: 'I' },
+        { phase: 'checkpoint', minimum: P, maximum: P + 100, preferred: P + 50 },
+        { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+        { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+        { phase: 'reinforce', minimum: P + 100, maximum: P + 200, preferred: P + 150, block: 'II' },
+        { phase: 'checkpoint', minimum: P + 100, maximum: P + 200, preferred: P + 150 },
+        { phase: 'transfer', minimum: P + 100, maximum: P + 200, preferred: P + 150 },
+        { phase: 'transfer', minimum: P + 100, maximum: P + 200, preferred: P + 150 },
+        { phase: 'challenge', minimum: P + 200, maximum: cap(P + 350), preferred: P + 250 },
+        { phase: 'summary', minimum: P, maximum: P + 100, preferred: P + 50 },
+      ];
 }
 export function phaseCount(phase: ProgramPhase, dailyCount: number): number {
   switch (phase) {
@@ -220,7 +294,7 @@ export function buildProgram(input: ProgramPlannerInput): {
   const warnings: string[] = [];
   const focus = input.focus.slice(0, 2);
   const blocked = new Set(input.blocked);
-  const arc = buildArc(input.band, input.duration);
+  const arc = buildArc(input.band, input.duration, input.style ?? 'balanced');
   const days = arc.map((template, index) =>
     buildDay({
       date: addDays(input.today, index),

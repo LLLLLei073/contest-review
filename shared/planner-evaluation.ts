@@ -1,10 +1,11 @@
-import { DEFAULT_BKT, traceKnowledge, type KnowledgeObservation } from './knowledge-tracing.js';
+import { DEFAULT_BKT, traceKnowledge, type BktParameters, type KnowledgeObservation } from './knowledge-tracing.js';
 
 /** Predict each next observation using only observations strictly earlier than its timestamp. */
 export function evaluateKnowledgePredictions(
   observations: KnowledgeObservation[],
   skillIds: string[],
   asOf: string,
+  parameters: BktParameters = DEFAULT_BKT,
 ) {
   const cutoff = Date.parse(asOf);
   if (!Number.isFinite(cutoff)) throw new Error('回放截止时间无效');
@@ -25,6 +26,7 @@ export function evaluateKnowledgePredictions(
       skillIds,
       included.filter((o) => Date.parse(o.at) <= Date.parse(observation.at)),
       observation.at,
+      parameters,
     );
     if (current.excluded.some((e) => e.id === observation.id)) continue;
     const skill = current.states.find((s) => s.evidenceIds.includes(observation.id));
@@ -33,9 +35,9 @@ export function evaluateKnowledgePredictions(
       skillIds,
       included.filter((o) => Date.parse(o.at) < Date.parse(observation.at)),
       observation.at,
+      parameters,
     ).states.find((s) => s.skillId === skill.skillId)!;
-    const probability =
-      prior.probability * (1 - DEFAULT_BKT.slip) + (1 - prior.probability) * DEFAULT_BKT.guess;
+    const probability = prior.probability * (1 - parameters.slip) + (1 - prior.probability) * parameters.guess;
     const correct = observation.result === 'independent';
     rows.push({
       id: observation.id,
@@ -47,12 +49,20 @@ export function evaluateKnowledgePredictions(
       brier: (Number(correct) - probability) ** 2,
     });
   }
+  const calibrated =
+    parameters.initial !== DEFAULT_BKT.initial ||
+    parameters.learn !== DEFAULT_BKT.learn ||
+    parameters.guess !== DEFAULT_BKT.guess ||
+    parameters.slip !== DEFAULT_BKT.slip;
   return {
     asOf,
+    parameters,
     samples: rows.length,
     brier: rows.length ? rows.reduce((n, r) => n + r.brier, 0) / rows.length : null,
     insufficient: rows.length < 30,
     rows,
-    conclusion: '描述性回放，不证明学习效率的因果提升；参数尚未校准',
+    conclusion: calibrated
+      ? '描述性回放，不证明学习效率的因果提升；参数来自记录回放拟合'
+      : '描述性回放，不证明学习效率的因果提升；参数尚未校准',
   };
 }

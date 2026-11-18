@@ -44,6 +44,7 @@ const error = ref('');
 const busy = ref(false);
 const loading = ref(true);
 const duration = ref<7 | 14>(14);
+const style = ref<'balanced' | 'sprint' | 'steady'>('balanced');
 const dailyCount = ref(8);
 const focus = ref<CategoryName[]>([]);
 const includeAtcoder = ref(false);
@@ -96,8 +97,10 @@ async function generate() {
   try {
     state.value = await api<ProgramState>('/program/generate', {
       duration: duration.value,
+      style: style.value,
       dailyCount: dailyCount.value,
       focus: focus.value,
+      includeAtcoder: includeAtcoder.value,
     });
     notify(`已生成 ${duration.value} 天训练预览，确认后今天即可开始`);
   } catch (e) {
@@ -222,6 +225,7 @@ async function generateNextRound() {
   try {
     state.value = await api<ProgramState>('/program/generate', {
       duration: finished.duration,
+      style: finished.style ?? 'balanced',
       dailyCount: Math.max(6, Math.min(10, finished.dailyCount + report.nextRound.dailyCountDelta)),
       carryOver: {
         fromProgramId: finished.id,
@@ -274,6 +278,32 @@ onMounted(load);
           </div>
         </div>
         <div class="program-field">
+          <span class="program-label">训练风格</span>
+          <div class="button-row">
+            <button
+              :class="['button', style === 'balanced' && 'primary']"
+              title="含复盘节点与挑战日的完整弧线"
+              @click="style = 'balanced'"
+            >
+              均衡进阶
+            </button>
+            <button
+              :class="['button', style === 'sprint' && 'primary']"
+              title="无复盘节点，难度爬坡更快，挑战日上探 +400"
+              @click="style = 'sprint'"
+            >
+              纯冲刺
+            </button>
+            <button
+              :class="['button', style === 'steady' && 'primary']"
+              title="节奏优先：多个复盘节点、无挑战日，最高段 +150"
+              @click="style = 'steady'"
+            >
+              稳态节奏
+            </button>
+          </div>
+        </div>
+        <div class="program-field">
           <span class="program-label">每日新题量：{{ dailyCount }} 题（特殊日自动减量）</span>
           <input v-model.number="dailyCount" type="range" min="6" max="10" step="1" />
         </div>
@@ -323,7 +353,9 @@ onMounted(load);
             isDraft ? 'PREVIEW · 待确认' : program.status === 'completed' ? 'COMPLETED · 已完成' : 'ACTIVE · 进行中'
           }}</span>
           <h3>
-            {{ program.duration }} 天 · {{ program.focus.join('、') }} · 每天 {{ program.dailyCount }} 题
+            {{ program.duration }} 天 · {{ program.focus.join('、') }} · 每天 {{ program.dailyCount }} 题 ·{{
+              program.style === 'sprint' ? '纯冲刺' : program.style === 'steady' ? '稳态节奏' : '均衡进阶'
+            }}
           </h3>
           <p class="small subtle">{{ program.basis }}</p>
         </div>

@@ -2075,7 +2075,13 @@ export class CoreStore {
           const record = planningRecordSchema.parse(row.value);
           if (record.id !== row.key || record.scope !== row.namespace)
             throw new Error('规划记录归属或编号不一致');
-          const targets = record.kind === 'preferences' ? record.options.targets : record.path.targets;
+          // bkt-calibration 不带目标知识点；其余 kind 分别取 options.targets / path.targets。
+          const targets =
+            record.kind === 'preferences'
+              ? record.options.targets
+              : record.kind === 'bkt-calibration'
+                ? []
+                : record.path.targets;
           if (targets.some((t) => !knowledgeCards.some((k) => k.id === t)))
             throw new Error('规划目标知识点不存在');
           if (record.kind === 'decision') {

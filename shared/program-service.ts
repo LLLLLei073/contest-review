@@ -25,6 +25,7 @@ import {
 
 const generateInputSchema = z.object({
   duration: z.union([z.literal(7), z.literal(14)]),
+  style: z.enum(['balanced', 'sprint', 'steady']).default('balanced'),
   dailyCount: z.number().int().min(6).max(10).default(8),
   focus: z.array(z.enum(categoryNames)).min(1).max(2).optional(),
   /** 一键续期：接续某期已完成计划的结论（报告 nextRound）。 */
@@ -172,7 +173,7 @@ export class ProgramService {
     return { rows, submissions, attempts, mastery, weak, band, suggestedFocus: suggested };
   }
   generate(input: unknown): ProgramState {
-    const { duration, dailyCount, focus, carryOver, includeAtcoder } = generateInputSchema.parse(input);
+    const { duration, style, dailyCount, focus, carryOver, includeAtcoder } = generateInputSchema.parse(input);
     const cf = this.store.active();
     const catalog = cf ? this.store.get<Catalog>('catalog_cache', cf, 'current') : undefined;
     if (!catalog?.problems.length)
@@ -182,6 +183,7 @@ export class ProgramService {
     let chosen = focus?.length ? (focus as CategoryName[]) : suggestedFocus;
     let effectiveBand = band;
     let effectiveDailyCount = dailyCount;
+    let effectiveStyle: 'balanced' | 'sprint' | 'steady' = style;
     let carryNote = '';
     const blocked = new Set<string>([
       ...submissions.map(problemKey),
@@ -219,6 +221,8 @@ export class ProgramService {
       ]
         .filter(Boolean)
         .join('；');
+      // 续期沿用上一期的弧线风格（未显式传 style 时）。
+      effectiveStyle = previous.style ?? 'balanced';
     }
     const minutes = estimateMinutes(
       attempts.filter((a) => a.result === 'independent').map((a) => a.minutes),
@@ -229,6 +233,7 @@ export class ProgramService {
     const { program, warnings } = buildProgram({
       today: localDay(this.now()),
       duration,
+      style: effectiveStyle,
       dailyCount: effectiveDailyCount,
       focus: chosen,
       catalog: catalog.problems,
@@ -251,6 +256,7 @@ export class ProgramService {
       id: crypto.randomUUID(),
       createdAt: this.now().toISOString(),
       basis: carryNote ? `${program.basis}；${carryNote}` : program.basis,
+      style: effectiveStyle,
     });
     // 一个账号同时只保留一份草稿，重复生成直接覆盖。
     for (const old of this.records().filter((p) => p.status === 'draft'))

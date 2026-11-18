@@ -4249,11 +4249,26 @@ h2[tabindex='-1']:focus {
 .settings-update-progress span {
   background: var(--highlight);
 }
-.program-check {
+/* 全局 label 是纵向 flex（文字在输入框上方）；复选框行需要强制横向。 */
+.program-wizard .program-field label.program-check {
   display: flex;
+  flex-direction: row;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   font-weight: 500;
+  text-align: left;
+}
+.program-wizard .program-field label.program-check input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  accent-color: var(--highlight);
+  flex: none;
+  margin: 0;
 }
 .program-next-round {
   display: flex;

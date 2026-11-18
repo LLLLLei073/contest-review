@@ -136,7 +136,12 @@ export function traceKnowledge(
   return {
     version: BKT_VERSION,
     parameters: params,
-    calibrated: false as const,
+    // 参数与默认工程值不一致即视为已校准（校准来源见 planner-evaluation 回放拟合）。
+    calibrated:
+      params.initial !== DEFAULT_BKT.initial ||
+      params.learn !== DEFAULT_BKT.learn ||
+      params.guess !== DEFAULT_BKT.guess ||
+      params.slip !== DEFAULT_BKT.slip,
     states: [...states.values()],
     excluded: excluded.sort((a, b) => a.id.localeCompare(b.id) || a.reason.localeCompare(b.reason)),
   };

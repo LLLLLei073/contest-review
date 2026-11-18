@@ -49,6 +49,8 @@ export const trainingProgramSchema = z
     basis: z.string().max(1000),
     days: z.array(programDaySchema),
     status: z.enum(['draft', 'active', 'completed', 'abandoned']),
+    /** 弧线风格：balanced / sprint / steady；旧记录缺省按 balanced 展示。 */
+    style: z.enum(['balanced', 'sprint', 'steady']).optional(),
     confirmedAt: z.string().datetime().nullable().optional(),
     finishedAt: z.string().datetime().nullable().optional(),
     /** 采纳时的 8 领域掌握度快照，报告雷达用它对比计划前后。 */

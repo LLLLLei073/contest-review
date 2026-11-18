@@ -33,7 +33,8 @@ export const knowledgeStateSchema = z.object({
 export const tracingSchema = z.object({
   version: id,
   parameters: bktParametersSchema,
-  calibrated: z.literal(false),
+  // 旧记录恒为 false；校准后回放拟合参数为 true。
+  calibrated: z.boolean(),
   states: z.array(knowledgeStateSchema),
   excluded: z.array(
     z.object({
@@ -88,6 +89,17 @@ export const planningPreferenceSchema = z.object({
   id: z.literal('preferences'),
   options: planningOptionsSchema,
 });
+/** BKT 全局参数校准结果（CLI 回放拟合产出；样本 <30 时不得保存）。 */
+export const bktCalibrationSchema = z.object({
+  ...base,
+  kind: z.literal('bkt-calibration'),
+  id: z.literal('bkt-calibration'),
+  parameters: bktParametersSchema,
+  samples: z.number().int().min(30),
+  brier: z.number().min(0).max(1),
+  defaultBrier: z.number().min(0).max(1).nullable(),
+  source: z.string().max(200).default('cli-replay'),
+});
 export const pathRecordSchema = z.object({
   ...base,
   kind: z.literal('path'),
@@ -128,8 +140,10 @@ export const planningRecordSchema = z.discriminatedUnion('kind', [
   planningPreferenceSchema,
   pathRecordSchema,
   planDecisionSchema,
+  bktCalibrationSchema,
 ]);
 export type PlanDecision = z.infer<typeof planDecisionSchema>;
+export type BktCalibration = z.infer<typeof bktCalibrationSchema>;
 export type PlanningRecord = z.infer<typeof planningRecordSchema>;
 export const planningNamespace = (cf: string, ac: string) =>
   `planning:${cf || '-'}:${ac ? 'ac~' + ac.toLowerCase() : '-'}`;
